@@ -360,6 +360,14 @@ class SessionService extends ChangeNotifier {
 
       await refreshAllData();
 
+      navigatorKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) =>
+              const MainAppScreen(key: ValueKey('global_refresh')),
+        ),
+        (route) => false,
+      );
+
       return true;
     } catch (e) {
       return false;
@@ -405,14 +413,6 @@ class SessionService extends ChangeNotifier {
     if (!context.mounted) return;
 
     try {
-      navigatorKey.currentState?.pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (context) =>
-              const MainAppScreen(key: ValueKey('global_refresh')),
-        ),
-        (route) => false,
-      );
-
       await Future.delayed(Duration.zero);
 
       await clearAllProviderData(isLogout: false);

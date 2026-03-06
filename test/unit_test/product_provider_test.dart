@@ -14,11 +14,9 @@ void main() {
 
   group('ProductProvider Tests', () {
     test('loadProducts should load products and count', () async {
-
       when(
         () => mockApiService.call('product.template', 'search_count', any()),
       ).thenAnswer((_) async => 2);
-
 
       when(
         () => mockApiService.call(
@@ -67,7 +65,6 @@ void main() {
         expect(provider.products.length, 1);
         expect(provider.products[0].name, 'Search Result');
 
-
         final captured = verify(
           () => mockApiService.call(
             'product.template',
@@ -81,7 +78,6 @@ void main() {
     );
 
     test('clearData should reset state', () async {
-
       when(
         () => mockApiService.call(any(), any(), any()),
       ).thenAnswer((_) async => 10);

@@ -20,6 +20,7 @@ import 'CreditNotes/create_credit_note_screen.dart';
 import 'customers/customer_form_screen.dart';
 import '../widgets/company_selector_widget.dart';
 import '../providers/company_provider.dart';
+import '../services/review_service.dart';
 import '../widgets/lazy_load_indexed_stack.dart';
 
 class MainAppScreen extends StatefulWidget {
@@ -37,6 +38,14 @@ class _MainAppScreenState extends State<MainAppScreen> {
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       authProvider.refreshUserName();
       Provider.of<CompanyProvider>(context, listen: false).initialize();
+
+      // Check for rating prompt after a short delay
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) {
+          ReviewService().trackAppOpen();
+          ReviewService().checkAndShowRating(context);
+        }
+      });
     });
   }
 

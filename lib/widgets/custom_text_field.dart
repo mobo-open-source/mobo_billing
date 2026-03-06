@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
 
-/// A highly customizable [TextFormField] wrapper with support for icons, 
+/// A highly customizable [TextFormField] wrapper with support for icons,
 /// labels above the field, and minimal styling options.
 class CustomTextField extends StatefulWidget {
   final TextEditingController? controller;

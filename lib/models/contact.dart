@@ -35,6 +35,16 @@ class Contact {
     this.isCompany = false,
   });
 
+  static String? _parseString(dynamic value) {
+    if (value == null ||
+        value == false ||
+        value.toString().toLowerCase() == 'false' ||
+        value.toString().trim().isEmpty) {
+      return null;
+    }
+    return value.toString();
+  }
+
   /// Creates a Contact instance from an Odoo JSON map.
   factory Contact.fromJson(Map<String, dynamic> json) {
     return Contact(
@@ -50,13 +60,15 @@ class Contact {
           ? json['state_id'][1]?.toString()
           : null,
       zip: json['zip']?.toString(),
-      country: json['country_id'] is List && (json['country_id'] as List).length > 1
+      country:
+          json['country_id'] is List && (json['country_id'] as List).length > 1
           ? json['country_id'][1]?.toString()
           : null,
       companyName: json['company_name']?.toString(),
       vat: json['vat']?.toString(),
-      imageUrl: json['image_1920']?.toString(),
-      paymentTermId: json['property_payment_term_id'] is List &&
+      imageUrl: _parseString(json['image_1920']),
+      paymentTermId:
+          json['property_payment_term_id'] is List &&
               (json['property_payment_term_id'] as List).isNotEmpty
           ? json['property_payment_term_id'][0] as int?
           : null,

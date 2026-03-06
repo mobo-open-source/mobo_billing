@@ -18,7 +18,10 @@ void main() {
 
     test('getPaymentMethodName returns correct names', () {
       expect(paymentService.getPaymentMethodName(PaymentMethod.cash), 'Cash');
-      expect(paymentService.getPaymentMethodName(PaymentMethod.bank), 'Bank Transfer');
+      expect(
+        paymentService.getPaymentMethodName(PaymentMethod.bank),
+        'Bank Transfer',
+      );
     });
 
     test('processPayment handles Cash correctly', () async {
@@ -47,21 +50,21 @@ void main() {
       expect(result.status, PaymentStatus.pending);
       expect(result.method, PaymentMethod.bank);
     });
-    
+
     test('PaymentResult model serialization', () {
-        final result = PaymentResult(
-            success: true,
-            amount: 100,
-            method: PaymentMethod.cash,
-            status: PaymentStatus.completed,
-            transactionId: 'TX123'
-        );
-        
-        final json = result.toJson();
-        expect(json['success'], true);
-        expect(json['amount'], 100.0);
-        expect(json['method'], 'cash');
-        expect(json['transaction_id'], 'TX123');
+      final result = PaymentResult(
+        success: true,
+        amount: 100,
+        method: PaymentMethod.cash,
+        status: PaymentStatus.completed,
+        transactionId: 'TX123',
+      );
+
+      final json = result.toJson();
+      expect(json['success'], true);
+      expect(json['amount'], 100.0);
+      expect(json['method'], 'cash');
+      expect(json['transaction_id'], 'TX123');
     });
   });
 }

@@ -11,13 +11,23 @@ import 'package:mobo_billing/services/currency_service.dart';
 import 'package:mobo_billing/services/company_local_datasource.dart';
 
 class MockOdooApiService extends Mock implements OdooApiService {}
+
 class MockSessionService extends Mock implements SessionService {}
+
 class MockConnectivityService extends Mock implements ConnectivityService {}
+
 class MockInvoiceService extends Mock implements InvoiceService {}
+
 class MockPaymentService extends Mock implements PaymentService {}
+
 class MockBiometricService extends Mock implements BiometricService {}
-class MockRuntimePermissionService extends Mock implements RuntimePermissionService {}
-class MockCompanyLocalDataSource extends Mock implements CompanyLocalDataSource {}
+
+class MockRuntimePermissionService extends Mock
+    implements RuntimePermissionService {}
+
+class MockCompanyLocalDataSource extends Mock
+    implements CompanyLocalDataSource {}
+
 class MockCurrencyService extends Mock implements CurrencyService {}
 
 class MockImagePicker extends Mock implements ImagePicker {}

@@ -89,7 +89,11 @@ class Customer {
   /// Creates a Customer instance from an Odoo RPC JSON map.
   factory Customer.fromJson(Map<String, dynamic> json) {
     String? getString(dynamic value) {
-      if (value == null || value == false || value.toString().toLowerCase() == 'false' || value.toString().isEmpty) return null;
+      if (value == null ||
+          value == false ||
+          value.toString().toLowerCase() == 'false' ||
+          value.toString().isEmpty)
+        return null;
       return value.toString();
     }
 
@@ -122,34 +126,40 @@ class Customer {
       supplierRank: json['supplier_rank'] is int ? json['supplier_rank'] : 0,
       image128: getString(json['image_128']),
       companyType: getString(json['company_type']),
-      title: json['title'] is List && (json['title'] as List).length > 1 
-          ? json['title'][1].toString() 
+      title: json['title'] is List && (json['title'] as List).length > 1
+          ? json['title'][1].toString()
           : getString(json['title']),
       function: getString(json['function']),
       lang: getString(json['lang']),
-      category: json['category_id'] is List && (json['category_id'] as List).length > 1 
-          ? json['category_id'][1].toString() 
+      category:
+          json['category_id'] is List &&
+              (json['category_id'] as List).length > 1
+          ? json['category_id'][1].toString()
           : getString(json['category_id']),
       countryId: getInt(json['country_id']),
-      countryName: json['country_id'] is List && (json['country_id'] as List).length > 1 
-          ? json['country_id'][1].toString() 
+      countryName:
+          json['country_id'] is List && (json['country_id'] as List).length > 1
+          ? json['country_id'][1].toString()
           : null,
       stateId: getInt(json['state_id']),
-      stateName: json['state_id'] is List && (json['state_id'] as List).length > 1 
-          ? json['state_id'][1].toString() 
+      stateName:
+          json['state_id'] is List && (json['state_id'] as List).length > 1
+          ? json['state_id'][1].toString()
           : null,
       ref: getString(json['ref']),
       active: json['active'] ?? true,
-      industry: json['industry_id'] is List && (json['industry_id'] as List).length > 1 
-          ? json['industry_id'][1].toString() 
+      industry:
+          json['industry_id'] is List &&
+              (json['industry_id'] as List).length > 1
+          ? json['industry_id'][1].toString()
           : getString(json['industry_id']),
       creditLimit: getString(json['credit_limit']),
       companyName: getString(json['company_name']),
-      createDate: json['create_date'] != null 
-          ? DateTime.tryParse(json['create_date'].toString()) 
+      createDate: json['create_date'] != null
+          ? DateTime.tryParse(json['create_date'].toString())
           : null,
-      writeDate: json['write_date'] != null 
-          ? DateTime.tryParse(json['write_date'].toString()) 
+      writeDate: json['write_date'] != null
+          ? DateTime.tryParse(json['write_date'].toString())
           : null,
       tz: getString(json['tz']),
       userId: getInt(json['user_id']),
@@ -174,7 +184,6 @@ class Customer {
       'active': active,
     };
 
-
     if (email != null && email!.isNotEmpty) data['email'] = email;
     if (phone != null && phone!.isNotEmpty) data['phone'] = phone;
     if (mobile != null && mobile!.isNotEmpty) data['mobile'] = mobile;
@@ -193,14 +202,18 @@ class Customer {
     if (countryId != null) data['country_id'] = countryId;
     if (stateId != null) data['state_id'] = stateId;
     if (ref != null && ref!.isNotEmpty) data['ref'] = ref;
-    if (industry != null && industry!.isNotEmpty) data['industry_id'] = industry;
-    if (creditLimit != null && creditLimit!.isNotEmpty) data['credit_limit'] = creditLimit;
-    if (companyName != null && companyName!.isNotEmpty) data['company_name'] = companyName;
+    if (industry != null && industry!.isNotEmpty)
+      data['industry_id'] = industry;
+    if (creditLimit != null && creditLimit!.isNotEmpty)
+      data['credit_limit'] = creditLimit;
+    if (companyName != null && companyName!.isNotEmpty)
+      data['company_name'] = companyName;
     if (createDate != null) data['create_date'] = createDate!.toIso8601String();
     if (writeDate != null) data['write_date'] = writeDate!.toIso8601String();
     if (tz != null) data['tz'] = tz;
     if (userId != null) data['user_id'] = userId;
-    if (propertyPaymentTermId != null) data['property_payment_term_id'] = propertyPaymentTermId;
+    if (propertyPaymentTermId != null)
+      data['property_payment_term_id'] = propertyPaymentTermId;
     if (totalInvoiced != null) data['total_invoiced'] = totalInvoiced;
     if (credit != null) data['credit'] = credit;
     if (debit != null) data['debit'] = debit;
@@ -289,7 +302,8 @@ class Customer {
       writeDate: writeDate ?? this.writeDate,
       tz: tz ?? this.tz,
       userId: userId ?? this.userId,
-      propertyPaymentTermId: propertyPaymentTermId ?? this.propertyPaymentTermId,
+      propertyPaymentTermId:
+          propertyPaymentTermId ?? this.propertyPaymentTermId,
       totalInvoiced: totalInvoiced ?? this.totalInvoiced,
       credit: credit ?? this.credit,
       debit: debit ?? this.debit,

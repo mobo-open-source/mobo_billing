@@ -18,7 +18,6 @@ class ProductFilter {
     this.createdBefore,
   });
 
-
   /// Generates an Odoo RPC domain list from the filter criteria.
   List<dynamic> toDomain() {
     List<dynamic> domain = [];
@@ -65,17 +64,15 @@ class ProductFilter {
     return domain;
   }
 
-
   bool get hasActiveFilters {
     return canBeSold != null ||
-           canBePurchased != null ||
-           (productType != null && productType!.isNotEmpty) ||
-           hasBarcode != null ||
-           hasImage != null ||
-           createdAfter != null ||
-           createdBefore != null;
+        canBePurchased != null ||
+        (productType != null && productType!.isNotEmpty) ||
+        hasBarcode != null ||
+        hasImage != null ||
+        createdAfter != null ||
+        createdBefore != null;
   }
-
 
   int get activeFilterCount {
     int count = 0;
@@ -88,7 +85,6 @@ class ProductFilter {
     if (createdBefore != null) count++;
     return count;
   }
-
 
   /// Returns a copy of the filter with updated values.
   ProductFilter copyWith({
@@ -109,12 +105,18 @@ class ProductFilter {
   }) {
     return ProductFilter(
       canBeSold: clearCanBeSold ? null : (canBeSold ?? this.canBeSold),
-      canBePurchased: clearCanBePurchased ? null : (canBePurchased ?? this.canBePurchased),
+      canBePurchased: clearCanBePurchased
+          ? null
+          : (canBePurchased ?? this.canBePurchased),
       productType: clearProductType ? null : (productType ?? this.productType),
       hasBarcode: clearHasBarcode ? null : (hasBarcode ?? this.hasBarcode),
       hasImage: clearHasImage ? null : (hasImage ?? this.hasImage),
-      createdAfter: clearCreatedAfter ? null : (createdAfter ?? this.createdAfter),
-      createdBefore: clearCreatedBefore ? null : (createdBefore ?? this.createdBefore),
+      createdAfter: clearCreatedAfter
+          ? null
+          : (createdAfter ?? this.createdAfter),
+      createdBefore: clearCreatedBefore
+          ? null
+          : (createdBefore ?? this.createdBefore),
     );
   }
 

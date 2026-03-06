@@ -56,7 +56,9 @@ void main() {
         'quantity': 2.0,
         'price_unit': 50.0,
         'price_subtotal': 100.0,
-        'tax_ids': [[1, 'VAT 15%']],
+        'tax_ids': [
+          [1, 'VAT 15%'],
+        ],
       };
 
       final line = InvoiceLine.fromJson(lineJson);

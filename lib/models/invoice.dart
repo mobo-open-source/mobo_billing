@@ -24,11 +24,9 @@ class Invoice {
   final int? companyId;
   final dynamic currencyId;
   final List<InvoiceLine> invoiceLines;
-  
 
   String get partnerName => customerName;
   int? get partnerId => customerId;
-
 
   final String? salespersonName;
   final String? salesTeamName;
@@ -92,7 +90,11 @@ class Invoice {
   /// Creates an Invoice instance from an Odoo RPC JSON map.
   factory Invoice.fromJson(Map<String, dynamic> json) {
     String? getString(dynamic value) {
-      if (value == null || value == false || value.toString().toLowerCase() == 'false' || value.toString().isEmpty) return null;
+      if (value == null ||
+          value == false ||
+          value.toString().toLowerCase() == 'false' ||
+          value.toString().isEmpty)
+        return null;
       if (value is List && value.isNotEmpty) {
         return value.length > 1 ? value[1]?.toString() : value[0]?.toString();
       }
@@ -105,31 +107,34 @@ class Invoice {
       return null;
     }
 
-
     String customerName = '';
     int? customerId;
     if (json['partner_id'] is List && (json['partner_id'] as List).isNotEmpty) {
       final partnerData = json['partner_id'] as List;
       customerId = partnerData[0] as int?;
-      customerName = partnerData.length > 1 ? partnerData[1]?.toString() ?? '' : '';
+      customerName = partnerData.length > 1
+          ? partnerData[1]?.toString() ?? ''
+          : '';
     } else if (json['partner_id'] is int) {
       customerId = json['partner_id'] as int;
     }
 
-
     String currencySymbol = '';
-    if (json['currency_id'] is List && (json['currency_id'] as List).isNotEmpty) {
+    if (json['currency_id'] is List &&
+        (json['currency_id'] as List).isNotEmpty) {
       final currencyData = json['currency_id'] as List;
-      currencySymbol = currencyData.length > 1 ? currencyData[1]?.toString() ?? '' : '';
+      currencySymbol = currencyData.length > 1
+          ? currencyData[1]?.toString() ?? ''
+          : '';
     }
 
     return Invoice(
       id: json['id'] ?? 0,
       name: getString(json['name']) ?? '',
-      invoiceDate: json['invoice_date'] != null 
+      invoiceDate: json['invoice_date'] != null
           ? DateTime.tryParse(json['invoice_date'].toString())
           : null,
-      invoiceDateDue: json['invoice_date_due'] != null 
+      invoiceDateDue: json['invoice_date_due'] != null
           ? DateTime.tryParse(json['invoice_date_due'].toString())
           : null,
       customerName: customerName,
@@ -144,19 +149,21 @@ class Invoice {
       ref: json['ref']?.toString(),
       invoiceOrigin: json['invoice_origin']?.toString(),
       paymentReference: json['payment_reference']?.toString(),
-      invoiceLineIds: json['invoice_line_ids'] != null 
+      invoiceLineIds: json['invoice_line_ids'] != null
           ? List<int>.from(json['invoice_line_ids'])
           : [],
       moveType: json['move_type']?.toString() ?? 'out_invoice',
       companyId: getInt(json['company_id']),
       currencyId: json['currency_id'],
-      invoiceLines: json['invoice_lines'] != null 
-          ? (json['invoice_lines'] as List).map((l) => InvoiceLine.fromJson(l)).toList()
+      invoiceLines: json['invoice_lines'] != null
+          ? (json['invoice_lines'] as List)
+                .map((l) => InvoiceLine.fromJson(l))
+                .toList()
           : [],
       salespersonName: getString(json['invoice_user_id']),
       salesTeamName: getString(json['team_id']),
       partnerBankName: getString(json['partner_bank_id']),
-      deliveryDate: json['delivery_date'] != null 
+      deliveryDate: json['delivery_date'] != null
           ? DateTime.tryParse(json['delivery_date'].toString())
           : null,
       incotermName: getString(json['invoice_incoterm_id']),
@@ -172,7 +179,9 @@ class Invoice {
       paymentTermName: getString(json['invoice_payment_term_id']),
       journalName: getString(json['journal_id']),
       journalItems: json['journal_items'] != null
-          ? (json['journal_items'] as List).map((j) => JournalItem.fromJson(j)).toList()
+          ? (json['journal_items'] as List)
+                .map((j) => JournalItem.fromJson(j))
+                .toList()
           : [],
     );
   }
@@ -191,7 +200,9 @@ class Invoice {
       'amount_tax': amountTax,
       'amount_total': amountTotal,
       'amount_residual': amountResidual,
-      'currency_id': currencyId ?? (currencySymbol.isNotEmpty ? [0, currencySymbol] : null),
+      'currency_id':
+          currencyId ??
+          (currencySymbol.isNotEmpty ? [0, currencySymbol] : null),
       'ref': ref,
       'invoice_origin': invoiceOrigin,
       'payment_reference': paymentReference,
