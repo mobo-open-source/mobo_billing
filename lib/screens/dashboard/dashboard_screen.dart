@@ -204,7 +204,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     bool isDark,
   ) {
     final profile = profileProvider.profile;
-    final userName = profile?['name'] as String? ?? 'User';
+    final userName = profile?['name'] is String
+        ? profile!['name'] as String
+        : 'User';
 
     return Container(
       width: double.infinity,

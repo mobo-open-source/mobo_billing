@@ -15,11 +15,9 @@ class AuthProvider with ChangeNotifier {
   final SessionService _sessionService;
   bool _sessionExpired = false;
 
-  AuthProvider({
-    OdooApiService? apiService,
-    SessionService? sessionService,
-  })  : _apiService = apiService ?? OdooApiService(),
-        _sessionService = sessionService ?? SessionService.instance;
+  AuthProvider({OdooApiService? apiService, SessionService? sessionService})
+    : _apiService = apiService ?? OdooApiService(),
+      _sessionService = sessionService ?? SessionService.instance;
 
   UserModel? get user => _user;
 
@@ -30,7 +28,6 @@ class AuthProvider with ChangeNotifier {
   bool get sessionExpired => _sessionExpired;
 
   bool get isAuthenticated => _user != null;
-
 
   /// authenticates the user using username and password.
   Future<bool> login(
@@ -43,9 +40,7 @@ class AuthProvider with ChangeNotifier {
     _setError(null);
 
     try {
-
       _apiService.initialize(serverUrl, database);
-
 
       final result = await _apiService.authenticate(username, password);
 
@@ -63,7 +58,6 @@ class AuthProvider with ChangeNotifier {
         _sessionExpired = false;
         await _saveUserSession();
 
-
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('isLoggedIn', true);
         await prefs.setString('odoo_name', _user!.name);
@@ -79,8 +73,9 @@ class AuthProvider with ChangeNotifier {
       }
     } catch (e) {
       final errorStr = e.toString().toLowerCase();
-      if (errorStr.contains('null') || errorStr.contains('two factor') || errorStr.contains('2fa')) {
-
+      if (errorStr.contains('null') ||
+          errorStr.contains('two factor') ||
+          errorStr.contains('2fa')) {
         _setLoading(false);
         rethrow;
       }
@@ -89,7 +84,6 @@ class AuthProvider with ChangeNotifier {
       return false;
     }
   }
-
 
   /// authenticates the user using a pre-existing session ID.
   Future<bool> loginWithSessionId({
@@ -113,8 +107,6 @@ class AuthProvider with ChangeNotifier {
         sessionInfo: sessionInfo,
       );
 
-      
-
       if (success) {
         final session = await OdooSessionManager.getCurrentSession();
         if (session != null) {
@@ -136,12 +128,11 @@ class AuthProvider with ChangeNotifier {
 
           _setLoading(false);
           notifyListeners();
-          
 
           if (session.userId != null) {
             _refreshUserDataInBackground(session.userId!);
           }
-          
+
           return true;
         }
       }
@@ -153,18 +144,14 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-
   /// Attempts to restore a session from local storage.
   Future<bool> autoLogin() async {
     _setLoading(true);
     try {
-
       final session = await OdooSessionManager.getCurrentSession();
 
       if (session != null) {
-
         _apiService.initialize(session.serverUrl, session.database);
-
 
         _user = UserModel(
           uid: session.userId ?? 0,
@@ -181,7 +168,6 @@ class AuthProvider with ChangeNotifier {
         _setLoading(false);
         notifyListeners();
 
-
         if (session.userId != null) {
           _refreshUserDataInBackground(session.userId!);
         }
@@ -192,12 +178,10 @@ class AuthProvider with ChangeNotifier {
       _setLoading(false);
       return false;
     } catch (e) {
-
       _setLoading(false);
       return false;
     }
   }
-
 
   /// Refreshes the user's name and image from the server without blocking the UI.
   Future<void> _refreshUserDataInBackground(int uid) async {
@@ -230,29 +214,20 @@ class AuthProvider with ChangeNotifier {
 
           await _saveUserSession();
           notifyListeners();
-
         }
       }
-    } catch (e) {
-
-
-    }
+    } catch (e) {}
   }
-
 
   /// Logs out the user and clears all session-related data.
   Future<void> logout() async {
-
     try {
-      
       await _sessionService.logout();
     } catch (e) {
-      
-
       await _apiService.logout();
       await OdooSessionManager.logout();
     }
-    
+
     _user = null;
     _sessionExpired = false;
 
@@ -262,7 +237,6 @@ class AuthProvider with ChangeNotifier {
 
     notifyListeners();
   }
-
 
   /// Serializes and saves the current user's session to SharedPreferences.
   Future<void> _saveUserSession() async {
@@ -280,7 +254,6 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-
   /// Returns a list of saved server configurations.
   Future<List<Map<String, String>>> getSavedConfigurations() async {
     final prefs = await SharedPreferences.getInstance();
@@ -295,7 +268,6 @@ class AuthProvider with ChangeNotifier {
       };
     }).toList();
   }
-
 
   /// Saves a server configuration (name, URL, database) for future logins.
   Future<void> saveConfiguration(
@@ -312,7 +284,6 @@ class AuthProvider with ChangeNotifier {
       await prefs.setStringList('saved_configs', configs);
     }
   }
-
 
   /// Removes a previously saved server configuration.
   Future<void> removeConfiguration(
@@ -339,7 +310,6 @@ class AuthProvider with ChangeNotifier {
     _error = error;
     notifyListeners();
   }
-
 
   /// Refreshes the current user's name and profile image from the server.
   Future<void> refreshUserName() async {
@@ -374,12 +344,9 @@ class AuthProvider with ChangeNotifier {
             _user = _user!.copyWith(name: newName, profileImage: newImage);
             await _saveUserSession();
             notifyListeners();
-
           }
         }
-      } catch (e) {
-
-      }
+      } catch (e) {}
     }
   }
 
@@ -397,10 +364,8 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
-
   /// Checks if the 'account' module is installed on the Odoo server.
   Future<bool> checkRequiredModules() async {
-
     return await _apiService.isModuleInstalled('account');
   }
 }

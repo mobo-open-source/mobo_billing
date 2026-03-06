@@ -25,50 +25,63 @@ void main() {
       );
     });
 
-    test('exportInvoices should fail with exception when no invoices found', () async {
-      when(() => mockApiService.searchRead('account.move', any(), any()))
-          .thenAnswer((_) async => []);
-      
-      when(() => mockPermissionService.requestStoragePermissionInstance(any()))
-          .thenAnswer((_) async => true);
+    test(
+      'exportInvoices should fail with exception when no invoices found',
+      () async {
+        when(
+          () => mockApiService.searchRead('account.move', any(), any()),
+        ).thenAnswer((_) async => []);
 
-      await provider.exportInvoices(
-        MockBuildContext(),
-        fromDate: DateTime(2024, 1, 1),
-        toDate: DateTime(2024, 1, 31),
-        format: 'Excel',
-        status: 'all',
-      );
+        when(
+          () => mockPermissionService.requestStoragePermissionInstance(any()),
+        ).thenAnswer((_) async => true);
 
-      expect(provider.errorMessage, contains('No invoices found'));
-      expect(provider.isExporting, false);
-    });
+        await provider.exportInvoices(
+          MockBuildContext(),
+          fromDate: DateTime(2024, 1, 1),
+          toDate: DateTime(2024, 1, 31),
+          format: 'Excel',
+          status: 'all',
+        );
 
-    test('exportInvoices should correctly build domain for status filters', () async {
+        expect(provider.errorMessage, contains('No invoices found'));
+        expect(provider.isExporting, false);
+      },
+    );
 
-       List<dynamic>? capturedDomain;
-       when(() => mockApiService.searchRead('account.move', any(), any()))
-          .thenAnswer((invocation) async {
-            capturedDomain = invocation.positionalArguments[1] as List<dynamic>;
-            return [];
-          });
+    test(
+      'exportInvoices should correctly build domain for status filters',
+      () async {
+        List<dynamic>? capturedDomain;
+        when(
+          () => mockApiService.searchRead('account.move', any(), any()),
+        ).thenAnswer((invocation) async {
+          capturedDomain = invocation.positionalArguments[1] as List<dynamic>;
+          return [];
+        });
 
-      when(() => mockPermissionService.requestStoragePermissionInstance(any()))
-          .thenAnswer((_) async => true);
+        when(
+          () => mockPermissionService.requestStoragePermissionInstance(any()),
+        ).thenAnswer((_) async => true);
 
-      await provider.exportInvoices(
-        MockBuildContext(),
-        fromDate: DateTime(2024, 1, 1),
-        toDate: DateTime(2024, 1, 31),
-        format: 'Excel',
-        status: 'paid',
-      );
+        await provider.exportInvoices(
+          MockBuildContext(),
+          fromDate: DateTime(2024, 1, 1),
+          toDate: DateTime(2024, 1, 31),
+          format: 'Excel',
+          status: 'paid',
+        );
 
-      expect(capturedDomain, isNotNull);
+        expect(capturedDomain, isNotNull);
 
-      final hasPaidFilter = capturedDomain!.any((filter) => 
-        filter is List && filter[0] == 'payment_state' && filter[2] == 'paid');
-      expect(hasPaidFilter, true);
-    });
+        final hasPaidFilter = capturedDomain!.any(
+          (filter) =>
+              filter is List &&
+              filter[0] == 'payment_state' &&
+              filter[2] == 'paid',
+        );
+        expect(hasPaidFilter, true);
+      },
+    );
   });
 }

@@ -12,7 +12,7 @@ class ProductSalesHistoryScreen extends StatefulWidget {
   final Map<String, dynamic> product;
 
   const ProductSalesHistoryScreen({Key? key, required this.product})
-      : super(key: key);
+    : super(key: key);
 
   @override
   State<ProductSalesHistoryScreen> createState() =>
@@ -42,29 +42,30 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
       final apiService = OdooApiService();
       final productId = widget.product['id'];
 
-
-      final salesResult = await apiService.call(
-        'account.move.line',
-        'search_read',
-        [
-          [
-            ['product_id', '=', productId],
-            ['move_id.move_type', '=', 'out_invoice'],
-            ['move_id.state', '=', 'posted']
-          ]
-        ],
-        {
-          'fields': [
-            'move_id',
-            'quantity',
-            'price_unit',
-            'price_subtotal',
-            'create_date',
-          ],
-          'limit': 200,
-          'order': 'create_date desc',
-        },
-      ).timeout(const Duration(seconds: 20));
+      final salesResult = await apiService
+          .call(
+            'account.move.line',
+            'search_read',
+            [
+              [
+                ['product_id', '=', productId],
+                ['move_id.move_type', '=', 'out_invoice'],
+                ['move_id.state', '=', 'posted'],
+              ],
+            ],
+            {
+              'fields': [
+                'move_id',
+                'quantity',
+                'price_unit',
+                'price_subtotal',
+                'create_date',
+              ],
+              'limit': 200,
+              'order': 'create_date desc',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
 
       if (salesResult is List) {
         final Set<int> moveIds = {};
@@ -76,12 +77,22 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
         }
 
         if (moveIds.isNotEmpty) {
-          final moveInfo = await apiService.call(
-            'account.move',
-            'read',
-            [moveIds.toList()],
-            {'fields': ['id', 'name', 'partner_id', 'invoice_date', 'date']},
-          ).timeout(const Duration(seconds: 20));
+          final moveInfo = await apiService
+              .call(
+                'account.move',
+                'read',
+                [moveIds.toList()],
+                {
+                  'fields': [
+                    'id',
+                    'name',
+                    'partner_id',
+                    'invoice_date',
+                    'date',
+                  ],
+                },
+              )
+              .timeout(const Duration(seconds: 20));
 
           if (moveInfo is List) {
             _orderPartnerNames.clear();
@@ -93,9 +104,10 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
               if (p is List && p.length > 1) {
                 partnerName = p[1]?.toString();
               }
-              
-              final String? date = o['invoice_date']?.toString() ?? o['date']?.toString();
-              
+
+              final String? date =
+                  o['invoice_date']?.toString() ?? o['date']?.toString();
+
               if (id != null) {
                 if (partnerName != null) _orderPartnerNames[id] = partnerName;
                 if (date != null) _orderDates[id] = date;
@@ -116,7 +128,7 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        
+
         CustomSnackbar.showError(context, 'Failed to load sales history: $e');
       }
     }
@@ -168,9 +180,10 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
       final mid = (sale['move_id'] is List && sale['move_id'].isNotEmpty)
           ? (sale['move_id'][0] as int)
           : (sale['move_id'] is int ? sale['move_id'] as int : null);
-          
-      final dateStr = (mid != null ? _orderDates[mid] : null) ?? sale['create_date'];
-      
+
+      final dateStr =
+          (mid != null ? _orderDates[mid] : null) ?? sale['create_date'];
+
       if (dateStr != null) {
         final date = DateTime.parse(dateStr);
         final monthKey = DateFormat('MMM yyyy').format(date);
@@ -220,8 +233,10 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
         ),
         leading: IconButton(
           onPressed: () => Navigator.of(context).pop(),
-          icon: HugeIcon(icon:HugeIcons.strokeRoundedArrowLeft01,
-              color: isDark ? Colors.white : Colors.black),
+          icon: HugeIcon(
+            icon: HugeIcons.strokeRoundedArrowLeft01,
+            color: isDark ? Colors.white : Colors.black,
+          ),
         ),
         backgroundColor: isDark ? Colors.grey[900] : Colors.white,
         elevation: 0,
@@ -384,9 +399,7 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
               DropdownButton<String>(
                 value: _selectedPeriod,
                 dropdownColor: isDark ? Colors.grey[800] : Colors.white,
-                style: TextStyle(
-                  color: isDark ? Colors.white : Colors.black87,
-                ),
+                style: TextStyle(color: isDark ? Colors.white : Colors.black87),
                 underline: const SizedBox(),
                 items: const [
                   DropdownMenuItem(value: '6M', child: Text('6 Months')),
@@ -438,7 +451,9 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
                           child: Text(
                             _getMonthLabel(index),
                             style: TextStyle(
-                              color: isDark ? Colors.grey[400] : Colors.grey[600],
+                              color: isDark
+                                  ? Colors.grey[400]
+                                  : Colors.grey[600],
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
                             ),
@@ -473,12 +488,17 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
                       },
                     ),
                   ),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                 ),
                 lineTouchData: LineTouchData(
                   touchTooltipData: LineTouchTooltipData(
-                    getTooltipColor: (touchedSpot) => isDark ? Colors.grey[800]! : Colors.white,
+                    getTooltipColor: (touchedSpot) =>
+                        isDark ? Colors.grey[800]! : Colors.white,
                     getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
                       return touchedBarSpots.map((barSpot) {
                         final data = _chartRawData[barSpot.x.toInt()];
@@ -490,8 +510,10 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
                           ),
                           children: [
                             TextSpan(
-                              text: Provider.of<CurrencyProvider>(context, listen: false)
-                                  .formatAmount(barSpot.y),
+                              text: Provider.of<CurrencyProvider>(
+                                context,
+                                listen: false,
+                              ).formatAmount(barSpot.y),
                               style: const TextStyle(
                                 color: AppTheme.primaryColor,
                                 fontWeight: FontWeight.normal,
@@ -590,13 +612,12 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _salesHistory.take(10).length,
-              separatorBuilder: (context, index) => Divider(
-                color: isDark ? Colors.grey[800] : Colors.grey[200],
-              ),
+              separatorBuilder: (context, index) =>
+                  Divider(color: isDark ? Colors.grey[800] : Colors.grey[200]),
               itemBuilder: (context, index) {
                 final sale = _salesHistory[index];
-                final moveId = (sale['move_id'] is List &&
-                        sale['move_id'].isNotEmpty)
+                final moveId =
+                    (sale['move_id'] is List && sale['move_id'].isNotEmpty)
                     ? sale['move_id'][0] as int
                     : (sale['move_id'] is int ? sale['move_id'] as int : -1);
                 final customerName =
@@ -606,8 +627,7 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
                     : 'Unknown Invoice';
                 final dateStr = _orderDates[moveId] ?? sale['create_date'];
                 final date = dateStr != null
-                    ? DateFormat('MMM dd, yyyy')
-                        .format(DateTime.parse(dateStr))
+                    ? DateFormat('MMM dd, yyyy').format(DateTime.parse(dateStr))
                     : 'Unknown Date';
 
                 return ListTile(
@@ -643,7 +663,9 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        currencyProvider.formatAmount(sale['price_subtotal'] ?? 0.0),
+                        currencyProvider.formatAmount(
+                          sale['price_subtotal'] ?? 0.0,
+                        ),
                         style: TextStyle(
                           color: isDark ? Colors.white : Colors.black87,
                           fontWeight: FontWeight.bold,

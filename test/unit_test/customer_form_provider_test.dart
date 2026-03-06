@@ -19,21 +19,44 @@ void main() {
     });
 
     test('loadDropdownData should fetch options and update lists', () async {
+      when(
+        () => mockApiService.searchRead(
+          'res.country',
+          any(),
+          any(),
+          any(),
+          any(),
+          any(),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          {'id': 1, 'name': 'USA'},
+        ],
+      );
 
-      when(() => mockApiService.searchRead('res.country', any(), any(), any(), any(), any()))
-          .thenAnswer((_) async => [{'id': 1, 'name': 'USA'}]);
-      
+      when(
+        () => mockApiService.searchRead('res.partner.title', any(), any()),
+      ).thenAnswer(
+        (_) async => [
+          {'id': 1, 'name': 'Mr.'},
+        ],
+      );
 
-      when(() => mockApiService.searchRead('res.partner.title', any(), any()))
-          .thenAnswer((_) async => [{'id': 1, 'name': 'Mr.'}]);
-      
+      when(
+        () => mockApiService.searchRead('res.currency', any(), any()),
+      ).thenAnswer(
+        (_) async => [
+          {'id': 1, 'name': 'USD'},
+        ],
+      );
 
-      when(() => mockApiService.searchRead('res.currency', any(), any()))
-          .thenAnswer((_) async => [{'id': 1, 'name': 'USD'}]);
-      
-
-      when(() => mockApiService.searchRead('res.lang', any(), any()))
-          .thenAnswer((_) async => [{'code': 'en_US', 'name': 'English'}]);
+      when(
+        () => mockApiService.searchRead('res.lang', any(), any()),
+      ).thenAnswer(
+        (_) async => [
+          {'code': 'en_US', 'name': 'English'},
+        ],
+      );
 
       await provider.loadDropdownData();
 
@@ -46,8 +69,20 @@ void main() {
     });
 
     test('fetchStates should update stateOptions', () async {
-      when(() => mockApiService.searchRead('res.country.state', any(), any(), any(), any(), any()))
-          .thenAnswer((_) async => [{'id': 10, 'name': 'New York'}]);
+      when(
+        () => mockApiService.searchRead(
+          'res.country.state',
+          any(),
+          any(),
+          any(),
+          any(),
+          any(),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          {'id': 10, 'name': 'New York'},
+        ],
+      );
 
       await provider.fetchStates(1);
 

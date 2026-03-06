@@ -65,7 +65,10 @@ class Product {
   });
 
   static String? _parseString(dynamic value) {
-    if (value == null || value == false || value.toString() == 'false' || value.toString().isEmpty) {
+    if (value == null ||
+        value == false ||
+        value.toString() == 'false' ||
+        value.toString().isEmpty) {
       return null;
     }
     return value.toString();
@@ -91,17 +94,21 @@ class Product {
           ? _parseString(json['uom_id'][1])
           : null,
       qtyAvailable: (json['qty_available'] as num?)?.toDouble(),
-      categoryId: json['categ_id'] is List && (json['categ_id'] as List).isNotEmpty
+      categoryId:
+          json['categ_id'] is List && (json['categ_id'] as List).isNotEmpty
           ? json['categ_id'][0] as int?
           : null,
-      categoryName: json['categ_id'] is List && (json['categ_id'] as List).length > 1
+      categoryName:
+          json['categ_id'] is List && (json['categ_id'] as List).length > 1
           ? _parseString(json['categ_id'][1])
           : null,
       currencyId: json['currency_id'],
       taxesId: json['taxes_id'] is List ? json['taxes_id'] : null,
       productTmplId: json['product_tmpl_id'],
       productVariantCount: json['product_variant_count'] as int?,
-      productVariantIds: json['product_variant_ids'] is List ? json['product_variant_ids'] : null,
+      productVariantIds: json['product_variant_ids'] is List
+          ? json['product_variant_ids']
+          : null,
       weight: (json['weight'] as num?)?.toDouble(),
       volume: (json['volume'] as num?)?.toDouble(),
       active: json['active'] as bool? ?? true,
@@ -129,7 +136,9 @@ class Product {
       'default_code': defaultCode,
       'uom_id': uomId != null && uomName != null ? [uomId, uomName] : null,
       'qty_available': qtyAvailable,
-      'categ_id': categoryId != null && categoryName != null ? [categoryId, categoryName] : null,
+      'categ_id': categoryId != null && categoryName != null
+          ? [categoryId, categoryName]
+          : null,
       'currency_id': currencyId,
       'taxes_id': taxesId,
       'product_tmpl_id': productTmplId,

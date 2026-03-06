@@ -30,7 +30,8 @@ class PDFGenerator {
     const methodName = 'generateInvoicePdf';
     final String invoiceName = _safeString(invoice.name);
 
-    final hasPermission = await RuntimePermissionService.requestStoragePermission(context);
+    final hasPermission =
+        await RuntimePermissionService.requestStoragePermission(context);
     if (!hasPermission) return;
 
     final odooSession = await OdooSessionManager.getCurrentSession();
@@ -218,7 +219,8 @@ class PDFGenerator {
     const methodName = 'generatePaymentPdf';
     final String paymentName = _safeString(payment.name);
 
-    final hasPermission = await RuntimePermissionService.requestStoragePermission(context);
+    final hasPermission =
+        await RuntimePermissionService.requestStoragePermission(context);
     if (!hasPermission) return;
 
     final odooSession = await OdooSessionManager.getCurrentSession();

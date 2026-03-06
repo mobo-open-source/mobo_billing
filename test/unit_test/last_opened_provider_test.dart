@@ -17,15 +17,17 @@ void main() {
   group('LastOpenedProvider Tests', () {
     test('addItem should add item and keep max 10', () async {
       for (int i = 0; i < 12; i++) {
-        await provider.addItem(LastOpenedItem(
-          id: 'id_$i',
-          type: 'product',
-          title: 'Title $i',
-          subtitle: 'Subtitle $i',
-          route: '/route',
-          lastAccessed: DateTime.now(),
-          iconKey: 'page',
-        ));
+        await provider.addItem(
+          LastOpenedItem(
+            id: 'id_$i',
+            type: 'product',
+            title: 'Title $i',
+            subtitle: 'Subtitle $i',
+            route: '/route',
+            lastAccessed: DateTime.now(),
+            iconKey: 'page',
+          ),
+        );
       }
 
       expect(provider.items.length, 10);
@@ -33,11 +35,7 @@ void main() {
     });
 
     test('trackProductAccess should add product item', () async {
-      final product = Product(
-        id: 1,
-        name: 'Test Product',
-        listPrice: 100.0,
-      );
+      final product = Product(id: 1, name: 'Test Product', listPrice: 100.0);
 
       await provider.trackProductAccess(product: product);
 
@@ -47,15 +45,17 @@ void main() {
     });
 
     test('clearData should remove all items', () async {
-      await provider.addItem(LastOpenedItem(
-        id: '1',
-        type: 'product',
-        title: 'T',
-        subtitle: 'S',
-        route: '/R',
-        lastAccessed: DateTime.now(),
-        iconKey: 'page',
-      ));
+      await provider.addItem(
+        LastOpenedItem(
+          id: '1',
+          type: 'product',
+          title: 'T',
+          subtitle: 'S',
+          route: '/R',
+          lastAccessed: DateTime.now(),
+          iconKey: 'page',
+        ),
+      );
 
       await provider.clearData();
 

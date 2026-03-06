@@ -13,15 +13,14 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     mockApiService = MockOdooApiService();
     mockSessionService = MockSessionService();
-    
 
     when(() => mockApiService.initialize(any(), any())).thenReturn(null);
     when(() => mockApiService.userInfo).thenReturn(<String, dynamic>{
       'name': 'Test User',
       'image_128': null,
-      'context': <String, dynamic>{}
+      'context': <String, dynamic>{},
     });
-    
+
     provider = AuthProvider(
       apiService: mockApiService,
       sessionService: mockSessionService,
@@ -30,10 +29,20 @@ void main() {
 
   group('AuthProvider Tests', () {
     test('login should succeed with valid credentials', () async {
-      when(() => mockApiService.authenticate('admin', 'password'))
-          .thenAnswer((_) async => <String, dynamic>{'success': true, 'uid': 1, 'session_id': 'sid'});
+      when(() => mockApiService.authenticate('admin', 'password')).thenAnswer(
+        (_) async => <String, dynamic>{
+          'success': true,
+          'uid': 1,
+          'session_id': 'sid',
+        },
+      );
 
-      final result = await provider.login('https://test.com', 'db', 'admin', 'password');
+      final result = await provider.login(
+        'https://test.com',
+        'db',
+        'admin',
+        'password',
+      );
 
       expect(result, true);
       expect(provider.isAuthenticated, true);
@@ -42,10 +51,16 @@ void main() {
     });
 
     test('login should fail with invalid credentials', () async {
-      when(() => mockApiService.authenticate('bad', 'bad'))
-          .thenAnswer((_) async => <String, dynamic>{'success': false});
+      when(
+        () => mockApiService.authenticate('bad', 'bad'),
+      ).thenAnswer((_) async => <String, dynamic>{'success': false});
 
-      final result = await provider.login('https://test.com', 'db', 'bad', 'bad');
+      final result = await provider.login(
+        'https://test.com',
+        'db',
+        'bad',
+        'bad',
+      );
 
       expect(result, false);
       expect(provider.isAuthenticated, false);
@@ -53,9 +68,13 @@ void main() {
     });
 
     test('logout should clear user and call session logout', () async {
-
-      when(() => mockApiService.authenticate(any(), any()))
-          .thenAnswer((_) async => <String, dynamic>{'success': true, 'uid': 1, 'session_id': 'sid'});
+      when(() => mockApiService.authenticate(any(), any())).thenAnswer(
+        (_) async => <String, dynamic>{
+          'success': true,
+          'uid': 1,
+          'session_id': 'sid',
+        },
+      );
       await provider.login('url', 'db', 'user', 'pass');
 
       when(() => mockSessionService.logout()).thenAnswer((_) async => {});
@@ -67,13 +86,18 @@ void main() {
       verify(() => mockSessionService.logout()).called(1);
     });
 
-    test('checkRequiredModules should return true if account module is installed', () async {
-      when(() => mockApiService.isModuleInstalled('account')).thenAnswer((_) async => true);
+    test(
+      'checkRequiredModules should return true if account module is installed',
+      () async {
+        when(
+          () => mockApiService.isModuleInstalled('account'),
+        ).thenAnswer((_) async => true);
 
-      final result = await provider.checkRequiredModules();
+        final result = await provider.checkRequiredModules();
 
-      expect(result, true);
-      verify(() => mockApiService.isModuleInstalled('account')).called(1);
-    });
+        expect(result, true);
+        verify(() => mockApiService.isModuleInstalled('account')).called(1);
+      },
+    );
   });
 }

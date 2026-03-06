@@ -26,10 +26,11 @@ class CustomerFilter {
     this.createdBefore,
   });
 
-
   /// Generates an Odoo RPC domain list from the filter criteria.
   List<dynamic> toDomain() {
-    List<dynamic> domain = [['active', '=', true]];
+    List<dynamic> domain = [
+      ['active', '=', true],
+    ];
 
     if (name != null && name!.isNotEmpty) {
       domain.add(['name', 'ilike', name]);
@@ -85,7 +86,6 @@ class CustomerFilter {
     return domain;
   }
 
-
   bool get hasActiveFilters {
     return name != null && name!.isNotEmpty ||
         email != null && email!.isNotEmpty ||
@@ -98,7 +98,6 @@ class CustomerFilter {
         createdAfter != null ||
         createdBefore != null;
   }
-
 
   int get activeFilterCount {
     int count = 0;
@@ -114,7 +113,6 @@ class CustomerFilter {
     if (createdBefore != null) count++;
     return count;
   }
-
 
   /// Returns a copy of the filter with updated values.
   CustomerFilter copyWith({
@@ -150,11 +148,14 @@ class CustomerFilter {
       hasEmail: clearHasEmail ? null : (hasEmail ?? this.hasEmail),
       hasPhone: clearHasPhone ? null : (hasPhone ?? this.hasPhone),
       category: category ?? this.category,
-      createdAfter: clearCreatedAfter ? null : (createdAfter ?? this.createdAfter),
-      createdBefore: clearCreatedBefore ? null : (createdBefore ?? this.createdBefore),
+      createdAfter: clearCreatedAfter
+          ? null
+          : (createdAfter ?? this.createdAfter),
+      createdBefore: clearCreatedBefore
+          ? null
+          : (createdBefore ?? this.createdBefore),
     );
   }
-
 
   CustomerFilter clear() {
     return const CustomerFilter();

@@ -634,7 +634,6 @@ class OdooApiService {
     return null;
   }
 
-
   /// Reads specified fields for a list of record IDs from an Odoo model.
   Future<List<Map<String, dynamic>>> read(
     String model,

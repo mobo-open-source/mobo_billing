@@ -56,8 +56,13 @@ class OdooSessionModel {
 
   /// Converts a raw OdooSession into the enriched OdooSessionModel.
   factory OdooSessionModel.fromOdooSession(
-      OdooSession session, String userLogin, String password, String serverUrl, String database,
-      [String? userName]) {
+    OdooSession session,
+    String userLogin,
+    String password,
+    String serverUrl,
+    String database, [
+    String? userName,
+  ]) {
     return OdooSessionModel(
       sessionId: session.id,
       userLogin: userLogin,
@@ -102,7 +107,6 @@ class OdooSessionModel {
   /// Persists the current session details to local SharedPreferences.
   Future<void> saveToPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    
 
     final biometricEnabled = prefs.getBool('biometric_enabled');
 
@@ -113,12 +117,18 @@ class OdooSessionModel {
     await prefs.setString('serverUrl', serverUrl);
     if (userId != null) await prefs.setInt('userId', userId!);
     if (userName != null) await prefs.setString('userName', userName!);
-    if (expiresAt != null) await prefs.setString('expiresAt', expiresAt!.toIso8601String());
-    if (selectedCompanyId != null) await prefs.setInt('selectedCompanyId', selectedCompanyId!);
-    if (serverVersion != null) await prefs.setString('serverVersion', serverVersion!);
-    
-    await prefs.setStringList('allowedCompanyIds', allowedCompanyIds.map((e) => e.toString()).toList());
-    
+    if (expiresAt != null)
+      await prefs.setString('expiresAt', expiresAt!.toIso8601String());
+    if (selectedCompanyId != null)
+      await prefs.setInt('selectedCompanyId', selectedCompanyId!);
+    if (serverVersion != null)
+      await prefs.setString('serverVersion', serverVersion!);
+
+    await prefs.setStringList(
+      'allowedCompanyIds',
+      allowedCompanyIds.map((e) => e.toString()).toList(),
+    );
+
     await prefs.setBool('isLoggedIn', true);
 
     if (biometricEnabled != null) {
@@ -145,7 +155,13 @@ class OdooSessionModel {
     final serverVersion = prefs.getString('serverVersion');
     final allowedCompanyIdsStr = prefs.getStringList('allowedCompanyIds') ?? [];
 
-    if ([sessionId, userLogin, password, rawServerUrl, database].contains(null)) {
+    if ([
+      sessionId,
+      userLogin,
+      password,
+      rawServerUrl,
+      database,
+    ].contains(null)) {
       return null;
     }
 

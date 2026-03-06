@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:hugeicons/hugeicons.dart';
 
-
 class ActiveFiltersBadge extends StatelessWidget {
   final int count;
   final bool hasGroupBy;
@@ -45,12 +44,6 @@ class ActiveFiltersBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-
-
-
-
-
-
           Text(
             '$count active',
             style: TextStyle(
@@ -64,7 +57,6 @@ class ActiveFiltersBadge extends StatelessWidget {
     );
   }
 }
-
 
 class GroupByPill extends StatelessWidget {
   final String label;

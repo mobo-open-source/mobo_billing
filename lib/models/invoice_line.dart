@@ -31,7 +31,10 @@ class InvoiceLine {
   /// Creates an InvoiceLine from an Odoo RPC JSON map.
   factory InvoiceLine.fromJson(Map<String, dynamic> json) {
     String? getString(dynamic value) {
-      if (value == null || value == false || value.toString().toLowerCase() == 'false') return null;
+      if (value == null ||
+          value == false ||
+          value.toString().toLowerCase() == 'false')
+        return null;
       return value.toString();
     }
 
@@ -46,26 +49,28 @@ class InvoiceLine {
       return null;
     }
 
-
     int? productId;
     String? productName;
     if (json['product_id'] is List && (json['product_id'] as List).isNotEmpty) {
       productId = json['product_id'][0] as int?;
-      productName = json['product_id'].length > 1 ? json['product_id'][1]?.toString() : null;
+      productName = json['product_id'].length > 1
+          ? json['product_id'][1]?.toString()
+          : null;
     } else if (json['product_id'] is int) {
       productId = json['product_id'] as int;
     }
 
-
     int? uomId;
     String? uomName;
-    if (json['product_uom_id'] is List && (json['product_uom_id'] as List).isNotEmpty) {
+    if (json['product_uom_id'] is List &&
+        (json['product_uom_id'] as List).isNotEmpty) {
       uomId = json['product_uom_id'][0] as int?;
-      uomName = json['product_uom_id'].length > 1 ? json['product_uom_id'][1]?.toString() : null;
+      uomName = json['product_uom_id'].length > 1
+          ? json['product_uom_id'][1]?.toString()
+          : null;
     } else if (json['product_uom_id'] is int) {
       uomId = json['product_uom_id'] as int;
     }
-
 
     List<int> taxIds = [];
     List<String> taxNames = [];
@@ -106,7 +111,9 @@ class InvoiceLine {
       'discount': discount,
       'price_subtotal': priceSubtotal,
       'price_total': priceTotal,
-      'product_uom_id': productUomId != null ? [productUomId, productUomName] : null,
+      'product_uom_id': productUomId != null
+          ? [productUomId, productUomName]
+          : null,
       'tax_ids': taxIds,
     };
   }

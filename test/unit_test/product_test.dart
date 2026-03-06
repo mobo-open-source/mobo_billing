@@ -33,22 +33,25 @@ void main() {
       expect(product.categoryName, 'Electronics');
     });
 
-    test('Product.fromJson should handle null/false values using _parseString', () {
-      final json = {
-        'id': 502,
-        'name': false,
-        'description': null,
-        'default_code': '',
-        'list_price': null,
-      };
+    test(
+      'Product.fromJson should handle null/false values using _parseString',
+      () {
+        final json = {
+          'id': 502,
+          'name': false,
+          'description': null,
+          'default_code': '',
+          'list_price': null,
+        };
 
-      final product = Product.fromJson(json);
+        final product = Product.fromJson(json);
 
-      expect(product.name, 'Unknown Product');
-      expect(product.description, isNull);
-      expect(product.defaultCode, isNull);
-      expect(product.listPrice, isNull);
-    });
+        expect(product.name, 'Unknown Product');
+        expect(product.description, isNull);
+        expect(product.defaultCode, isNull);
+        expect(product.listPrice, isNull);
+      },
+    );
 
     test('Product.toJson should return correct map', () {
       final product = Product(
