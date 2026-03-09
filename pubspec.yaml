@@ -106,6 +106,7 @@ flutter:
     - assets/lotti/
     - assets/splash/billing.mp4
     - assets/fonts/YaroRg-Bold.ttf
+    - shorebird.yaml
 
   fonts:
     - family: YaroRg

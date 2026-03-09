@@ -1,11 +1,13 @@
-# Miscellaneous
 key.properties
+*.save
+*.pem
 *.keystore
 *.jks
 *.class
 *.log
 *.pyc
 *.swp
+*.txt
 .DS_Store
 .atom/
 .build/
@@ -60,7 +62,7 @@ android/key.properties
 ios/Flutter/Generated.xcconfig
 ios/Flutter/flutter_export_environment.sh
 ios/Flutter/ephemeral/
-ios/Flutter/AppFrameworkInfo.plist
+# ios/Flutter/AppFrameworkInfo.plist (Restored)
 DerivedData/
 *.pbxuser
 *.mode1v3
@@ -73,11 +75,9 @@ xcuserdata/
 *.lock
 *.dat
 
-# Linux related
-linux/flutter/ephemeral/
-
-# macOS related
-macos/Flutter/ephemeral/
+# Shorebird
+.shorebird/
+shorebird_*.log
 
 # SonarQube
 .scannerwork/
