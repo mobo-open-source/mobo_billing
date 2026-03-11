@@ -25,7 +25,7 @@ class CustomRatingDialog extends StatefulWidget {
       barrierDismissible: false,
       builder: (context) => CustomRatingDialog(
         onGoodReview: (rating, comment) async {
-          Navigator.pop(context);
+          if (context.mounted) Navigator.pop(context);
           await ReviewService().neverAskAgain();
           ReviewService().forceRequestReview();
         },
@@ -246,7 +246,8 @@ class _CustomRatingDialogState extends State<CustomRatingDialog> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () {
+                    onPressed: () async {
+                      await ReviewService().postponeReview();
                       if (mounted) Navigator.pop(context);
                     },
                     child: Text(
