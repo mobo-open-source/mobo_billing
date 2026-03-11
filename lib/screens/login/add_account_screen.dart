@@ -9,9 +9,18 @@ import 'package:mobo_billing/services/session_service.dart';
 import 'package:mobo_billing/services/odoo_session_manager.dart';
 import 'package:mobo_billing/services/odoo_api_service.dart';
 import 'package:mobo_billing/screens/login/login_layout.dart'
-    show LoginLayout, LoginTextField, LoginButton, LoginErrorDisplay, LoginUrlTextField, LoginDropdownField;
+    show
+        LoginLayout,
+        LoginTextField,
+        LoginButton,
+        LoginErrorDisplay,
+        LoginUrlTextField,
+        LoginDropdownField;
 import 'package:mobo_billing/widgets/custom_snackbar.dart';
 import 'package:mobo_billing/screens/login/totp_page.dart';
+import 'package:mobo_billing/widgets/module_missing_dialog.dart';
+import 'package:provider/provider.dart';
+import 'package:mobo_billing/providers/auth_provider.dart';
 
 enum AddAccountStep { server, credentials }
 
@@ -25,7 +34,7 @@ class AddAccountScreen extends StatefulWidget {
 class _AddAccountScreenState extends State<AddAccountScreen> {
   final _formKey = GlobalKey<FormState>();
   final _urlController = TextEditingController();
-    final _emailController = TextEditingController();
+  final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _emailFocus = FocusNode();
   final _passwordFocus = FocusNode();
@@ -48,7 +57,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   List<String> _databases = [];
   List<String> _urlHistory = [];
   Timer? _debounceTimer;
-    
+
   @override
   void initState() {
     super.initState();
@@ -59,9 +68,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final sessionService = SessionService.instance;
     final currentSession = sessionService.currentSession;
     final prefs = await SharedPreferences.getInstance();
-    
+
     final urlHistoryList = prefs.getStringList('previous_server_urls') ?? [];
-    
+
     if (mounted) {
       setState(() {
         _urlHistory = urlHistoryList;
@@ -71,7 +80,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     if (currentSession != null) {
       String cleanUrl = currentSession.serverUrl;
       String protocol = 'https://';
-      
+
       if (cleanUrl.startsWith('https://')) {
         protocol = 'https://';
         cleanUrl = cleanUrl.substring(8);
@@ -86,12 +95,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           _urlController.text = cleanUrl;
           _selectedDatabase = currentSession.database;
         });
-        
 
         _validateUrlAndFetchDatabases();
       }
-      
-
     }
   }
 
@@ -128,7 +134,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       _dbHasError = false;
       _errorMessage = null;
       _shouldValidate = false;
-                });
+    });
     _debounceTimer?.cancel();
     if (domain.trim().isNotEmpty && _isValidUrl(domain.trim())) {
       _validateUrlAndFetchDatabases();
@@ -139,11 +145,12 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     try {
       String urlToValidate = url.trim();
       if (urlToValidate.isEmpty) return false;
-      
-      if (!urlToValidate.startsWith('http://') && !urlToValidate.startsWith('https://')) {
+
+      if (!urlToValidate.startsWith('http://') &&
+          !urlToValidate.startsWith('https://')) {
         urlToValidate = '$_selectedProtocol$urlToValidate';
       }
-      
+
       final uri = Uri.parse(urlToValidate);
       if (!uri.hasScheme || uri.host.isEmpty) {
         return false;
@@ -159,12 +166,12 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       if (host.contains(' ') || host.startsWith('.') || host.endsWith('.')) {
         return false;
       }
-      
+
       final validHostPattern = RegExp(r'^[a-zA-Z0-9.-]+$');
       if (!validHostPattern.hasMatch(host)) {
         return false;
       }
-      
+
       return true;
     } catch (e) {
       return false;
@@ -175,18 +182,19 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     if (url.trim().isEmpty) {
       return null;
     }
-    
+
     if (!_isValidUrl(url)) {
       return 'Please enter a valid server URL';
     }
-    
+
     return null;
   }
 
   String _normalizeUrl(String url) {
     String normalizedUrl = url.trim();
 
-    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+    if (!normalizedUrl.startsWith('http://') &&
+        !normalizedUrl.startsWith('https://')) {
       normalizedUrl = '$_selectedProtocol$normalizedUrl';
     }
 
@@ -211,7 +219,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   Future<void> _validateUrlAndFetchDatabases() async {
     final trimmedUrl = _urlController.text.trim();
-    
+
     if (trimmedUrl.isEmpty) {
       setState(() {
         _databases.clear();
@@ -221,7 +229,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       });
       return;
     }
-    
+
     if (!_isValidUrl(trimmedUrl)) {
       setState(() {
         _databases.clear();
@@ -233,38 +241,41 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     }
 
     if (!mounted) return;
-    
+
     setState(() {
       _isLoadingDatabases = true;
       _errorMessage = null;
       _databases.clear();
-                      });
+    });
 
     try {
       final baseUrl = _normalizeUrl(trimmedUrl);
-      
-      
-      final databases = await OdooApiService().listDatabasesForUrl(baseUrl)
+
+      final databases = await OdooApiService()
+          .listDatabasesForUrl(baseUrl)
           .timeout(
             const Duration(seconds: 15),
             onTimeout: () {
-              throw Exception('Connection timeout. Please check your internet connection.');
+              throw Exception(
+                'Connection timeout. Please check your internet connection.',
+              );
             },
           );
-      
+
       if (!mounted) return;
-      
+
       final previousSelected = _selectedDatabase;
       setState(() {
         _databases = databases;
-        
+
         _isLoadingDatabases = false;
         _urlHasError = false;
         if (_databases.isEmpty) {
           _selectedDatabase = null;
           _errorMessage = null;
         } else {
-          if (previousSelected != null && _databases.contains(previousSelected)) {
+          if (previousSelected != null &&
+              _databases.contains(previousSelected)) {
             _selectedDatabase = previousSelected;
           } else {
             _selectedDatabase = _databases.first;
@@ -273,22 +284,19 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         }
       });
 
-
       if (mounted && _databases.isEmpty) {
-        
         final defaultDb = await OdooApiService.getDefaultDatabase(baseUrl);
         if (!mounted) return;
         setState(() {
           if (defaultDb != null && defaultDb.isNotEmpty) {
-            
             _databases = [defaultDb];
             _selectedDatabase = defaultDb;
             _errorMessage = null;
             _dbInfoMessage = 'Detected default database: ' + defaultDb;
           } else {
-            
             _selectedDatabase = null;
-            _errorMessage = 'This server does not expose the database list and no default database could be detected.';
+            _errorMessage =
+                'This server does not expose the database list and no default database could be detected.';
             _dbInfoMessage = null;
           }
         });
@@ -297,8 +305,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       if (!mounted) return;
       final errStr = e.toString();
       if (errStr.contains('ACCESS_DENIED_DB_LIST')) {
-        
-
         final baseUrl = _normalizeUrl(trimmedUrl);
         final defaultDb = await OdooApiService.getDefaultDatabase(baseUrl);
         if (!mounted) return;
@@ -306,34 +312,40 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           _isLoadingDatabases = false;
           _databases.clear();
           if (defaultDb != null && defaultDb.isNotEmpty) {
-            
             _databases = [defaultDb];
             _selectedDatabase = defaultDb;
             _errorMessage = null;
             _dbInfoMessage = 'Detected default database: ' + defaultDb;
           } else {
-            
             _selectedDatabase = null;
-            _errorMessage = 'Database list is disabled on this server and default database could not be detected.';
+            _errorMessage =
+                'Database list is disabled on this server and default database could not be detected.';
             _dbInfoMessage = null;
           }
         });
       } else {
-        String errorMessage = 'Could not connect to server. Please check the URL and try again.';
+        String errorMessage =
+            'Could not connect to server. Please check the URL and try again.';
 
-        if (errStr.contains('timeout') || errStr.contains('Connection timeout')) {
-          errorMessage = 'Connection timeout. Please check your internet connection and try again.';
+        if (errStr.contains('timeout') ||
+            errStr.contains('Connection timeout')) {
+          errorMessage =
+              'Connection timeout. Please check your internet connection and try again.';
         } else if (errStr.contains('404') || errStr.contains('not found')) {
           errorMessage = 'Server not found. Please verify the URL is correct.';
-        } else if (errStr.contains('connection') || errStr.contains('network') || errStr.contains('SocketException')) {
-          errorMessage = 'Unable to connect to server. Check URL and network connection.';
-        } else if (errStr.contains('FormatException') || errStr.contains('Invalid')) {
-          errorMessage = 'Invalid server URL format. Please check and try again.';
+        } else if (errStr.contains('connection') ||
+            errStr.contains('network') ||
+            errStr.contains('SocketException')) {
+          errorMessage =
+              'Unable to connect to server. Check URL and network connection.';
+        } else if (errStr.contains('FormatException') ||
+            errStr.contains('Invalid')) {
+          errorMessage =
+              'Invalid server URL format. Please check and try again.';
         }
 
-
         final baseUrl = _normalizeUrl(trimmedUrl);
-        
+
         final defaultDb = await OdooApiService.getDefaultDatabase(baseUrl);
         if (!mounted) return;
         if (defaultDb != null && defaultDb.isNotEmpty) {
@@ -345,7 +357,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
             _dbInfoMessage = 'Detected default database: ' + defaultDb;
           });
         } else {
-          
           setState(() {
             _isLoadingDatabases = false;
             _databases.clear();
@@ -361,11 +372,11 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   String _getFullUrl() {
     final url = _urlController.text.trim();
     if (url.isEmpty) return '';
-    
+
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return url;
     }
-    
+
     return '$_selectedProtocol$url';
   }
 
@@ -386,8 +397,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     });
 
     try {
-      
-
       final newSession = await OdooSessionManager.authenticate(
         serverUrl: fullUrl,
         database: finalDb,
@@ -396,7 +405,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       );
 
       if (newSession == null) {
-        
         setState(() {
           _errorMessage =
               'Authentication failed. Please check your credentials.';
@@ -406,8 +414,24 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       }
 
       final sessionService = SessionService.instance;
-      await sessionService.storeAccount(newSession, _passwordController.text);
 
+      if (mounted) {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        final isBillingInstalled = await authProvider.checkRequiredModules();
+
+        if (!isBillingInstalled) {
+          await authProvider.logout();
+          if (mounted) {
+            showModuleMissingDialog(context);
+            setState(() {
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+      }
+
+      await sessionService.storeAccount(newSession, _passwordController.text);
 
       try {
         final prefs = await SharedPreferences.getInstance();
@@ -422,13 +446,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
       await sessionService.switchToAccount(newSession);
 
-
       try {
         TextInput.finishAutofillContext(shouldSave: true);
       } catch (_) {}
-
-      
-
 
       if (!mounted) return;
 
@@ -441,10 +461,10 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         }
       });
     } catch (e) {
-      
-      
       final errorStr = e.toString().toLowerCase();
-      if (errorStr.contains('null') || errorStr.contains('two factor') || errorStr.contains('2fa')) {
+      if (errorStr.contains('null') ||
+          errorStr.contains('two factor') ||
+          errorStr.contains('2fa')) {
         if (mounted) {
           final result = await Navigator.push(
             context,
@@ -461,17 +481,34 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           );
 
           if (result == true) {
-
             try {
               final session = await OdooSessionManager.getCurrentSession();
               if (session != null) {
+                final authProvider = Provider.of<AuthProvider>(
+                  context,
+                  listen: false,
+                );
+                final isBillingInstalled = await authProvider
+                    .checkRequiredModules();
+
+                if (!isBillingInstalled) {
+                  await authProvider.logout();
+                  if (mounted) {
+                    showModuleMissingDialog(context);
+                  }
+                  return;
+                }
+
                 final sessionService = SessionService.instance;
-                await sessionService.storeAccount(session, _passwordController.text);
-                
+                await sessionService.storeAccount(
+                  session,
+                  _passwordController.text,
+                );
 
                 try {
                   final prefs = await SharedPreferences.getInstance();
-                  List<String> urls = prefs.getStringList('previous_server_urls') ?? [];
+                  List<String> urls =
+                      prefs.getStringList('previous_server_urls') ?? [];
                   urls.removeWhere((u) => u == fullUrl);
                   urls.insert(0, fullUrl);
                   if (urls.length > 10) {
@@ -484,7 +521,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 try {
                   TextInput.finishAutofillContext(shouldSave: true);
                 } catch (_) {}
-                
+
                 if (mounted) {
                   CustomSnackbar.showSuccess(
                     context,
@@ -493,11 +530,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 }
                 return;
               }
-            } catch (e) {
-              
-            }
+            } catch (e) {}
           }
-          
+
           setState(() {
             _isLoading = false;
           });
@@ -524,13 +559,16 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       return 'Invalid username or password. Please check your credentials and try again.';
     }
 
-
     if ((errorLower.contains('database') && errorLower.contains('not found')) ||
-        (errorLower.contains('database') && errorLower.contains('does not exist')) ||
-        (errorLower.contains('psycopg2.operationalerror') && errorLower.contains('does not exist')) ||
-        (errorLower.contains('fatal:') && errorLower.contains('does not exist'))) {
-
-      final dbNameMatch = RegExp(r'database\s+"?([A-Za-z0-9_\-]+)"?\s+does not exist').firstMatch(error);
+        (errorLower.contains('database') &&
+            errorLower.contains('does not exist')) ||
+        (errorLower.contains('psycopg2.operationalerror') &&
+            errorLower.contains('does not exist')) ||
+        (errorLower.contains('fatal:') &&
+            errorLower.contains('does not exist'))) {
+      final dbNameMatch = RegExp(
+        r'database\s+"?([A-Za-z0-9_\-]+)"?\s+does not exist',
+      ).firstMatch(error);
       final dbName = dbNameMatch != null ? dbNameMatch.group(1) : null;
       if (dbName != null && dbName!.isNotEmpty) {
         return 'The database "$dbName" does not exist on this server. Please verify the name or contact your administrator.';
@@ -566,8 +604,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
     return LoginLayout(
       title: 'Add Account',
-      subtitle: _currentStep == AddAccountStep.server 
-          ? 'Configure your server connection' 
+      subtitle: _currentStep == AddAccountStep.server
+          ? 'Configure your server connection'
           : 'Enter your credentials',
       backButton: Positioned(
         top: 24,
@@ -637,7 +675,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                     _urlHasError = false;
                     _errorMessage = null;
                   });
-                  
+
                   _debounceTimer = Timer(const Duration(milliseconds: 700), () {
                     if (mounted) {
                       _validateUrlAndFetchDatabases();
@@ -651,13 +689,16 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   hint: _isLoadingDatabases ? 'Loading...' : 'Database',
                   value: _selectedDatabase,
                   items: _databases,
-                  onChanged: _isLoading || _isLoadingDatabases ? null : (String? newValue) {
-                    setState(() {
-                      _selectedDatabase = newValue;
-                      _dbHasError = (newValue == null || newValue.isEmpty);
-                      _errorMessage = null;
-                    });
-                  },
+                  onChanged: _isLoading || _isLoadingDatabases
+                      ? null
+                      : (String? newValue) {
+                          setState(() {
+                            _selectedDatabase = newValue;
+                            _dbHasError =
+                                (newValue == null || newValue.isEmpty);
+                            _errorMessage = null;
+                          });
+                        },
                   validator: (value) {
                     if (!_shouldValidate) return null;
                     if (value == null || value.isEmpty) {
@@ -691,7 +732,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               LoginButton(
                 text: 'Next',
                 isLoading: _isLoadingDatabases,
-                isEnabled: (!_isLoadingDatabases) && (_selectedDatabase != null),
+                isEnabled:
+                    (!_isLoadingDatabases) && (_selectedDatabase != null),
                 onPressed: () {
                   setState(() {
                     _shouldValidate = true;
@@ -717,143 +759,146 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-              LoginTextField(
-                controller: _emailController,
-                hint: 'Email / Username',
-                prefixIcon: Transform.scale(
-                  scale: 20 / 24.0,
-                  child: HugeIcon(
-                    icon: HugeIcons.strokeRoundedMail01,
-                    color: _isLoading ? Colors.black26 : Colors.black54,
-                  ),
-                ),
-                keyboardType: TextInputType.emailAddress,
-                enabled: !_isLoading,
-                focusNode: _emailFocus,
-                hasError: _emailHasError,
-                autofillHints: const [AutofillHints.username, AutofillHints.email],
-                autovalidateMode: _shouldValidate
-                    ? AutovalidateMode.onUserInteraction
-                    : AutovalidateMode.disabled,
-                validator: (value) {
-                  if (!_shouldValidate) return null;
-                  if (value == null || value.isEmpty) {
-                    return 'Email is required';
-                  }
-                  return null;
-                },
-                onChanged: (val) {
-                  setState(() {
-                    _emailHasError = val.isEmpty;
-                    if (_inlineError != null) {
-                      _inlineError = null;
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-
-              LoginTextField(
-                controller: _passwordController,
-                hint: 'Password',
-                prefixIcon: Transform.scale(
-                  scale: 20 / 24.0,
-                  child: HugeIcon(
-                    icon: HugeIcons.strokeRoundedLockPassword,
-                    color: _isLoading ? Colors.black26 : Colors.black54,
-                  ),
-                ),
-                obscureText: _obscurePassword,
-                enabled: !_isLoading,
-                focusNode: _passwordFocus,
-                hasError: _passwordHasError,
-                autofillHints: const [AutofillHints.password],
-                autovalidateMode: _shouldValidate
-                    ? AutovalidateMode.onUserInteraction
-                    : AutovalidateMode.disabled,
-                validator: (value) {
-                  if (!_shouldValidate) return null;
-                  if (value == null || value.isEmpty) {
-                    return 'Password is required';
-                  }
-                  return null;
-                },
-                suffixIcon: IconButton(
-                  icon: Transform.scale(
-                    scale: 20 / 24.0,
-                    child: HugeIcon(
-                      icon: _obscurePassword
-                          ? HugeIcons.strokeRoundedView
-                          : HugeIcons.strokeRoundedViewOff,
-                      color: Colors.black54,
-                    ),
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscurePassword = !_obscurePassword;
-                    });
-                  },
-                ),
-                onChanged: (val) {
-                  setState(() {
-                    _passwordHasError = val.isEmpty;
-                    if (_inlineError != null) {
-                      _inlineError = null;
-                    }
-                  });
-                },
-              ),
-              SizedBox(height: _inlineError != null ? 16 : 0),
-
-              LoginErrorDisplay(error: _inlineError),
-
-              LoginButton(
-                text: 'Add Account',
-                isLoading: _isLoading,
-                loadingWidget: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Adding Account',
-                      style: GoogleFonts.manrope(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                    LoginTextField(
+                      controller: _emailController,
+                      hint: 'Email / Username',
+                      prefixIcon: Transform.scale(
+                        scale: 20 / 24.0,
+                        child: HugeIcon(
+                          icon: HugeIcons.strokeRoundedMail01,
+                          color: _isLoading ? Colors.black26 : Colors.black54,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    LoadingAnimationWidget.staggeredDotsWave(
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                  ],
-                ),
-                onPressed: _isLoading
-                    ? null
-                    : () async {
-                        FocusScope.of(context).unfocus();
-                        setState(() {
-                          _shouldValidate = true;
-                        });
-
-                        final formValid =
-                            _formKey.currentState?.validate() ?? false;
-                        
-                        if (!formValid) {
-                          await HapticFeedback.lightImpact();
-                          return;
+                      keyboardType: TextInputType.emailAddress,
+                      enabled: !_isLoading,
+                      focusNode: _emailFocus,
+                      hasError: _emailHasError,
+                      autofillHints: const [
+                        AutofillHints.username,
+                        AutofillHints.email,
+                      ],
+                      autovalidateMode: _shouldValidate
+                          ? AutovalidateMode.onUserInteraction
+                          : AutovalidateMode.disabled,
+                      validator: (value) {
+                        if (!_shouldValidate) return null;
+                        if (value == null || value.isEmpty) {
+                          return 'Email is required';
                         }
-
-                        await _addAccount();
-
-                        if (!mounted) return;
-                        if (_errorMessage != null) {
-                          await HapticFeedback.heavyImpact();
-                          setState(() {
-                            _inlineError = _errorMessage;
-                          });
-                        }
+                        return null;
                       },
-              ),
+                      onChanged: (val) {
+                        setState(() {
+                          _emailHasError = val.isEmpty;
+                          if (_inlineError != null) {
+                            _inlineError = null;
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    LoginTextField(
+                      controller: _passwordController,
+                      hint: 'Password',
+                      prefixIcon: Transform.scale(
+                        scale: 20 / 24.0,
+                        child: HugeIcon(
+                          icon: HugeIcons.strokeRoundedLockPassword,
+                          color: _isLoading ? Colors.black26 : Colors.black54,
+                        ),
+                      ),
+                      obscureText: _obscurePassword,
+                      enabled: !_isLoading,
+                      focusNode: _passwordFocus,
+                      hasError: _passwordHasError,
+                      autofillHints: const [AutofillHints.password],
+                      autovalidateMode: _shouldValidate
+                          ? AutovalidateMode.onUserInteraction
+                          : AutovalidateMode.disabled,
+                      validator: (value) {
+                        if (!_shouldValidate) return null;
+                        if (value == null || value.isEmpty) {
+                          return 'Password is required';
+                        }
+                        return null;
+                      },
+                      suffixIcon: IconButton(
+                        icon: Transform.scale(
+                          scale: 20 / 24.0,
+                          child: HugeIcon(
+                            icon: _obscurePassword
+                                ? HugeIcons.strokeRoundedView
+                                : HugeIcons.strokeRoundedViewOff,
+                            color: Colors.black54,
+                          ),
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                      ),
+                      onChanged: (val) {
+                        setState(() {
+                          _passwordHasError = val.isEmpty;
+                          if (_inlineError != null) {
+                            _inlineError = null;
+                          }
+                        });
+                      },
+                    ),
+                    SizedBox(height: _inlineError != null ? 16 : 0),
+
+                    LoginErrorDisplay(error: _inlineError),
+
+                    LoginButton(
+                      text: 'Add Account',
+                      isLoading: _isLoading,
+                      loadingWidget: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Adding Account',
+                            style: GoogleFonts.manrope(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          LoadingAnimationWidget.staggeredDotsWave(
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                        ],
+                      ),
+                      onPressed: _isLoading
+                          ? null
+                          : () async {
+                              FocusScope.of(context).unfocus();
+                              setState(() {
+                                _shouldValidate = true;
+                              });
+
+                              final formValid =
+                                  _formKey.currentState?.validate() ?? false;
+
+                              if (!formValid) {
+                                await HapticFeedback.lightImpact();
+                                return;
+                              }
+
+                              await _addAccount();
+
+                              if (!mounted) return;
+                              if (_errorMessage != null) {
+                                await HapticFeedback.heavyImpact();
+                                setState(() {
+                                  _inlineError = _errorMessage;
+                                });
+                              }
+                            },
+                    ),
                   ],
                 ),
               ),

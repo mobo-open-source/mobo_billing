@@ -43,7 +43,8 @@ class InvoiceExportProvider extends ChangeNotifier {
     required String format,
     required String status,
   }) async {
-    final hasPermission = await _permissionService.requestStoragePermissionInstance(context);
+    final hasPermission = await _permissionService
+        .requestStoragePermissionInstance(context);
     if (!hasPermission) return;
 
     _setExporting(true);

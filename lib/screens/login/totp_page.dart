@@ -9,6 +9,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/odoo_session_manager.dart';
 import '../../services/session_service.dart';
 import '../main_app_screen.dart';
+import '../../widgets/module_missing_dialog.dart';
 
 class TotpPage extends StatefulWidget {
   final String serverUrl;
@@ -664,11 +665,7 @@ class _TotpPageState extends State<TotpPage> {
           _verifying = false;
         });
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Required "account" module is missing.'),
-          ),
-        );
+        showModuleMissingDialog(context);
       }
       return;
     }

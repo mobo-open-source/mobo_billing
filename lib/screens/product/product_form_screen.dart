@@ -193,7 +193,8 @@ class _ProductFormScreenState extends State<ProductFormScreen>
 
   Future<void> _pickImageFromSource(ImageSource source) async {
     if (source == ImageSource.camera) {
-      final hasPermission = await RuntimePermissionService.requestCameraPermission(context);
+      final hasPermission =
+          await RuntimePermissionService.requestCameraPermission(context);
       if (!hasPermission) return;
     }
 
@@ -508,9 +509,15 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.qr_code_scanner),
                   onPressed: () async {
-                    final hasPermission = await RuntimePermissionService.requestCameraPermission(context);
+                    final hasPermission =
+                        await RuntimePermissionService.requestCameraPermission(
+                          context,
+                        );
                     if (hasPermission && mounted) {
-                      CustomSnackbar.showInfo(context, 'Barcode scanner integration coming soon!');
+                      CustomSnackbar.showInfo(
+                        context,
+                        'Barcode scanner integration coming soon!',
+                      );
                     }
                   },
                   tooltip: 'Scan Barcode',

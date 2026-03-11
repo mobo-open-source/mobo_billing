@@ -30,20 +30,23 @@ void main() {
       expect(customer.stateName, 'New York');
     });
 
-    test('Customer.fromJson should handle null/false values using getString/getInt', () {
-      final json = {
-        'id': 1002,
-        'name': false,
-        'email': null,
-        'country_id': false,
-      };
+    test(
+      'Customer.fromJson should handle null/false values using getString/getInt',
+      () {
+        final json = {
+          'id': 1002,
+          'name': false,
+          'email': null,
+          'country_id': false,
+        };
 
-      final customer = Customer.fromJson(json);
+        final customer = Customer.fromJson(json);
 
-      expect(customer.name, '');
-      expect(customer.email, isNull);
-      expect(customer.countryId, isNull);
-    });
+        expect(customer.name, '');
+        expect(customer.email, isNull);
+        expect(customer.countryId, isNull);
+      },
+    );
 
     test('Customer.toJson should return correct map', () {
       final customer = Customer(
@@ -65,7 +68,10 @@ void main() {
 
     test('copyWith should return a new instance with updated values', () {
       final customer = Customer(id: 1, name: 'Old Name');
-      final updated = customer.copyWith(name: 'New Name', email: 'new@example.com');
+      final updated = customer.copyWith(
+        name: 'New Name',
+        email: 'new@example.com',
+      );
 
       expect(updated.id, 1);
       expect(updated.name, 'New Name');

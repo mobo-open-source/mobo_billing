@@ -52,18 +52,24 @@ class OdooInvoiceSettings {
       currencySymbol: json['currency_symbol'] ?? '',
       currencyPosition: json['currency_position'] ?? 'before',
       decimalPlaces: json['decimal_places'] ?? 2,
-      availableTaxes: (json['available_taxes'] as List<dynamic>?)
-          ?.map((tax) => OdooTax.fromJson(tax))
-          .toList() ?? [],
+      availableTaxes:
+          (json['available_taxes'] as List<dynamic>?)
+              ?.map((tax) => OdooTax.fromJson(tax))
+              .toList() ??
+          [],
       defaultTaxIds: List<int>.from(json['default_tax_ids'] ?? []),
-      paymentTerms: (json['payment_terms'] as List<dynamic>?)
-          ?.map((term) => OdooPaymentTerm.fromJson(term))
-          .toList() ?? [],
+      paymentTerms:
+          (json['payment_terms'] as List<dynamic>?)
+              ?.map((term) => OdooPaymentTerm.fromJson(term))
+              .toList() ??
+          [],
       defaultPaymentTermId: json['default_payment_term_id'] ?? 0,
       invoiceSequence: json['invoice_sequence'] ?? 'INV',
-      journals: (json['journals'] as List<dynamic>?)
-          ?.map((journal) => OdooJournal.fromJson(journal))
-          .toList() ?? [],
+      journals:
+          (json['journals'] as List<dynamic>?)
+              ?.map((journal) => OdooJournal.fromJson(journal))
+              .toList() ??
+          [],
       defaultJournalId: json['default_journal_id'] ?? 0,
       companyAddress: json['company_address'] ?? '',
       companyPhone: json['company_phone'] ?? '',
@@ -170,12 +176,7 @@ class OdooPaymentTerm {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'note': note,
-      'active': active,
-    };
+    return {'id': id, 'name': name, 'note': note, 'active': active};
   }
 }
 

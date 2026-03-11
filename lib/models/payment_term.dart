@@ -3,10 +3,7 @@ class PaymentTerm {
   final int id;
   final String name;
 
-  PaymentTerm({
-    required this.id,
-    required this.name,
-  });
+  PaymentTerm({required this.id, required this.name});
 
   /// Creates a PaymentTerm from an Odoo RPC JSON map.
   factory PaymentTerm.fromJson(Map<String, dynamic> json) {
@@ -18,10 +15,7 @@ class PaymentTerm {
 
   /// Converts the payment term to a JSON map.
   Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-    };
+    return {'id': id, 'name': name};
   }
 
   @override

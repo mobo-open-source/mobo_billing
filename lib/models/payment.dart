@@ -38,7 +38,10 @@ class Payment {
   /// Creates a Payment instance from an Odoo RPC JSON map.
   factory Payment.fromJson(Map<String, dynamic> json) {
     String? getString(dynamic value) {
-      if (value == null || value == false || value.toString().toLowerCase() == 'false') return null;
+      if (value == null ||
+          value == false ||
+          value.toString().toLowerCase() == 'false')
+        return null;
       return value.toString();
     }
 
@@ -62,32 +65,36 @@ class Payment {
       }
     }
 
-
     int? partnerId;
     String partnerName = '';
     if (json['partner_id'] is List && (json['partner_id'] as List).isNotEmpty) {
       partnerId = json['partner_id'][0] as int?;
-      partnerName = json['partner_id'].length > 1 ? json['partner_id'][1]?.toString() ?? '' : '';
+      partnerName = json['partner_id'].length > 1
+          ? json['partner_id'][1]?.toString() ?? ''
+          : '';
     } else if (json['partner_id'] is int) {
       partnerId = json['partner_id'] as int;
     }
-
 
     int? journalId;
     String journalName = '';
     if (json['journal_id'] is List && (json['journal_id'] as List).isNotEmpty) {
       journalId = json['journal_id'][0] as int?;
-      journalName = json['journal_id'].length > 1 ? json['journal_id'][1]?.toString() ?? '' : '';
+      journalName = json['journal_id'].length > 1
+          ? json['journal_id'][1]?.toString() ?? ''
+          : '';
     } else if (json['journal_id'] is int) {
       journalId = json['journal_id'] as int;
     }
 
-
     int? currencyId;
     String currencyName = '';
-    if (json['currency_id'] is List && (json['currency_id'] as List).isNotEmpty) {
+    if (json['currency_id'] is List &&
+        (json['currency_id'] as List).isNotEmpty) {
       currencyId = json['currency_id'][0] as int?;
-      currencyName = json['currency_id'].length > 1 ? json['currency_id'][1]?.toString() ?? '' : '';
+      currencyName = json['currency_id'].length > 1
+          ? json['currency_id'][1]?.toString() ?? ''
+          : '';
     } else if (json['currency_id'] is int) {
       currencyId = json['currency_id'] as int;
     }
@@ -107,10 +114,14 @@ class Payment {
       currencyName: currencyName,
       paymentReference: getString(json['payment_reference']),
       memo: getString(json['memo']) ?? getString(json['ref']),
-      paymentMethodName: json['payment_method_line_id'] is List && (json['payment_method_line_id'] as List).length > 1
+      paymentMethodName:
+          json['payment_method_line_id'] is List &&
+              (json['payment_method_line_id'] as List).length > 1
           ? json['payment_method_line_id'][1].toString()
           : getString(json['payment_method_name']),
-      partnerBankName: json['partner_bank_id'] is List && (json['partner_bank_id'] as List).length > 1
+      partnerBankName:
+          json['partner_bank_id'] is List &&
+              (json['partner_bank_id'] as List).length > 1
           ? json['partner_bank_id'][1].toString()
           : getString(json['partner_bank_name']),
     );

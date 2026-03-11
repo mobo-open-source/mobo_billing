@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../providers/invoice_provider.dart';
 import 'invoice_detail_screen.dart';
 import 'package:hugeicons/hugeicons.dart';
+import '../../services/review_service.dart';
 import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../providers/currency_provider.dart';
@@ -441,19 +442,23 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
       }
 
       if (newInvoice != null && mounted) {
+        ReviewService().trackSignificantEvent();
         await showInvoiceCreatedConfettiDialog(
           context,
           newInvoice.name.isEmpty ? 'Invoice' : newInvoice.name,
         );
 
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => InvoiceDetailScreen(
-              invoiceId: newInvoice.id,
-              invoice: newInvoice,
+        if (mounted) {
+          ReviewService().checkAndShowRating(context);
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => InvoiceDetailScreen(
+                invoiceId: newInvoice.id,
+                invoice: newInvoice,
+              ),
             ),
-          ),
-        );
+          );
+        }
       }
     } catch (e) {
       if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {

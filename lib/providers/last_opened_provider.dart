@@ -181,7 +181,6 @@ class LastOpenedProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-
   /// Records that the user has viewed a specific invoice.
   Future<void> trackInvoiceAccess({required Invoice invoice}) async {
     final item = LastOpenedItem(

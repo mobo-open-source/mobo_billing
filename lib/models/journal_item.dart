@@ -37,7 +37,10 @@ class JournalItem {
     }
 
     String? getString(dynamic value) {
-      if (value == null || value == false || value.toString().toLowerCase() == 'false') return null;
+      if (value == null ||
+          value == false ||
+          value.toString().toLowerCase() == 'false')
+        return null;
       if (value is List && value.length > 1) return value[1].toString();
       return value.toString();
     }
@@ -47,32 +50,36 @@ class JournalItem {
       return null;
     }
 
-
     int? accountId;
     String? accountName;
     if (json['account_id'] is List && (json['account_id'] as List).isNotEmpty) {
       accountId = json['account_id'][0] as int?;
-      accountName = json['account_id'].length > 1 ? json['account_id'][1]?.toString() : null;
+      accountName = json['account_id'].length > 1
+          ? json['account_id'][1]?.toString()
+          : null;
     } else if (json['account_id'] is int) {
       accountId = json['account_id'] as int;
     }
-
 
     int? partnerId;
     String? partnerName;
     if (json['partner_id'] is List && (json['partner_id'] as List).isNotEmpty) {
       partnerId = json['partner_id'][0] as int?;
-      partnerName = json['partner_id'].length > 1 ? json['partner_id'][1]?.toString() : null;
+      partnerName = json['partner_id'].length > 1
+          ? json['partner_id'][1]?.toString()
+          : null;
     } else if (json['partner_id'] is int) {
       partnerId = json['partner_id'] as int;
     }
 
-
     int? currencyId;
     String? currencyName;
-    if (json['currency_id'] is List && (json['currency_id'] as List).isNotEmpty) {
+    if (json['currency_id'] is List &&
+        (json['currency_id'] as List).isNotEmpty) {
       currencyId = json['currency_id'][0] as int?;
-      currencyName = json['currency_id'].length > 1 ? json['currency_id'][1]?.toString() : null;
+      currencyName = json['currency_id'].length > 1
+          ? json['currency_id'][1]?.toString()
+          : null;
     } else if (json['currency_id'] is int) {
       currencyId = json['currency_id'] as int;
     }

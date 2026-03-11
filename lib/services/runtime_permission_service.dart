@@ -6,30 +6,34 @@ import '../theme/app_theme.dart';
 
 /// Service for requesting and managing device runtime permissions.
 class RuntimePermissionService {
-  static final RuntimePermissionService _instance = RuntimePermissionService._internal();
+  static final RuntimePermissionService _instance =
+      RuntimePermissionService._internal();
   factory RuntimePermissionService() => _instance;
   RuntimePermissionService._internal();
 
   static RuntimePermissionService get instance => _instance;
 
-  Future<bool> requestStoragePermissionInstance(BuildContext context) => 
+  Future<bool> requestStoragePermissionInstance(BuildContext context) =>
       requestStoragePermission(context);
-  
-  Future<bool> requestCameraPermissionInstance(BuildContext context) => 
+
+  Future<bool> requestCameraPermissionInstance(BuildContext context) =>
       requestCameraPermission(context);
 
-  Future<bool> requestPhonePermissionInstance(BuildContext context) => 
+  Future<bool> requestPhonePermissionInstance(BuildContext context) =>
       requestPhonePermission(context);
 
   /// Requests microphone permission with an optional rationale dialog.
-  static Future<bool> requestMicrophonePermission(BuildContext context, {bool showRationale = true}) async {
+  static Future<bool> requestMicrophonePermission(
+    BuildContext context, {
+    bool showRationale = true,
+  }) async {
     try {
       var status = await Permission.microphone.status;
 
       if (status.isGranted) return true;
 
-      
-      if (showRationale && await Permission.microphone.shouldShowRequestRationale) {
+      if (showRationale &&
+          await Permission.microphone.shouldShowRequestRationale) {
         final shouldRequest = await _showPermissionRationale(
           context,
           'Microphone Access',
@@ -53,7 +57,10 @@ class RuntimePermissionService {
 
       if (!status.isGranted) {
         if (context.mounted) {
-          CustomSnackbar.showError(context, 'Microphone permission denied. Voice search will not work.');
+          CustomSnackbar.showError(
+            context,
+            'Microphone permission denied. Voice search will not work.',
+          );
         }
         return false;
       }
@@ -61,20 +68,25 @@ class RuntimePermissionService {
       return true;
     } catch (e) {
       if (context.mounted) {
-        CustomSnackbar.showError(context, 'Failed to request microphone permission');
+        CustomSnackbar.showError(
+          context,
+          'Failed to request microphone permission',
+        );
       }
       return false;
     }
   }
 
   /// Requests camera permission with an optional rationale dialog.
-  static Future<bool> requestCameraPermission(BuildContext context, {bool showRationale = true}) async {
+  static Future<bool> requestCameraPermission(
+    BuildContext context, {
+    bool showRationale = true,
+  }) async {
     try {
       var status = await Permission.camera.status;
 
       if (status.isGranted) return true;
 
-      
       if (showRationale && await Permission.camera.shouldShowRequestRationale) {
         final shouldRequest = await _showPermissionRationale(
           context,
@@ -99,7 +111,10 @@ class RuntimePermissionService {
 
       if (!status.isGranted) {
         if (context.mounted) {
-          CustomSnackbar.showError(context, 'Camera permission denied. Scanning will not work.');
+          CustomSnackbar.showError(
+            context,
+            'Camera permission denied. Scanning will not work.',
+          );
         }
         return false;
       }
@@ -107,21 +122,27 @@ class RuntimePermissionService {
       return true;
     } catch (e) {
       if (context.mounted) {
-        CustomSnackbar.showError(context, 'Failed to request camera permission');
+        CustomSnackbar.showError(
+          context,
+          'Failed to request camera permission',
+        );
       }
       return false;
     }
   }
 
   /// Requests location permission with an optional rationale dialog.
-  static Future<bool> requestLocationPermission(BuildContext context, {bool showRationale = true}) async {
+  static Future<bool> requestLocationPermission(
+    BuildContext context, {
+    bool showRationale = true,
+  }) async {
     try {
       var status = await Permission.location.status;
 
       if (status.isGranted) return true;
 
-      
-      if (showRationale && await Permission.location.shouldShowRequestRationale) {
+      if (showRationale &&
+          await Permission.location.shouldShowRequestRationale) {
         final shouldRequest = await _showPermissionRationale(
           context,
           'Location Access',
@@ -145,7 +166,10 @@ class RuntimePermissionService {
 
       if (!status.isGranted) {
         if (context.mounted) {
-          CustomSnackbar.showError(context, 'Location permission denied. Location features will not work.');
+          CustomSnackbar.showError(
+            context,
+            'Location permission denied. Location features will not work.',
+          );
         }
         return false;
       }
@@ -153,20 +177,25 @@ class RuntimePermissionService {
       return true;
     } catch (e) {
       if (context.mounted) {
-        CustomSnackbar.showError(context, 'Failed to request location permission');
+        CustomSnackbar.showError(
+          context,
+          'Failed to request location permission',
+        );
       }
       return false;
     }
   }
 
   /// Requests phone/call permission with an optional rationale dialog.
-  static Future<bool> requestPhonePermission(BuildContext context, {bool showRationale = true}) async {
+  static Future<bool> requestPhonePermission(
+    BuildContext context, {
+    bool showRationale = true,
+  }) async {
     try {
       var status = await Permission.phone.status;
 
       if (status.isGranted) return true;
 
-      
       if (showRationale && await Permission.phone.shouldShowRequestRationale) {
         final shouldRequest = await _showPermissionRationale(
           context,
@@ -191,7 +220,10 @@ class RuntimePermissionService {
 
       if (!status.isGranted) {
         if (context.mounted) {
-          CustomSnackbar.showError(context, 'Phone permission denied. Calling will not work.');
+          CustomSnackbar.showError(
+            context,
+            'Phone permission denied. Calling will not work.',
+          );
         }
         return false;
       }
@@ -206,21 +238,22 @@ class RuntimePermissionService {
   }
 
   /// Requests external storage or photo library permission with an optional rationale dialog.
-  static Future<bool> requestStoragePermission(BuildContext context, {bool showRationale = true}) async {
+  static Future<bool> requestStoragePermission(
+    BuildContext context, {
+    bool showRationale = true,
+  }) async {
     try {
       Permission permission;
-      
-      
+
       if (Platform.isAndroid) {
         permission = Permission.photos;
         var status = await permission.status;
-        
-        
+
         if (status == PermissionStatus.denied) {
           permission = Permission.storage;
           status = await permission.status;
         }
-        
+
         if (status.isGranted) return true;
       } else {
         permission = Permission.photos;
@@ -228,7 +261,6 @@ class RuntimePermissionService {
         if (status.isGranted) return true;
       }
 
-      
       if (showRationale && await permission.shouldShowRequestRationale) {
         final shouldRequest = await _showPermissionRationale(
           context,
@@ -253,7 +285,10 @@ class RuntimePermissionService {
 
       if (!status.isGranted) {
         if (context.mounted) {
-          CustomSnackbar.showError(context, 'Storage permission denied. File operations may not work.');
+          CustomSnackbar.showError(
+            context,
+            'Storage permission denied. File operations may not work.',
+          );
         }
         return false;
       }
@@ -261,7 +296,10 @@ class RuntimePermissionService {
       return true;
     } catch (e) {
       if (context.mounted) {
-        CustomSnackbar.showError(context, 'Failed to request storage permission');
+        CustomSnackbar.showError(
+          context,
+          'Failed to request storage permission',
+        );
       }
       return false;
     }
@@ -274,57 +312,82 @@ class RuntimePermissionService {
     IconData icon,
   ) async {
     return await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        return AlertDialog(
-          backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(icon, color: Theme.of(context).primaryColor),
-              const SizedBox(width: 12),
-              Expanded(child: Text(title)),
-            ],
-          ),
-          content: Text(message),
-          actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          actions: [
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.primaryColor,
-                      side: const BorderSide(color: AppTheme.primaryColor, width: 1.5),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext context) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            return AlertDialog(
+              backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: Row(
+                children: [
+                  Icon(icon, color: Theme.of(context).primaryColor),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(title)),
+                ],
+              ),
+              content: Text(message),
+              actionsPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
+              actions: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.primaryColor,
+                          side: const BorderSide(
+                            color: AppTheme.primaryColor,
+                            width: 1.5,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
+                        child: const Text(
+                          'Not Now',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                      ),
                     ),
-                    child: const Text('Not Now', style: TextStyle(fontWeight: FontWeight.w500)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryColor,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      elevation: isDark ? 0 : 3,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                          elevation: isDark ? 0 : 3,
+                        ),
+                        child: const Text(
+                          'Grant Permission',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     ),
-                    child: const Text('Grant Permission', style: TextStyle(fontWeight: FontWeight.w600)),
-                  ),
+                  ],
                 ),
               ],
-            ),
-          ],
-        );
-      },
-    ) ?? false;
+            );
+          },
+        ) ??
+        false;
   }
 
   static Future<void> _showPermanentlyDeniedDialog(
@@ -339,7 +402,9 @@ class RuntimePermissionService {
         final isDark = Theme.of(context).brightness == Brightness.dark;
         return AlertDialog(
           backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: Row(
             children: [
               Icon(Icons.settings, color: Theme.of(context).colorScheme.error),
@@ -348,7 +413,10 @@ class RuntimePermissionService {
             ],
           ),
           content: Text(message),
-          actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          actionsPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
           actions: [
             Row(
               children: [
@@ -357,11 +425,22 @@ class RuntimePermissionService {
                     onPressed: () => Navigator.of(context).pop(),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppTheme.primaryColor,
-                      side: const BorderSide(color: AppTheme.primaryColor, width: 1.5),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      side: const BorderSide(
+                        color: AppTheme.primaryColor,
+                        width: 1.5,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
-                    child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w500)),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(fontWeight: FontWeight.w500),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -374,11 +453,19 @@ class RuntimePermissionService {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primaryColor,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
                       elevation: isDark ? 0 : 3,
                     ),
-                    child: const Text('Open Settings', style: TextStyle(fontWeight: FontWeight.w600)),
+                    child: const Text(
+                      'Open Settings',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
               ],
@@ -396,13 +483,15 @@ class RuntimePermissionService {
   }
 
   /// Checks the status of multiple permissions simultaneously.
-  static Future<Map<Permission, bool>> checkMultiplePermissions(List<Permission> permissions) async {
+  static Future<Map<Permission, bool>> checkMultiplePermissions(
+    List<Permission> permissions,
+  ) async {
     final Map<Permission, bool> results = {};
-    
+
     for (final permission in permissions) {
       results[permission] = await isPermissionGranted(permission);
     }
-    
+
     return results;
   }
 }

@@ -6,8 +6,8 @@ import 'odoo_session_manager.dart';
 
 HttpClient _getHttpClient() {
   final client = HttpClient()
-    ..badCertificateCallback =
-        (X509Certificate cert, String host, int port) => true;
+    ..badCertificateCallback = (X509Certificate cert, String host, int port) =>
+        true;
   return client;
 }
 

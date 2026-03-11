@@ -21,48 +21,64 @@ void main() {
   });
 
   group('CurrencyProvider Tests', () {
-    test('Initial state is correct and fetchCompanyCurrency is called', () async {
-      when(() => mockCurrencyService.fetchUserCompany(any()))
-          .thenAnswer((_) async => [{'company_id': [1, 'Test Company']}]);
-      when(() => mockCurrencyService.fetchCompanyCurrency(any()))
-          .thenAnswer((_) async => [{'currency_id': [3, 'EUR']}]);
-      when(() => mockCurrencyService.fetchCurrencyDetails(any()))
-          .thenAnswer((_) async => [{'symbol': '€', 'position': 'after', 'decimal_places': 2}]);
-      when(() => mockCurrencyService.fetchAllActiveCurrencies())
-          .thenAnswer((_) async => []);
+    test(
+      'Initial state is correct and fetchCompanyCurrency is called',
+      () async {
+        when(() => mockCurrencyService.fetchUserCompany(any())).thenAnswer(
+          (_) async => [
+            {
+              'company_id': [1, 'Test Company'],
+            },
+          ],
+        );
+        when(() => mockCurrencyService.fetchCompanyCurrency(any())).thenAnswer(
+          (_) async => [
+            {
+              'currency_id': [3, 'EUR'],
+            },
+          ],
+        );
+        when(() => mockCurrencyService.fetchCurrencyDetails(any())).thenAnswer(
+          (_) async => [
+            {'symbol': '€', 'position': 'after', 'decimal_places': 2},
+          ],
+        );
+        when(
+          () => mockCurrencyService.fetchAllActiveCurrencies(),
+        ).thenAnswer((_) async => []);
 
-      provider = CurrencyProvider(currencyService: mockCurrencyService);
-      
+        provider = CurrencyProvider(currencyService: mockCurrencyService);
 
-      await Future.delayed(Duration.zero);
-      await Future.delayed(Duration.zero);
-      await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
 
-      expect(provider.currency, 'EUR');
-      expect(provider.symbol, '€');
-      expect(provider.position, 'after');
-      expect(provider.isLoading, false);
-    });
+        expect(provider.currency, 'EUR');
+        expect(provider.symbol, '€');
+        expect(provider.position, 'after');
+        expect(provider.isLoading, false);
+      },
+    );
 
     test('formatAmount should respect currency formats', () async {
-
-      when(() => mockCurrencyService.fetchUserCompany(any())).thenAnswer((_) async => []);
+      when(
+        () => mockCurrencyService.fetchUserCompany(any()),
+      ).thenAnswer((_) async => []);
       provider = CurrencyProvider(currencyService: mockCurrencyService);
-      
 
       expect(provider.formatAmount(100.0, currency: 'GBP'), contains('£'));
-      
 
       final formattedEur = provider.formatAmount(100.50, currency: 'EUR');
       expect(formattedEur, contains('€'));
     });
 
     test('fetchCompanyCurrency error handling', () async {
-      when(() => mockCurrencyService.fetchUserCompany(any()))
-          .thenThrow(Exception('Network Error'));
+      when(
+        () => mockCurrencyService.fetchUserCompany(any()),
+      ).thenThrow(Exception('Network Error'));
 
       provider = CurrencyProvider(currencyService: mockCurrencyService);
-      
+
       await Future.delayed(Duration.zero);
 
       expect(provider.error, isNotNull);

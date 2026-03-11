@@ -127,7 +127,9 @@ class ProductTypeAhead extends StatelessWidget {
                           : null,
                       barcode: data['barcode']?.toString(),
                       defaultCode: data['default_code']?.toString(),
-                      imageUrl: data['image_128']?.toString(),
+                      imageUrl: data['image_128'] is String
+                          ? data['image_128'] as String
+                          : null,
                       qtyAvailable: (data['qty_available'] as num?)?.toDouble(),
                     ),
                   )

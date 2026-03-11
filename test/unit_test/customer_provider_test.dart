@@ -14,11 +14,9 @@ void main() {
 
   group('CustomerProvider Tests', () {
     test('loadCustomers should load customers and count', () async {
-
       when(
         () => mockApiService.call('res.partner', 'search_count', any()),
       ).thenAnswer((_) async => 2);
-
 
       when(
         () => mockApiService.call('res.partner', 'search_read', any(), any()),
@@ -65,7 +63,6 @@ void main() {
         () => mockApiService.create('res.partner', customerData),
       ).thenAnswer((_) async => 3);
 
-
       when(
         () => mockApiService.call(any(), any(), any()),
       ).thenAnswer((_) async => 1);
@@ -84,7 +81,6 @@ void main() {
     test(
       'deleteCustomer should call api unlink and remove from list',
       () async {
-
         when(
           () => mockApiService.call('res.partner', 'search_count', any()),
         ).thenAnswer((_) async => 1);

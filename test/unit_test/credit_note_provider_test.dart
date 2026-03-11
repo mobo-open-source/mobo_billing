@@ -14,15 +14,30 @@ void main() {
 
   group('CreditNoteProvider Tests', () {
     test('loadCreditNotes should load credit notes and count', () async {
+      when(
+        () => mockApiService.searchRead(
+          'account.move',
+          any(),
+          any(),
+          any(),
+          any(),
+          any(),
+        ),
+      ).thenAnswer(
+        (_) async => [
+          {
+            'id': 1,
+            'name': 'RINV/2026/001',
+            'amount_total': 100.0,
+            'state': 'posted',
+            'move_type': 'out_refund',
+          },
+        ],
+      );
 
-      when(() => mockApiService.searchRead('account.move', any(), any(), any(), any(), any()))
-          .thenAnswer((_) async => [
-                {'id': 1, 'name': 'RINV/2026/001', 'amount_total': 100.0, 'state': 'posted', 'move_type': 'out_refund'},
-              ]);
-      
-
-      when(() => mockApiService.getInvoiceCount(domain: any(named: 'domain')))
-          .thenAnswer((_) async => 1);
+      when(
+        () => mockApiService.getInvoiceCount(domain: any(named: 'domain')),
+      ).thenAnswer((_) async => 1);
 
       await provider.loadCreditNotes();
 
@@ -33,11 +48,17 @@ void main() {
     });
 
     test('confirmCreditNote should call api confirmInvoice', () async {
-      when(() => mockApiService.confirmInvoice(1)).thenAnswer((_) async => true);
-      
+      when(
+        () => mockApiService.confirmInvoice(1),
+      ).thenAnswer((_) async => true);
 
-      when(() => mockApiService.searchRead(any(), any(), any(), any(), any(), any())).thenAnswer((_) async => []);
-      when(() => mockApiService.getInvoiceCount(domain: any(named: 'domain'))).thenAnswer((_) async => 0);
+      when(
+        () =>
+            mockApiService.searchRead(any(), any(), any(), any(), any(), any()),
+      ).thenAnswer((_) async => []);
+      when(
+        () => mockApiService.getInvoiceCount(domain: any(named: 'domain')),
+      ).thenAnswer((_) async => 0);
 
       final result = await provider.confirmCreditNote(1);
 
@@ -45,18 +66,32 @@ void main() {
       verify(() => mockApiService.confirmInvoice(1)).called(1);
     });
 
-    test('deleteCreditNote should call api unlink and remove from list', () async {
-      when(() => mockApiService.unlink('account.move', [1]))
-          .thenAnswer((_) async => true);
-      
+    test(
+      'deleteCreditNote should call api unlink and remove from list',
+      () async {
+        when(
+          () => mockApiService.unlink('account.move', [1]),
+        ).thenAnswer((_) async => true);
 
-      when(() => mockApiService.searchRead(any(), any(), any(), any(), any(), any())).thenAnswer((_) async => []);
-      when(() => mockApiService.getInvoiceCount(domain: any(named: 'domain'))).thenAnswer((_) async => 0);
+        when(
+          () => mockApiService.searchRead(
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+          ),
+        ).thenAnswer((_) async => []);
+        when(
+          () => mockApiService.getInvoiceCount(domain: any(named: 'domain')),
+        ).thenAnswer((_) async => 0);
 
-      final result = await provider.deleteCreditNote(1);
+        final result = await provider.deleteCreditNote(1);
 
-      expect(result, true);
-      verify(() => mockApiService.unlink('account.move', [1])).called(1);
-    });
+        expect(result, true);
+        verify(() => mockApiService.unlink('account.move', [1])).called(1);
+      },
+    );
   });
 }

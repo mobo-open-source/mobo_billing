@@ -161,7 +161,8 @@ class CustomerFormProvider extends ChangeNotifier {
   Future<File?> pickImage(BuildContext context, ImageSource source) async {
     try {
       if (source == ImageSource.camera) {
-        final hasPermission = await RuntimePermissionService.requestCameraPermission(context);
+        final hasPermission =
+            await RuntimePermissionService.requestCameraPermission(context);
         if (!hasPermission) return null;
       }
 
@@ -180,13 +181,17 @@ class CustomerFormProvider extends ChangeNotifier {
   }
 
   /// Scans a business card using ML Kit OCR to extract text (Placeholder implementation).
-  Future<Map<String, dynamic>?> scanBusinessCard(BuildContext context, ImageSource source) async {
+  Future<Map<String, dynamic>?> scanBusinessCard(
+    BuildContext context,
+    ImageSource source,
+  ) async {
     _isOcrLoading = true;
     notifyListeners();
 
     try {
       if (source == ImageSource.camera) {
-        final hasPermission = await RuntimePermissionService.requestCameraPermission(context);
+        final hasPermission =
+            await RuntimePermissionService.requestCameraPermission(context);
         if (!hasPermission) {
           _isOcrLoading = false;
           notifyListeners();

@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../providers/currency_provider.dart';
 import '../../providers/invoice_provider.dart';
 import '../../services/odoo_api_service.dart';
+import '../../services/review_service.dart';
 import '../../widgets/custom_text_field.dart';
 import '../../models/contact.dart';
 import '../../theme/app_theme.dart';
@@ -1671,11 +1672,13 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
           }
 
           if (mounted) {
+            ReviewService().trackSignificantEvent();
             await showInvoiceCreatedConfettiDialog(
               context,
               creditNoteName,
               documentType: 'Credit Note',
             );
+            ReviewService().checkAndShowRating(context);
             Navigator.of(context).pop(true);
           }
         } else {

@@ -745,7 +745,6 @@ class OdooSessionManager {
     }
   }
 
-
   /// Executes a keyword-based RPC call with the current company context.
   static Future<dynamic> callKwWithCompany(Map<String, dynamic> payload) async {
     final session = await getCurrentSession();
@@ -850,7 +849,6 @@ class OdooSessionManager {
     }
     return data['result'];
   }
-
 
   /// Executes a keyword-based RPC call without adding company context.
   static Future<dynamic> callKwWithoutCompany(
@@ -1022,7 +1020,6 @@ class OdooSessionManager {
     await refreshSession();
     return true;
   }
-
 
   /// Logs out the user and clears all local session data.
   static Future<void> logout() async {
