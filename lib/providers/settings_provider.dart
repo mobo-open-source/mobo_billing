@@ -516,20 +516,23 @@ class SettingsProvider extends ChangeNotifier {
         },
       );
 
-      final tzField = (result != null)
+      final tzField = (result != null && result['tz'] is Map)
           ? result['tz'] as Map<String, dynamic>?
           : null;
-      final selection = tzField != null
+      final selection = (tzField != null && tzField['selection'] is List)
           ? tzField['selection'] as List<dynamic>?
           : null;
 
       if (selection != null && selection.isNotEmpty) {
-        final newList = selection.map<Map<String, dynamic>>((item) {
-          if (item is List && item.length >= 2) {
-            return {'code': item[0].toString(), 'name': item[1].toString()};
-          }
-          return {'code': item.toString(), 'name': item.toString()};
-        }).toList();
+        final newList = selection
+            .where((e) => e != null)
+            .map<Map<String, dynamic>>((item) {
+              if (item is List && item.length >= 2) {
+                return {'code': item[0].toString(), 'name': item[1].toString()};
+              }
+              return {'code': item.toString(), 'name': item.toString()};
+            })
+            .toList();
         final oldJson = jsonEncode(_availableTimezones);
         final newJson = jsonEncode(newList);
         if (newJson != oldJson) {

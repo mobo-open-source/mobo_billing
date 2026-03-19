@@ -44,6 +44,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<Map<String, dynamic>> _states = [];
   bool _isLoadingCountries = false;
   bool _isLoadingStates = false;
+  int? _lastFetchedCountryId;
   File? _pickedImageFile;
   String? _pickedImageBase64;
   final ImagePicker _picker = ImagePicker();
@@ -83,7 +84,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final currentSession = sessionService.currentSession;
 
       if (cached != null && cached.isNotEmpty && mounted) {
-        final data = jsonDecode(cached) as Map<String, dynamic>;
+        final decoded = jsonDecode(cached);
+        if (decoded is! Map<String, dynamic>) return;
+        final data = decoded;
         final cachedUserId = data['id']?.toString();
         final currentUserId = currentSession?.userId?.toString();
 
@@ -297,7 +300,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _pickImageFromSource(ImageSource source) async {
     try {
       if (source == ImageSource.camera) {
-        final hasPermission = await RuntimePermissionService.requestCameraPermission(context);
+        final hasPermission =
+            await RuntimePermissionService.requestCameraPermission(context);
         if (!hasPermission) return;
       }
 
@@ -421,6 +425,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'kwargs': {
           'fields': ['id', 'name', 'code'],
           'order': 'name ASC',
+          'limit': 300,
         },
       });
       return result is List ? result.cast<Map<String, dynamic>>() : [];
@@ -446,6 +451,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'kwargs': {
           'fields': ['id', 'name', 'code'],
           'order': 'name ASC',
+          'limit': 500,
         },
       });
       return result is List ? result.cast<Map<String, dynamic>>() : [];
@@ -476,14 +482,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _userData!['country_id'] is List &&
             _userData!['country_id'].isNotEmpty &&
             _userData!['country_id'][0] != null
-        ? _userData!['country_id'][0] as int
+        ? (_userData!['country_id'][0] is int
+              ? _userData!['country_id'][0] as int
+              : null)
         : null;
     int? selectedStateId =
         _userData!['state_id'] is List &&
             _userData!['state_id'].isNotEmpty &&
             _userData!['state_id'][0] != null
-        ? _userData!['state_id'][0] as int
+        ? (_userData!['state_id'][0] is int
+              ? _userData!['state_id'][0] as int
+              : null)
         : null;
+
+    // Reset loading state and tracking for fresh dialog open
+    _isLoadingStates = false;
+    _lastFetchedCountryId = null;
+    _states = [];
 
     showDialog(
       context: context,
@@ -491,17 +506,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           if (selectedCountryId != null &&
-              _states.isEmpty &&
+              selectedCountryId != _lastFetchedCountryId &&
               !_isLoadingStates) {
             _isLoadingStates = true;
-            _fetchStates(selectedCountryId!).then((states) {
-              if (context.mounted) {
-                setDialogState(() {
-                  _states = states;
-                  _isLoadingStates = false;
+            _lastFetchedCountryId = selectedCountryId;
+            _fetchStates(selectedCountryId!)
+                .then((states) {
+                  if (context.mounted) {
+                    setDialogState(() {
+                      _states = states;
+                      _isLoadingStates = false;
+                    });
+                  }
+                })
+                .catchError((e) {
+                  if (context.mounted) {
+                    setDialogState(() => _isLoadingStates = false);
+                  }
                 });
-              }
-            });
           }
 
           return AlertDialog(
@@ -570,14 +592,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         });
                         if (countryId != null) {
                           _isLoadingStates = true;
-                          _fetchStates(countryId).then((states) {
-                            if (context.mounted) {
-                              setDialogState(() {
-                                _states = states;
-                                _isLoadingStates = false;
+                          _lastFetchedCountryId = countryId;
+                          _fetchStates(countryId)
+                              .then((states) {
+                                if (context.mounted) {
+                                  setDialogState(() {
+                                    _states = states;
+                                    _isLoadingStates = false;
+                                  });
+                                }
+                              })
+                              .catchError((e) {
+                                if (context.mounted) {
+                                  setDialogState(
+                                    () => _isLoadingStates = false,
+                                  );
+                                }
                               });
-                            }
-                          });
                         }
                       },
                     ),
@@ -644,11 +675,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   final navigator = Navigator.of(context);
                   navigator.pop();
-
-                  streetController.dispose();
-                  street2Controller.dispose();
-                  cityController.dispose();
-                  zipController.dispose();
 
                   _showLoadingDialog(context, 'Updating Address');
                   try {
@@ -772,6 +798,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Text('Loading...'),
             ),
           ]
+        : (enabled && !isLoading && states.isEmpty)
+        ? [
+            const DropdownMenuItem<String>(
+              value: null,
+              child: Text(
+                'No states available',
+                style: TextStyle(fontStyle: FontStyle.italic),
+              ),
+            ),
+          ]
         : [
             const DropdownMenuItem<String>(
               value: null,
@@ -817,6 +853,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       labelText: label,
       hintText: hint,
       keyboardType: keyboardType,
+      isMinimal: true,
+      showLabelAbove: true,
       validator: label == 'Street Address'
           ? (value) => value == null || value.trim().isEmpty
                 ? 'This field is required'
@@ -875,13 +913,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         },
       });
       if (!mounted) return;
-      if (res is List && res.isNotEmpty) {
+      if (res is List && res.isNotEmpty && res.first is Map) {
         final row = res.first as Map<String, dynamic>;
         if (row['parent_id'] is List &&
             (row['parent_id'] as List).length >= 2 &&
             row['parent_id'][0] != null) {
           setState(() {
-            _relatedCompanyId = row['parent_id'][0] as int;
+            _relatedCompanyId = row['parent_id'][0] is int
+                ? row['parent_id'][0] as int
+                : null;
             _relatedCompanyName = row['parent_id'][1]?.toString();
           });
         } else {
@@ -981,7 +1021,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         },
       });
 
-      if (result is List && result.isNotEmpty && mounted) {
+      if (result is List && result.isNotEmpty && result[0] is Map && mounted) {
         final data = result[0] as Map<String, dynamic>;
 
         _userData = data;
@@ -991,7 +1031,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             if (data['partner_id'] is List &&
                 (data['partner_id'] as List).isNotEmpty &&
                 data['partner_id'][0] != null) {
-              _partnerId = data['partner_id'][0] as int;
+              _partnerId = data['partner_id'][0] is int
+                  ? data['partner_id'][0] as int
+                  : null;
             } else {
               _partnerId = null;
             }
@@ -1673,15 +1715,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildProfileHeader(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final settings = Provider.of<SettingsProvider>(context);
     final bool isEditingDisabled = settings.offlineMode || !_hasInternet;
 
-    final displayName = (_userData?['name'] as String? ?? '').trim();
-    final initials = AvatarUtils.getInitials(displayName);
+    final displayName =
+        (_userData?['name'] is String ? _userData!['name'] as String : '')
+            .trim();
 
     Widget photoWidget = CircularImageWidget(
-      base64Image: _userData?['image_1920'],
+      base64Image: _userData?['image_1920'] is String
+          ? _userData!['image_1920'] as String
+          : null,
       radius: 34,
       fallbackText: displayName,
       backgroundColor: AppTheme.primaryColor,
@@ -1829,250 +1873,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final settings = Provider.of<SettingsProvider>(context);
-    final bool isEditingDisabled = settings.offlineMode || !_hasInternet;
     final shimmerBase = isDark ? Colors.grey[800]! : Colors.grey[300]!;
     final shimmerHighlight = isDark ? Colors.grey[700]! : Colors.grey[100]!;
     final placeholderColor = isDark ? Colors.grey[900]! : Colors.white;
     final cardColor = isDark ? Colors.grey[900] : Colors.white;
-    final displayName = (_userData?['name'] as String? ?? '').trim();
-    final initials = AvatarUtils.getInitials(displayName);
-
-    Widget photoWidget = CircularImageWidget(
-      base64Image: _userData?['image_1920'],
-      radius: 34,
-      fallbackText: displayName,
-    );
-    Future<void> _showRelatedCompanyPicker() async {
-      if (_partnerId == null) {
-        _showErrorSnackBar('Partner record not found for this user');
-        return;
-      }
-      final theme = Theme.of(context);
-      final isDark = theme.brightness == Brightness.dark;
-      final TextEditingController searchCtrl = TextEditingController();
-      List<Map<String, dynamic>> companies = [];
-      bool loading = true;
-
-      Future<void> _loadCompanies([String q = '']) async {
-        try {
-          final sessionService = Provider.of<SessionService>(
-            context,
-            listen: false,
-          );
-          final session = sessionService.currentSession;
-          if (session == null) return;
-          final domain = [
-            ['is_company', '=', true],
-          ];
-          if (q.trim().isNotEmpty) {
-            domain.add(['name', 'ilike', q.trim()]);
-          }
-          final result = await OdooSessionManager.callKwWithCompany({
-            'model': 'res.partner',
-            'method': 'search_read',
-            'args': [domain],
-            'kwargs': {
-              'fields': ['id', 'name', 'email', 'phone'],
-            },
-          });
-          final res = result;
-          companies = (res as List).cast<Map<String, dynamic>>();
-        } catch (e) {
-          companies = [];
-        } finally {
-          loading = false;
-        }
-      }
-
-      await _loadCompanies();
-      if (!mounted) return;
-
-      await showDialog(
-        context: context,
-        builder: (ctx) {
-          return StatefulBuilder(
-            builder: (ctx, setDlg) {
-              return AlertDialog(
-                backgroundColor: isDark ? Colors.grey[850] : Colors.white,
-                surfaceTintColor: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                title: Text(
-                  'Select Related Company',
-                  style: TextStyle(
-                    color: isDark ? Colors.white : Colors.black87,
-                  ),
-                ),
-                content: SizedBox(
-                  width: 420,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: searchCtrl,
-                        style: TextStyle(
-                          color: isDark
-                              ? Colors.white
-                              : const Color(0xff1E1E1E),
-                          fontWeight: FontWeight.w400,
-                          fontStyle: FontStyle.normal,
-                          fontSize: 15,
-                          height: 1.0,
-                          letterSpacing: 0.0,
-                        ),
-                        decoration: InputDecoration(
-                          prefixIcon: Icon(
-                            Icons.search,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                            size: 20,
-                          ),
-                          hintText: 'Search companies...',
-                          hintStyle: TextStyle(
-                            color: isDark
-                                ? Colors.white
-                                : const Color(0xff1E1E1E),
-                            fontWeight: FontWeight.w400,
-                            fontStyle: FontStyle.normal,
-                            fontSize: 15,
-                            height: 1.0,
-                            letterSpacing: 0.0,
-                          ),
-                          isDense: true,
-                          filled: true,
-                          fillColor: isDark ? Colors.grey[850] : Colors.white,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: isDark
-                                  ? Colors.grey[700]!
-                                  : Colors.grey[300]!,
-                              width: 1,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: Theme.of(context).primaryColor,
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                        onChanged: (val) async {
-                          setDlg(() => loading = true);
-                          await _loadCompanies(val);
-                          if (ctx.mounted) setDlg(() {});
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        height: 320,
-                        width: double.infinity,
-                        child: loading
-                            ? Center(
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    theme.primaryColor,
-                                  ),
-                                ),
-                              )
-                            : companies.isEmpty
-                            ? Center(
-                                child: Text(
-                                  'No companies found',
-                                  style: TextStyle(
-                                    color: isDark
-                                        ? Colors.grey[400]
-                                        : Colors.grey[600],
-                                  ),
-                                ),
-                              )
-                            : ListView.separated(
-                                itemCount: companies.length,
-                                separatorBuilder: (_, __) => Divider(
-                                  height: .01,
-                                  thickness: .01,
-                                  color: isDark
-                                      ? Colors.grey[800]
-                                      : Colors.grey[200],
-                                ),
-                                itemBuilder: (ctx, i) {
-                                  final c = companies[i];
-                                  final selected = c['id'] == _relatedCompanyId;
-                                  return ListTile(
-                                    dense: true,
-                                    title: Text(c['name'] ?? ''),
-                                    trailing: selected
-                                        ? Icon(
-                                            Icons.check,
-                                            color: theme.primaryColor,
-                                            size: 18,
-                                          )
-                                        : null,
-                                    onTap: () async {
-                                      Navigator.of(ctx).pop(c);
-                                    },
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      ).then((selected) async {
-        if (selected is Map<String, dynamic>) {
-          try {
-            final sessionService = Provider.of<SessionService>(
-              context,
-              listen: false,
-            );
-            final session = sessionService.currentSession;
-            if (session == null) throw Exception('No active session');
-
-            _showLoadingDialog(context, 'Updating Related Company');
-            await OdooSessionManager.callKwWithCompany({
-              'model': 'res.partner',
-              'method': 'write',
-              'args': [
-                [_partnerId!],
-                {'parent_id': selected['id'] ?? false},
-              ],
-              'kwargs': {},
-            });
-            if (!mounted) return;
-            _isShowingLoadingDialog = false;
-            Navigator.of(context).pop();
-            setState(() {
-              _relatedCompanyId = selected['id'] as int?;
-              _relatedCompanyName = selected['name']?.toString();
-            });
-            _showSuccessSnackBar('Related Company updated');
-          } catch (e) {
-            if (mounted) {
-              _isShowingLoadingDialog = false;
-              Navigator.of(context).pop();
-              _showErrorSnackBar('Failed to update related company: $e');
-            }
-          }
-        }
-      });
-    }
 
     return Scaffold(
       appBar: AppBar(

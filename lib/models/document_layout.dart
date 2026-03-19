@@ -19,7 +19,8 @@ class DocumentLayout {
     return DocumentLayout(
       id: json['id'] as int,
       name: json['name'] as String? ?? '',
-      displayName: json['display_name'] as String? ?? json['name'] as String? ?? '',
+      displayName:
+          json['display_name'] as String? ?? json['name'] as String? ?? '',
       description: json['description'] as String?,
       isDefault: json['is_default'] as bool? ?? false,
       layoutConfig: json['layout_config'] as Map<String, dynamic>?,
@@ -93,11 +94,14 @@ class CompanySettings {
     }
 
     return CompanySettings(
-      companyId: json['company_id'] is List 
-          ? json['company_id'][0] as int 
+      companyId: json['company_id'] is List
+          ? json['company_id'][0] as int
           : json['company_id'] as int? ?? 1,
-      companyName: json['company_name'] as String? ?? 
-          (json['company_id'] is List ? json['company_id'][1] as String : 'Company'),
+      companyName:
+          json['company_name'] as String? ??
+          (json['company_id'] is List
+              ? json['company_id'][1] as String
+              : 'Company'),
       companyInformations: json['company_informations'] as String?,
       externalReportLayout: layout,
       emailPrimaryColor: json['email_primary_color'] as String?,

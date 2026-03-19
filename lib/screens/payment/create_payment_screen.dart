@@ -19,6 +19,7 @@ import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/custom_text_field.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../services/review_service.dart';
 
 class CreatePaymentScreen extends StatefulWidget {
   final int? partnerId;
@@ -120,7 +121,9 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
               email: data['email']?.toString(),
               phone: data['phone']?.toString(),
               mobile: data['mobile']?.toString(),
-              imageUrl: data['image_1920']?.toString(),
+              imageUrl: data['image_1920'] is String
+                  ? data['image_1920'] as String
+                  : null,
             );
             _selectCustomer(customer);
           }
@@ -362,8 +365,12 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       }
 
       if (mounted) {
+        ReviewService().trackSignificantEvent();
         await showPaymentCreatedConfettiDialog(context, paymentName);
-        Navigator.pop(context, true);
+        if (mounted) {
+          ReviewService().checkAndShowRating(context);
+          Navigator.pop(context, true);
+        }
       }
     } catch (e) {
       if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {

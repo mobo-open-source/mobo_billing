@@ -123,7 +123,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _openInAppWebPage(uri, title: title);
       }
     } catch (e) {
-      
       if (mounted) {
         CustomSnackbar.showError(
           context,
@@ -178,7 +177,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
       }
     } catch (e) {
-      
       if (mounted) {
         setState(() {
           _authStatusDescription = 'Authentication status unavailable';

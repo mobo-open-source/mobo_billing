@@ -31,12 +31,10 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounceTimer;
 
-
   final Set<String> _activeFilters = {};
   DateTime? _startDate;
   DateTime? _endDate;
   String? _selectedGroupBy;
-
 
   final Map<String, bool> _expandedGroups = {};
   bool _isFirstLoad = true;
@@ -95,7 +93,6 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
   Future<void> _applyFilters() async {
     final provider = Provider.of<PaymentProvider>(context, listen: false);
 
-
     if (_selectedGroupBy != null) {
       final filterDomain = _buildFilterDomain();
       provider.fetchGroupSummary(
@@ -130,31 +127,17 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
             break;
 
           case 'paid':
-            statusConditions.add([
-              'state',
-              '=',
-              'posted',
-            ]);
+            statusConditions.add(['state', '=', 'posted']);
             break;
           case 'not_paid':
-            statusConditions.add([
-              'state',
-              '=',
-              'draft',
-            ]);
+            statusConditions.add(['state', '=', 'draft']);
             break;
-
         }
       }
 
       if (statusConditions.isNotEmpty) {
-        int n = statusConditions
-            .length;
-
-
-
+        int n = statusConditions.length;
       }
-
 
       List<dynamic> validConditions = [];
       for (String filter in _activeFilters) {
@@ -370,7 +353,6 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
           builder: (context, provider, child) {
             return Column(
               children: [
-
                 Padding(
                   padding: const EdgeInsets.only(
                     bottom: 16.0,
@@ -487,7 +469,6 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                   ),
                 ),
 
-
                 Padding(
                   padding: const EdgeInsets.only(
                     bottom: 8.0,
@@ -496,7 +477,6 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                   ),
                   child: Row(
                     children: [
-
                       ActiveFiltersBadge(
                         count:
                             _activeFilters.length +
@@ -510,17 +490,14 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
 
                       const Spacer(),
 
-
                       _buildTopPaginationBar(provider),
                     ],
                   ),
                 ),
 
-
                 Expanded(
                   child: Consumer2<ConnectivityService, SessionService>(
                     builder: (context, connectivityService, sessionService, child) {
-
                       if (!connectivityService.isConnected) {
                         return ConnectionStatusWidget(
                           onRetry: () {
@@ -544,8 +521,6 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                         );
                       }
 
-
-
                       if (provider.error != null && provider.payments.isEmpty) {
                         return ConnectionStatusWidget(
                           serverUnreachable: true,
@@ -565,7 +540,6 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                           },
                         );
                       }
-
 
                       final Widget content;
                       if (_selectedGroupBy != null) {
@@ -616,7 +590,7 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                                 status: provider.currentStatusFilter,
                               );
                             }
-                            
+
                             if (provider.error != null && mounted) {
                               _showErrorSnackBar(provider.error!);
                             }
@@ -624,7 +598,8 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                             if (mounted) _showErrorSnackBar(e.toString());
                           }
                         },
-                        child: (provider.error != null ||
+                        child:
+                            (provider.error != null ||
                                 (provider.payments.isEmpty &&
                                     _selectedGroupBy == null &&
                                     !provider.isLoading))
@@ -1174,8 +1149,8 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
     if (!mounted) return;
     CustomSnackbar.showError(
       context,
-      error.contains('502') 
-          ? 'Server is temporarily unavailable (502). Showing cached data.' 
+      error.contains('502')
+          ? 'Server is temporarily unavailable (502). Showing cached data.'
           : 'Failed to refresh: $error',
     );
   }

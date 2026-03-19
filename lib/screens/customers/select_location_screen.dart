@@ -11,7 +11,11 @@ class SelectLocationScreen extends StatefulWidget {
   final LatLng? initialLocation;
   final Future<bool> Function(LatLng)? onSaveLocation;
 
-  const SelectLocationScreen({Key? key, this.initialLocation, this.onSaveLocation}) : super(key: key);
+  const SelectLocationScreen({
+    Key? key,
+    this.initialLocation,
+    this.onSaveLocation,
+  }) : super(key: key);
 
   @override
   _SelectLocationScreenState createState() => _SelectLocationScreenState();
@@ -65,13 +69,18 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        _handleLocationError('Location services are disabled. Please enable them in settings.');
+        _handleLocationError(
+          'Location services are disabled. Please enable them in settings.',
+        );
         return;
       }
 
-      final hasLocationPermission = await RuntimePermissionService.requestLocationPermission(context);
+      final hasLocationPermission =
+          await RuntimePermissionService.requestLocationPermission(context);
       if (!hasLocationPermission) {
-        _handleLocationError('Location permission is required to use this feature.');
+        _handleLocationError(
+          'Location permission is required to use this feature.',
+        );
         return;
       }
 
@@ -121,9 +130,12 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
         return;
       }
 
-      final hasLocationPermission = await RuntimePermissionService.requestLocationPermission(context);
+      final hasLocationPermission =
+          await RuntimePermissionService.requestLocationPermission(context);
       if (!hasLocationPermission) {
-        _handleLocationError('Location permission is required to use this feature.');
+        _handleLocationError(
+          'Location permission is required to use this feature.',
+        );
         return;
       }
 
@@ -200,7 +212,9 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
           children: [
             Text('• Tap anywhere on the map to select a location'),
             SizedBox(height: 8),
-            Text('• Use the location button to center on your current position'),
+            Text(
+              '• Use the location button to center on your current position',
+            ),
             SizedBox(height: 8),
             Text('• Red marker shows your selected location'),
             SizedBox(height: 8),
@@ -215,11 +229,16 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: theme.primaryColor,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 elevation: isDark ? 0 : 3,
               ),
-              child: const Text('Got it', style: TextStyle(fontWeight: FontWeight.w600)),
+              child: const Text(
+                'Got it',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
           ),
         ],
@@ -242,7 +261,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
         title: const Text('Select Location'),
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
-          icon: const HugeIcon(icon:HugeIcons.strokeRoundedArrowLeft01),
+          icon: const HugeIcon(icon: HugeIcons.strokeRoundedArrowLeft01),
         ),
         actions: [
           IconButton(
@@ -285,7 +304,11 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.location_off, size: 64, color: colorScheme.error),
+                      Icon(
+                        Icons.location_off,
+                        size: 64,
+                        color: colorScheme.error,
+                      ),
                       const SizedBox(height: 16),
                       Text(
                         'Location Error',
@@ -295,10 +318,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                      ),
+                      Text(_errorMessage!, textAlign: TextAlign.center),
                       const SizedBox(height: 24),
                       ElevatedButton.icon(
                         onPressed: _retryLocation,
@@ -343,9 +363,16 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                           decoration: BoxDecoration(
                             color: isDark ? Colors.white : theme.primaryColor,
                             shape: BoxShape.circle,
-                            border: Border.all(color: colorScheme.surface, width: 2),
+                            border: Border.all(
+                              color: colorScheme.surface,
+                              width: 2,
+                            ),
                           ),
-                          child: Icon(Icons.my_location, color: colorScheme.onPrimary, size: 24),
+                          child: Icon(
+                            Icons.my_location,
+                            color: colorScheme.onPrimary,
+                            size: 24,
+                          ),
                         ),
                       ),
                     ],
@@ -361,9 +388,16 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                           decoration: BoxDecoration(
                             color: colorScheme.error,
                             shape: BoxShape.circle,
-                            border: Border.all(color: colorScheme.surface, width: 2),
+                            border: Border.all(
+                              color: colorScheme.surface,
+                              width: 2,
+                            ),
                           ),
-                          child: Icon(Icons.location_on, color: colorScheme.onError, size: 24),
+                          child: Icon(
+                            Icons.location_on,
+                            color: colorScheme.onError,
+                            size: 24,
+                          ),
                         ),
                       ),
                     ],
@@ -379,7 +413,9 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                   FloatingActionButton(
                     heroTag: 'recenter',
                     mini: true,
-                    onPressed: _currentLocation != null && _mapReady ? _recenterMap : null,
+                    onPressed: _currentLocation != null && _mapReady
+                        ? _recenterMap
+                        : null,
                     elevation: 0,
                     focusElevation: 0,
                     hoverElevation: 0,
@@ -421,7 +457,9 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
               focusElevation: 0,
               hoverElevation: 0,
               highlightElevation: 0,
-              label: _isSaving ? const Text('Saving...') : const Text('Confirm Location'),
+              label: _isSaving
+                  ? const Text('Saving...')
+                  : const Text('Confirm Location'),
               icon: _isSaving ? null : const Icon(Icons.check),
             )
           : null,

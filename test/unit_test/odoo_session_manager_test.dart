@@ -53,7 +53,7 @@ void main() {
 
       expect(prefs.getBool('isLoggedIn'), isNull);
       expect(prefs.getString('sessionId'), isNull);
-      
+
       final session = await OdooSessionManager.getCurrentSession();
       expect(session, isNull);
     });
@@ -68,11 +68,12 @@ void main() {
       await prefs.setString('serverUrl', 'https://test.com');
       await prefs.setString('database', 'test_db');
       await prefs.setInt('userId', 1);
-      final futureDate = DateTime.now().add(const Duration(days: 1)).toIso8601String();
+      final futureDate = DateTime.now()
+          .add(const Duration(days: 1))
+          .toIso8601String();
       await prefs.setString('expiresAt', futureDate);
-      
+
       OdooSessionManager.setClient(mockClient);
-      
 
       final client = await OdooSessionManager.getClientEnsured();
       expect(client, equals(mockClient));

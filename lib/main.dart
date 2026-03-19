@@ -22,12 +22,14 @@ import 'package:mobo_billing/screens/login/server_setup_screen.dart';
 import 'package:mobo_billing/screens/main_app_screen.dart';
 import 'package:mobo_billing/theme/app_theme.dart';
 import 'package:mobo_billing/services/biometric_service.dart';
+import 'package:mobo_billing/services/review_service.dart';
 import 'package:mobo_billing/screens/auth/app_lock_screen.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobo_billing/screens/others/get_started_screen.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -71,6 +73,7 @@ class BillingApp extends StatelessWidget {
           return MaterialApp(
             title: 'Odoo Billing App',
             navigatorKey: navigatorKey,
+            scaffoldMessengerKey: scaffoldMessengerKey,
             debugShowCheckedModeBanner: false,
             theme: themeProvider.lightTheme,
             darkTheme: themeProvider.darkTheme,

@@ -113,50 +113,58 @@ class ProfileProvider with ChangeNotifier {
         }
 
         if (user['partner_id'] is List && user['partner_id'].isNotEmpty) {
-          partnerId = user['partner_id'][0] as int;
-          try {
-            final partners = await _apiService.read(
-              'res.partner',
-              [partnerId],
-              [
-                'phone',
-                'street',
-                'street2',
-                'city',
-                'state_id',
-                'country_id',
-                'zip',
-                'vat',
-                'website',
-                'function',
-              ],
-            );
-            if (partners.isNotEmpty) {
-              final p = partners.first;
-              phone = p['phone']?.toString();
-              mobile = p['mobile']?.toString();
-              street = p['street']?.toString();
-              street2 = p['street2']?.toString();
-              city = p['city']?.toString();
-              zip = p['zip']?.toString();
-              vat = p['vat']?.toString();
-              website = p['website']?.toString();
-              jobTitle = p['function']?.toString();
+          partnerId = (user['partner_id'][0] is int
+              ? user['partner_id'][0] as int
+              : null);
+          if (partnerId != null) {
+            try {
+              final partners = await _apiService.read(
+                'res.partner',
+                [partnerId],
+                [
+                  'phone',
+                  'street',
+                  'street2',
+                  'city',
+                  'state_id',
+                  'country_id',
+                  'zip',
+                  'vat',
+                  'website',
+                  'function',
+                ],
+              );
+              if (partners.isNotEmpty) {
+                final p = partners.first;
+                phone = p['phone']?.toString();
+                mobile = p['mobile']?.toString();
+                street = p['street']?.toString();
+                street2 = p['street2']?.toString();
+                city = p['city']?.toString();
+                zip = p['zip']?.toString();
+                vat = p['vat']?.toString();
+                website = p['website']?.toString();
+                jobTitle = p['function']?.toString();
 
-              if (p['state_id'] is List && p['state_id'].isNotEmpty) {
-                stateId = p['state_id'][0] as int;
-                stateName = p['state_id'].length > 1
-                    ? p['state_id'][1]?.toString()
-                    : null;
+                if (p['state_id'] is List && p['state_id'].isNotEmpty) {
+                  stateId = (p['state_id'][0] is int
+                      ? p['state_id'][0] as int
+                      : null);
+                  stateName = p['state_id'].length > 1
+                      ? p['state_id'][1]?.toString()
+                      : null;
+                }
+                if (p['country_id'] is List && p['country_id'].isNotEmpty) {
+                  countryId = (p['country_id'][0] is int
+                      ? p['country_id'][0] as int
+                      : null);
+                  countryName = p['country_id'].length > 1
+                      ? p['country_id'][1]?.toString()
+                      : null;
+                }
               }
-              if (p['country_id'] is List && p['country_id'].isNotEmpty) {
-                countryId = p['country_id'][0] as int;
-                countryName = p['country_id'].length > 1
-                    ? p['country_id'][1]?.toString()
-                    : null;
-              }
-            }
-          } catch (_) {}
+            } catch (_) {}
+          }
         }
 
         dynamic profileImage = user['avatar_128'];

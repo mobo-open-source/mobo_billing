@@ -1766,7 +1766,8 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
       phoneNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
 
       try {
-        final hasPermission = await RuntimePermissionService.requestPhonePermission(context);
+        final hasPermission =
+            await RuntimePermissionService.requestPhonePermission(context);
         if (!hasPermission) return;
 
         if (Platform.isAndroid) {

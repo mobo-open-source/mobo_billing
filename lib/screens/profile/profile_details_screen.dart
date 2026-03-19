@@ -41,6 +41,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
   List<Map<String, dynamic>> _states = [];
   bool _isLoadingCountries = false;
   bool _isLoadingStates = false;
+  int? _lastFetchedCountryId;
   File? _pickedImageFile;
   String? _pickedImageBase64;
   final ImagePicker _picker = ImagePicker();
@@ -80,7 +81,9 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       final key = _getEffectiveCacheKey(_cacheKeyUserBase);
       final cached = prefs.getString(key);
       if (cached != null && cached.isNotEmpty && mounted) {
-        final data = jsonDecode(cached) as Map<String, dynamic>;
+        final decoded = jsonDecode(cached);
+        if (decoded is! Map<String, dynamic>) return;
+        final data = decoded;
         setState(() {
           _userData = data;
           final img = data['image_1920'];
@@ -271,7 +274,8 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
   Future<void> _pickImageFromSource(ImageSource source) async {
     try {
       if (source == ImageSource.camera) {
-        final hasPermission = await RuntimePermissionService.requestCameraPermission(context);
+        final hasPermission =
+            await RuntimePermissionService.requestCameraPermission(context);
         if (!hasPermission) return;
       }
 
@@ -396,7 +400,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         'kwargs': {
           'fields': ['id', 'name', 'code'],
           'order': 'name ASC',
-          'limit': 100,
+          'limit': 300,
         },
       });
       return result is List ? result.cast<Map<String, dynamic>>() : [];
@@ -422,7 +426,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         'kwargs': {
           'fields': ['id', 'name', 'code'],
           'order': 'name ASC',
-          'limit': 100,
+          'limit': 500,
         },
       });
       return result is List ? result.cast<Map<String, dynamic>>() : [];
@@ -484,14 +488,16 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         },
       });
 
-      if (result is List && result.isNotEmpty && mounted) {
+      if (result is List && result.isNotEmpty && result[0] is Map && mounted) {
         final data = result[0] as Map<String, dynamic>;
         setState(() {
           _userData = data;
           if (data['partner_id'] is List &&
               (data['partner_id'] as List).isNotEmpty &&
               data['partner_id'][0] != null) {
-            _partnerId = data['partner_id'][0] as int;
+            _partnerId = data['partner_id'][0] is int
+                ? data['partner_id'][0] as int
+                : null;
           } else {
             _partnerId = null;
           }
@@ -1041,14 +1047,23 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         _userData!['country_id'] is List &&
             _userData!['country_id'].isNotEmpty &&
             _userData!['country_id'][0] != null
-        ? _userData!['country_id'][0] as int
+        ? (_userData!['country_id'][0] is int
+              ? _userData!['country_id'][0] as int
+              : null)
         : null;
     int? selectedStateId =
         _userData!['state_id'] is List &&
             _userData!['state_id'].isNotEmpty &&
             _userData!['state_id'][0] != null
-        ? _userData!['state_id'][0] as int
+        ? (_userData!['state_id'][0] is int
+              ? _userData!['state_id'][0] as int
+              : null)
         : null;
+
+    // Reset loading state and tracking for fresh dialog open
+    _isLoadingStates = false;
+    _lastFetchedCountryId = null;
+    _states = [];
 
     showDialog(
       context: context,
@@ -1056,17 +1071,24 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           if (selectedCountryId != null &&
-              _states.isEmpty &&
+              selectedCountryId != _lastFetchedCountryId &&
               !_isLoadingStates) {
             _isLoadingStates = true;
-            _fetchStates(selectedCountryId!).then((states) {
-              if (context.mounted) {
-                setDialogState(() {
-                  _states = states;
-                  _isLoadingStates = false;
+            _lastFetchedCountryId = selectedCountryId;
+            _fetchStates(selectedCountryId!)
+                .then((states) {
+                  if (context.mounted) {
+                    setDialogState(() {
+                      _states = states;
+                      _isLoadingStates = false;
+                    });
+                  }
+                })
+                .catchError((e) {
+                  if (context.mounted) {
+                    setDialogState(() => _isLoadingStates = false);
+                  }
                 });
-              }
-            });
           }
 
           return AlertDialog(
@@ -1135,14 +1157,23 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                         });
                         if (countryId != null) {
                           _isLoadingStates = true;
-                          _fetchStates(countryId).then((states) {
-                            if (context.mounted) {
-                              setDialogState(() {
-                                _states = states;
-                                _isLoadingStates = false;
+                          _lastFetchedCountryId = countryId;
+                          _fetchStates(countryId)
+                              .then((states) {
+                                if (context.mounted) {
+                                  setDialogState(() {
+                                    _states = states;
+                                    _isLoadingStates = false;
+                                  });
+                                }
+                              })
+                              .catchError((e) {
+                                if (context.mounted) {
+                                  setDialogState(
+                                    () => _isLoadingStates = false,
+                                  );
+                                }
                               });
-                            }
-                          });
                         }
                       },
                     ),
@@ -1173,10 +1204,6 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                     child: OutlinedButton(
                       onPressed: () {
                         Navigator.pop(context);
-                        streetController.dispose();
-                        street2Controller.dispose();
-                        cityController.dispose();
-                        zipController.dispose();
                       },
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppTheme.primaryColor,
@@ -1223,11 +1250,6 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
 
                         final navigator = Navigator.of(context);
                         navigator.pop();
-
-                        streetController.dispose();
-                        street2Controller.dispose();
-                        cityController.dispose();
-                        zipController.dispose();
 
                         _showLoadingDialog(context, 'Updating Address');
                         try {
@@ -1356,6 +1378,16 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
               child: Text('Loading...'),
             ),
           ]
+        : (enabled && !isLoading && states.isEmpty)
+        ? [
+            const DropdownMenuItem<String>(
+              value: null,
+              child: Text(
+                'No states available',
+                style: TextStyle(fontStyle: FontStyle.italic),
+              ),
+            ),
+          ]
         : [
             const DropdownMenuItem<String>(
               value: null,
@@ -1401,6 +1433,8 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       labelText: label,
       hintText: hint,
       keyboardType: keyboardType,
+      isMinimal: true,
+      showLabelAbove: true,
       validator: label == 'Street Address'
           ? (value) => value == null || value.trim().isEmpty
                 ? 'This field is required'
@@ -1461,13 +1495,15 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         },
       });
       if (!mounted) return;
-      if (res is List && res.isNotEmpty) {
+      if (res is List && res.isNotEmpty && res.first is Map) {
         final row = res.first as Map<String, dynamic>;
         if (row['parent_id'] is List &&
             (row['parent_id'] as List).length >= 2 &&
             row['parent_id'][0] != null) {
           setState(() {
-            _relatedCompanyId = row['parent_id'][0] as int;
+            _relatedCompanyId = row['parent_id'][0] is int
+                ? row['parent_id'][0] as int
+                : null;
             _relatedCompanyName = row['parent_id'][1]?.toString();
           });
         } else {
@@ -1709,7 +1745,8 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
           _isShowingLoadingDialog = false;
           Navigator.of(context).pop();
           setState(() {
-            _relatedCompanyId = selected['id'] as int?;
+            final sid = selected['id'];
+            _relatedCompanyId = sid is int ? sid : null;
             _relatedCompanyName = selected['name']?.toString();
           });
           _showSuccessSnackBar('Related Company updated');
@@ -1842,9 +1879,13 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         ),
       );
     } else {
-      final displayName = (_userData?['name'] as String? ?? '').trim();
+      final displayName =
+          (_userData?['name'] is String ? _userData!['name'] as String : '')
+              .trim();
       photoWidget = CircularImageWidget(
-        base64Image: _userData?['image_1920'],
+        base64Image: _userData?['image_1920'] is String
+            ? _userData!['image_1920'] as String
+            : null,
         radius: 60,
         fallbackText: displayName,
       );
@@ -1868,7 +1909,9 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                             title: 'Profile Photo',
                             base64Image: pickedValid
                                 ? _pickedImageBase64
-                                : _userData?['image_1920'],
+                                : (_userData?['image_1920'] is String
+                                      ? _userData!['image_1920'] as String
+                                      : null),
                           ),
                         ),
                       );

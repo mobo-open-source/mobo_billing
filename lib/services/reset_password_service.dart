@@ -321,7 +321,6 @@ class ResetPasswordService {
     ).hasMatch(email);
   }
 
-
   static Map<String, String> _extractAllFormData(
     String html,
     String login,

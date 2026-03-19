@@ -10,6 +10,8 @@ import '../theme/app_theme.dart';
 import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../widgets/custom_snackbar.dart';
+import '../widgets/module_missing_dialog.dart';
+import '../providers/auth_provider.dart';
 
 class SwitchAccountWidget extends StatelessWidget {
   const SwitchAccountWidget({super.key});
@@ -219,9 +221,11 @@ class SwitchAccountWidget extends StatelessWidget {
   }
 
   Widget _buildUserAvatar(Map<String, dynamic> account, bool isDark) {
-    final serverUrl = account['serverUrl'] as String?;
+    final rawServerUrl = account['serverUrl'];
+    final serverUrl = rawServerUrl is String ? rawServerUrl : null;
     final userId = account['userId'];
-    final imageBase64 = account['imageBase64'] as String?;
+    final rawImage = account['imageBase64'];
+    final imageBase64 = rawImage is String ? rawImage : null;
 
     return Container(
       width: 40,
@@ -416,10 +420,25 @@ class SwitchAccountWidget extends StatelessWidget {
         if (reused) {
           final session = await OdooSessionManager.getCurrentSession();
           if (session != null) {
-            await sessionService.switchToAccount(session);
-            if (context.mounted && Navigator.of(context).canPop()) {
-              Navigator.pop(context);
+            final authProvider = Provider.of<AuthProvider>(
+              context,
+              listen: false,
+            );
+            final isBillingInstalled = await authProvider
+                .checkRequiredModules();
+
+            if (!isBillingInstalled) {
+              await authProvider.logout();
+              if (context.mounted) {
+                if (Navigator.of(context).canPop()) {
+                  Navigator.pop(context);
+                }
+                showModuleMissingDialog(context);
+              }
+              return;
             }
+
+            await sessionService.switchToAccount(session);
             return;
           }
         }
@@ -436,11 +455,21 @@ class SwitchAccountWidget extends StatelessWidget {
         throw Exception('Authentication failed');
       }
 
-      await sessionService.switchToAccount(newSession);
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final isBillingInstalled = await authProvider.checkRequiredModules();
 
-      if (context.mounted && Navigator.of(context).canPop()) {
-        Navigator.pop(context);
+      if (!isBillingInstalled) {
+        await authProvider.logout();
+        if (context.mounted) {
+          if (Navigator.of(context).canPop()) {
+            Navigator.pop(context);
+          }
+          showModuleMissingDialog(context);
+        }
+        return;
       }
+
+      await sessionService.switchToAccount(newSession);
     } catch (e) {
       if (context.mounted && Navigator.of(context).canPop()) {
         Navigator.pop(context);

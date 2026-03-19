@@ -129,7 +129,9 @@ class CustomerTypeAhead extends StatelessWidget {
                       email: data['email']?.toString(),
                       phone: data['phone']?.toString(),
                       mobile: data['mobile']?.toString(),
-                      imageUrl: data['image_128']?.toString(),
+                      imageUrl: data['image_128'] is String
+                          ? data['image_128'] as String
+                          : null,
                       isCompany: data['is_company'] == true,
                     ),
                   )

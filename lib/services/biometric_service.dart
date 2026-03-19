@@ -39,7 +39,6 @@ class BiometricService {
     }
   }
 
-
   /// Checks if the user has enabled biometric authentication in the app settings.
   static Future<bool> isBiometricEnabled() async {
     final prefs = await SharedPreferences.getInstance();
@@ -94,7 +93,6 @@ class BiometricService {
       return false;
     }
   }
-
 
   /// Determines if the app should prompt for biometric authentication based on settings and availability.
   static Future<bool> shouldPromptBiometric() async {

@@ -28,7 +28,9 @@ class ProfileAvatarWidget extends StatelessWidget {
           });
         }
 
-        final displayName = (profile?['name'] as String? ?? '').trim();
+        final displayName =
+            (profile?['name'] is String ? profile!['name'] as String : '')
+                .trim();
 
         return InkWell(
           onTap: () {
