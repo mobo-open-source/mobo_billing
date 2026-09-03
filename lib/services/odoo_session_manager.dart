@@ -18,7 +18,7 @@ class OdooSessionManager {
   static OdooSessionModel? _cachedSession;
 
   static OdooSessionModel? get cachedSession => _cachedSession;
-  static bool _isRefreshing = false;
+  static Completer<bool>? _refreshCompleter;
   static DateTime? _lastAuthTime;
 
   static const int _maxRetries = 3;
@@ -606,13 +606,28 @@ class OdooSessionManager {
   }
 
   /// Refreshes the current session, re-authenticating if necessary.
+  ///
+  /// Concurrent callers await the same in-flight refresh's actual result
+  /// (via [_refreshCompleter]) instead of guessing from a stale flag after a
+  /// fixed delay, which could previously report success/failure that didn't
+  /// match what the real refresh ultimately did.
   static Future<bool> refreshSession() async {
-    if (_isRefreshing) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      return await isSessionValid();
+    if (_refreshCompleter != null) {
+      return _refreshCompleter!.future;
     }
 
-    _isRefreshing = true;
+    final completer = Completer<bool>();
+    _refreshCompleter = completer;
+    try {
+      final result = await _performSessionRefresh();
+      completer.complete(result);
+      return result;
+    } finally {
+      _refreshCompleter = null;
+    }
+  }
+
+  static Future<bool> _performSessionRefresh() async {
     try {
       final session = await getCurrentSession();
 
@@ -671,8 +686,6 @@ class OdooSessionManager {
       }
     } catch (e) {
       return false;
-    } finally {
-      _isRefreshing = false;
     }
   }
 

@@ -15,6 +15,22 @@ class CustomSnackbar {
     _showOverlaySnackbar(context, title, message, type, duration);
   }
 
+  /// Dismisses the snackbar's own route; a plain `pop()` would remove the
+  /// top route instead when a page was pushed above the snackbar (e.g. the
+  /// user navigated away before the auto-dismiss timer fired).
+  static void _dismiss(BuildContext dialogContext) {
+    if (!dialogContext.mounted) return;
+    try {
+      final route = ModalRoute.of(dialogContext);
+      if (route == null || !route.isActive) return;
+      if (route.isCurrent) {
+        Navigator.of(dialogContext).pop();
+      } else {
+        Navigator.of(dialogContext).removeRoute(route);
+      }
+    } catch (e) {}
+  }
+
   static void _showOverlaySnackbar(
     BuildContext context,
     String title,
@@ -40,11 +56,7 @@ class CustomSnackbar {
         barrierColor: Colors.black.withOpacity(0.1),
         builder: (dialogContext) {
           Future.delayed(duration, () {
-            if (dialogContext.mounted) {
-              try {
-                Navigator.of(dialogContext).pop();
-              } catch (e) {}
-            }
+            _dismiss(dialogContext);
           });
 
           return Material(
@@ -55,9 +67,7 @@ class CustomSnackbar {
                 key: UniqueKey(),
                 direction: DismissDirection.horizontal,
                 onDismissed: (direction) {
-                  if (dialogContext.mounted) {
-                    Navigator.of(dialogContext).pop();
-                  }
+                  _dismiss(dialogContext);
                 },
                 child: Container(
                   margin: const EdgeInsets.only(
@@ -124,9 +134,7 @@ class CustomSnackbar {
 
                       GestureDetector(
                         onTap: () {
-                          if (dialogContext.mounted) {
-                            Navigator.of(dialogContext).pop();
-                          }
+                          _dismiss(dialogContext);
                         },
                         child: Container(
                           padding: const EdgeInsets.all(4),

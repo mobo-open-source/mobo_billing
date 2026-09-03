@@ -365,8 +365,10 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       }
 
       if (mounted) {
-        ReviewService().trackSignificantEvent();
-        await showPaymentCreatedConfettiDialog(context, paymentName);
+        try {
+          ReviewService().trackSignificantEvent();
+          await showPaymentCreatedConfettiDialog(context, paymentName);
+        } catch (e) {}
         if (mounted) {
           ReviewService().checkAndShowRating(context);
           Navigator.pop(context, true);

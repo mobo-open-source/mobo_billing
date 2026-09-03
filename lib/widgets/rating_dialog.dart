@@ -111,26 +111,29 @@ class _CustomRatingDialogState extends State<CustomRatingDialog> {
                     ),
                     child: Column(
                       children: [
-                        RatingBar.builder(
-                          initialRating: 5,
-                          minRating: 1,
-                          direction: Axis.horizontal,
-                          allowHalfRating: false,
-                          itemCount: 5,
-                          itemPadding: const EdgeInsets.symmetric(
-                            horizontal: 2.0,
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: RatingBar.builder(
+                            initialRating: 5,
+                            minRating: 1,
+                            direction: Axis.horizontal,
+                            allowHalfRating: false,
+                            itemCount: 5,
+                            itemPadding: const EdgeInsets.symmetric(
+                              horizontal: 2.0,
+                            ),
+                            unratedColor: Colors.grey[300],
+                            itemSize: 34,
+                            itemBuilder: (context, _) => const Icon(
+                              Icons.star_rounded,
+                              color: Colors.amber,
+                            ),
+                            onRatingUpdate: (rating) {
+                              setState(() {
+                                _rating = rating;
+                              });
+                            },
                           ),
-                          unratedColor: Colors.grey[300],
-                          itemSize: 34,
-                          itemBuilder: (context, _) => const Icon(
-                            Icons.star_rounded,
-                            color: Colors.amber,
-                          ),
-                          onRatingUpdate: (rating) {
-                            setState(() {
-                              _rating = rating;
-                            });
-                          },
                         ),
                         const SizedBox(height: 12),
 

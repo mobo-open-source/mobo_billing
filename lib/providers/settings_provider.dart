@@ -262,13 +262,23 @@ class SettingsProvider extends ChangeNotifier {
 
     try {
       await Future.wait([
-        fetchUserProfile(),
-        fetchAvailableLanguages(),
-        fetchAvailableCurrencies(),
-        fetchAvailableTimezones(),
+        fetchUserProfile().catchError((e) {
+          return;
+        }),
+        fetchAvailableLanguages().catchError((e) {
+          return;
+        }),
+        fetchAvailableCurrencies().catchError((e) {
+          return;
+        }),
+        fetchAvailableTimezones().catchError((e) {
+          return;
+        }),
       ]);
     } catch (e) {
-      _error = 'Failed to fetch Odoo data: $e';
+      if (_userProfile == null) {
+        _error = 'Failed to fetch Odoo data: $e';
+      }
     } finally {
       _isLoading = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -46,6 +46,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
   List<Map<String, dynamic>> _analytics = [];
   List<Map<String, dynamic>> _uoms = [];
   List<Map<String, dynamic>> _creditNoteLines = [];
+  int _nextLineUid = 0;
 
   Contact? _selectedCustomer;
   int? _selectedJournalId;
@@ -964,6 +965,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
               onProductSelected: (product) {
                 setState(() {
                   _creditNoteLines.insert(0, {
+                    '_uid': _nextLineUid++,
                     'product_id': product.id,
                     'product_name': product.name,
                     'name': product.name,
@@ -1013,7 +1015,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                   ..._creditNoteLines.asMap().entries.map((entry) {
                     final index = entry.key;
                     final line = entry.value;
-                    return _buildCreditNoteLineCard(index, line, isDark);
+                    return KeyedSubtree(
+                      key: ValueKey(line['_uid']),
+                      child: _buildCreditNoteLineCard(index, line, isDark),
+                    );
                   }),
                 if (_creditNoteLines.isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -1247,6 +1252,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                         _buildLabelText('Quantity', isDark),
                         const SizedBox(height: 4),
                         _CreditNoteQuantityInput(
+                          key: ValueKey('qty_${line['_uid']}'),
                           initialValue: (line['quantity'] as num).toDouble(),
                           onChanged: (value) {
                             setState(() {
@@ -1268,11 +1274,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                         const SizedBox(height: 4),
                         SizedBox(
                           height: 45,
-                          child: TextFormField(
-                            key: ValueKey(
-                              'price_${index}_${line['price_unit']}',
-                            ),
-                            initialValue: line['price_unit'].toString(),
+                          child: _CreditNoteUnitPriceInput(
+                            key: ValueKey('price_${line['_uid']}'),
+                            initialValue: (line['price_unit'] as num)
+                                .toDouble(),
                             style: GoogleFonts.manrope(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
@@ -1290,11 +1295,9 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                                     vertical: 8,
                                   ),
                                 ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (val) {
+                            onChanged: (value) {
                               setState(() {
-                                line['price_unit'] =
-                                    double.tryParse(val) ?? 0.0;
+                                line['price_unit'] = value;
                                 _updateLineSubtotal(index);
                               });
                             },
@@ -1816,6 +1819,7 @@ class _CreditNoteQuantityInput extends StatefulWidget {
   final bool isDark;
 
   const _CreditNoteQuantityInput({
+    super.key,
     required this.initialValue,
     required this.onChanged,
     required this.isDark,
@@ -1933,116 +1937,58 @@ class _CreditNoteQuantityInputState extends State<_CreditNoteQuantityInput> {
   }
 }
 
-class _CreditNotePriceInput extends StatefulWidget {
+/// Self-contained unit-price field for a credit note line. Owns its own
+/// `TextEditingController` created once in [initState] and keyed by the
+/// line's stable `_uid` at the call site (never by the price value itself)
+/// so editing the field doesn't force Flutter to tear down and recreate the
+/// element mid-edit — which previously dropped focus back to the top of the
+/// form and could wipe out an in-progress keystroke.
+class _CreditNoteUnitPriceInput extends StatefulWidget {
   final double initialValue;
-  final Function(double) onChanged;
-  final bool isDark;
-  final String currencySymbol;
+  final ValueChanged<double> onChanged;
+  final TextStyle? style;
+  final InputDecoration decoration;
 
-  const _CreditNotePriceInput({
+  const _CreditNoteUnitPriceInput({
+    super.key,
     required this.initialValue,
     required this.onChanged,
-    required this.isDark,
-    required this.currencySymbol,
+    required this.style,
+    required this.decoration,
   });
 
   @override
-  _CreditNotePriceInputState createState() => _CreditNotePriceInputState();
+  State<_CreditNoteUnitPriceInput> createState() =>
+      _CreditNoteUnitPriceInputState();
 }
 
-class _CreditNotePriceInputState extends State<_CreditNotePriceInput> {
-  late TextEditingController _controller;
-  final _focusNode = FocusNode();
+class _CreditNoteUnitPriceInputState
+    extends State<_CreditNoteUnitPriceInput> {
+  late final TextEditingController _controller;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(
-      text: widget.initialValue.toStringAsFixed(2),
+      text: widget.initialValue.toString(),
     );
-    _controller.addListener(_onPriceChanged);
   }
 
   @override
   void dispose() {
-    _controller.removeListener(_onPriceChanged);
     _controller.dispose();
-    _focusNode.dispose();
     super.dispose();
-  }
-
-  void _onPriceChanged() {
-    final cleanText = _controller.text.replaceAll(RegExp(r'[^\d.]'), '');
-    final value = double.tryParse(cleanText) ?? 0.0;
-    widget.onChanged(value);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = widget.isDark;
-
-    return SizedBox(
-      height: 40,
-      child: TextField(
-        controller: _controller,
-        focusNode: _focusNode,
-        textAlign: TextAlign.right,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        style: GoogleFonts.manrope(color: isDark ? Colors.white : null),
-        decoration: InputDecoration(
-          prefixIcon: Padding(
-            padding: const EdgeInsets.only(
-              left: 12,
-              right: 8,
-              top: 12,
-              bottom: 12,
-            ),
-            child: Text(
-              widget.currencySymbol,
-              style: GoogleFonts.manrope(
-                color: isDark ? Colors.grey[400] : Colors.grey,
-              ),
-            ),
-          ),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 0,
-            minHeight: 0,
-          ),
-          filled: true,
-          fillColor: isDark ? const Color(0xFF1F1F1F) : Colors.white,
-          contentPadding: const EdgeInsets.symmetric(
-            vertical: 8,
-            horizontal: 12,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.grey[800]! : theme.dividerColor,
-            ),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.grey[800]! : theme.dividerColor,
-            ),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.blue[300]! : theme.primaryColor,
-              width: 1.5,
-            ),
-          ),
-          isDense: true,
-        ),
-        onTap: () {
-          _controller.selection = TextSelection(
-            baseOffset: 0,
-            extentOffset: _controller.text.length,
-          );
-        },
-      ),
+    return TextFormField(
+      controller: _controller,
+      style: widget.style,
+      decoration: widget.decoration,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onChanged: (val) => widget.onChanged(double.tryParse(val) ?? 0.0),
     );
   }
 }
+

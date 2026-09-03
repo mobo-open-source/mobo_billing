@@ -103,7 +103,25 @@ class CompanyProvider extends ChangeNotifier {
           return;
         }
 
-        final uid = session.userId!;
+        int uid = session.userId ?? 0;
+        if (uid == 0) {
+          try {
+            final info = await OdooSessionManager.getSessionInfo(
+              session.serverUrl,
+              session.sessionId,
+            );
+            final rawUid = info['uid'];
+            final recoveredId = rawUid is int
+                ? rawUid
+                : int.tryParse(rawUid?.toString() ?? '') ?? 0;
+            if (recoveredId > 0) {
+              uid = recoveredId;
+              await OdooSessionManager.updateSession(
+                session.copyWith(userId: uid),
+              );
+            }
+          } catch (e) {}
+        }
         final db = session.database;
 
         final userRes = await _apiService.callKwWithoutCompany({
