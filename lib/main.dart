@@ -27,6 +27,7 @@ import 'package:mobo_billing/screens/auth/app_lock_screen.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobo_billing/screens/others/get_started_screen.dart';
+import 'package:mobo_billing/widgets/module_missing_dialog.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
@@ -177,6 +178,17 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
 
     if (isLoggedIn) {
+      final isBillingInstalled = await authProvider.checkRequiredModules();
+
+      if (!isBillingInstalled) {
+        await authProvider.logout();
+        if (mounted) {
+          Navigator.of(context).pushReplacementNamed('/login');
+          showModuleMissingDialog(context);
+        }
+        return;
+      }
+
       final shouldPromptBiometric =
           await BiometricService.shouldPromptBiometric();
 

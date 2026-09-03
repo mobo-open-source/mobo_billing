@@ -724,17 +724,12 @@ class OdooApiService {
           ['state', '=', 'installed'],
         ],
       );
-      final isInstalled = count > 0;
 
-      return isInstalled;
+      return count > 0;
     } catch (e) {
-      try {
-        await call('account.move', 'search_count', [[]], {'limit': 1});
-
-        return true;
-      } catch (fallbackError) {
-        return false;
-      }
+      // Fail closed: if we can't confirm the module is installed, treat it
+      // as not installed rather than assuming success.
+      return false;
     }
   }
 
