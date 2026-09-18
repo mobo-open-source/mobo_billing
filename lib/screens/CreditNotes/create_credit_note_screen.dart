@@ -974,7 +974,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                     'price_unit': product.listPrice ?? 0.0,
                     'price_subtotal': product.listPrice ?? 0.0,
                     'product_uom_id': product.uomId,
-                    'tax_ids': <int>[],
+                    'tax_ids': product.taxesId
+                            ?.whereType<int>()
+                            .toList() ??
+                        <int>[],
                     'discount': 0.0,
                   });
                   _productSearchController.clear();
@@ -1324,6 +1327,15 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildLabelText('Tax', isDark),
+                  const SizedBox(height: 4),
+                  _buildTaxSelector(line, isDark),
+                ],
+              ),
             ],
           ),
         ),
@@ -1523,22 +1535,36 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
         return;
       }
 
-      final invalidLines = _creditNoteLines
-          .where(
-            (line) =>
-                (line['name']?.isNotEmpty == true ||
-                    line['product_name']?.isNotEmpty == true) &&
-                (line['quantity'] ?? 0.0) > 0 &&
-                (line['price_unit'] ?? 0.0) > 0,
-          )
-          .toList();
-
-      if (invalidLines.isEmpty && _creditNoteLines.isNotEmpty) {}
-
       if (_creditNoteLines.isEmpty) {
         CustomSnackbar.showError(
           context,
           'Please add at least one credit note line',
+        );
+        return;
+      }
+
+      // These are the same conditions applied when building invoice_line_ids
+      // for the RPC payload further down — any line that fails them here
+      // would otherwise be silently dropped from the created record.
+      bool lineSurvives(Map<String, dynamic> line) =>
+          (line['name']?.isNotEmpty == true ||
+              line['product_name']?.isNotEmpty == true) &&
+          (line['quantity'] ?? 0.0) > 0 &&
+          (line['price_unit'] ?? 0.0) > 0;
+
+      final droppedLines = _creditNoteLines
+          .where((line) => !lineSurvives(line))
+          .toList();
+
+      if (droppedLines.isNotEmpty) {
+        final names = droppedLines
+            .map((line) => line['product_name']?.toString() ?? 'Unnamed line')
+            .join(', ');
+        CustomSnackbar.showError(
+          context,
+          droppedLines.length == _creditNoteLines.length
+              ? 'All lines have an invalid quantity or unit price. Please fix them before saving.'
+              : 'These lines have an invalid quantity or unit price and would be excluded: $names',
         );
         return;
       }
