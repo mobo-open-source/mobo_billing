@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'data_cache.dart';
 import 'package:provider/provider.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import '../providers/auth_provider.dart';
@@ -9,6 +11,7 @@ import 'odoo_session_manager.dart';
 import 'odoo_api_service.dart';
 import 'package:mobo_billing/main.dart';
 import '../providers/invoice_provider.dart';
+import '../providers/navigation_provider.dart';
 import '../providers/customer_provider.dart';
 import '../providers/product_provider.dart';
 import '../providers/credit_note_provider.dart';
@@ -207,21 +210,13 @@ class SessionService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Persistently stores an Odoo account's details and (optionally) its password.
+  /// Persistently stores an Odoo account's details and (optionally) its
+  /// password and cached avatar.
   Future<void> storeAccount(
     OdooSessionModel session, [
     String? password,
+    String? imageBase64,
   ]) async {
-    final Map<String, dynamic> accountData = {
-      'serverUrl': session.serverUrl,
-      'database': session.database,
-      'userLogin': session.userLogin,
-      'userId': session.userId,
-      'userName': session.userName ?? session.userLogin,
-      'sessionId': session.sessionId,
-      'lastUsed': DateTime.now().toIso8601String(),
-    };
-
     final int index = _storedAccounts.indexWhere((acc) {
       if (acc['userId'] != null && session.userId != null) {
         return acc['userId'].toString() == session.userId.toString() &&
@@ -233,6 +228,26 @@ class SessionService extends ChangeNotifier {
           acc['database'] == session.database &&
           acc['userLogin'] == session.userLogin;
     });
+
+    // Preserve whatever avatar was already cached for this account unless a
+    // fresh one is supplied — this function also runs on every account
+    // switch just to refresh the outgoing account's session id, and
+    // rebuilding the stored map from scratch here used to silently drop the
+    // cached image every time you switched away from an account.
+    final existingImage = index != -1
+        ? _storedAccounts[index]['imageBase64']
+        : null;
+
+    final Map<String, dynamic> accountData = {
+      'serverUrl': session.serverUrl,
+      'database': session.database,
+      'userLogin': session.userLogin,
+      'userId': session.userId,
+      'userName': session.userName ?? session.userLogin,
+      'sessionId': session.sessionId,
+      'lastUsed': DateTime.now().toIso8601String(),
+      'imageBase64': imageBase64 ?? existingImage,
+    };
 
     if (index != -1) {
       _storedAccounts[index] = accountData;
@@ -248,6 +263,51 @@ class SessionService extends ChangeNotifier {
     }
 
     notifyListeners();
+
+    // No avatar cached yet for this account and this call didn't just
+    // supply one — fetch it now under the account's own session cookie so
+    // the switcher list can show it later without a live, authenticated-
+    // as-someone-else image request. Runs for every account as it's
+    // stored (add-account, session refresh, switch), not just the one
+    // that's currently active, so accounts never switched into still get
+    // an avatar. Fire-and-forget: never block the caller on this.
+    if (imageBase64 == null && existingImage == null) {
+      unawaited(_cacheAccountAvatar(session));
+    }
+  }
+
+  /// Fetches a stored account's own avatar — authenticated via that
+  /// account's own session cookie, not whichever session is currently
+  /// active — and caches it on its stored account entry.
+  Future<void> _cacheAccountAvatar(OdooSessionModel session) async {
+    if (session.userId == null || session.sessionId.isEmpty) return;
+    try {
+      final result = await OdooSessionManager.callKwWithSession(
+        url: session.serverUrl,
+        sessionId: session.sessionId,
+        payload: {
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'res.users',
+            'method': 'read',
+            'args': [
+              [session.userId],
+              ['image_128'],
+            ],
+            'kwargs': {},
+          },
+          'id': 1,
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (result is List && result.isNotEmpty) {
+        final image = result.first['image_128'];
+        if (image is String && image.isNotEmpty) {
+          await storeAccount(session, null, image);
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _saveStoredAccounts() async {
@@ -315,17 +375,13 @@ class SessionService extends ChangeNotifier {
           (_currentSession!.userId != newSession.userId ||
               _currentSession!.serverUrl != newSession.serverUrl ||
               _currentSession!.database != newSession.database)) {
-        final currentExists = _storedAccounts.any(
-          (account) =>
-              account['userId']?.toString() ==
-                  _currentSession!.userId?.toString() &&
-              account['serverUrl'] == _currentSession!.serverUrl &&
-              account['database'] == _currentSession!.database,
-        );
-
-        if (!currentExists) {
-          await storeAccount(_currentSession!);
-        }
+        // Always re-store the outgoing account, don't just add it when it is
+        // missing. `storeAccount` upserts, and its session id is what lets the
+        // account be resumed later without a fresh login — skipping the write
+        // for an account already in the list pinned it to the session id from
+        // the first sign-in, so a rotated cookie was never written back and
+        // switching to it fell through to a password/2FA re-auth.
+        await storeAccount(_currentSession!);
       }
 
       _currentSession = newSession.copyWith(
@@ -478,6 +534,10 @@ class SessionService extends ChangeNotifier {
 
   /// Clears data across all providers and (optionally) wipes the local cache.
   Future<void> clearAllProviderData({bool isLogout = false}) async {
+    // Drop the offline record cache first: it is static, so it would otherwise
+    // outlive the providers and surface one account's records under another's.
+    DataCache.clear();
+
     final context = navigatorKey.currentContext;
     if (context == null) {
       return;
@@ -489,6 +549,12 @@ class SessionService extends ChangeNotifier {
       try {
         await Provider.of<AuthProvider>(context, listen: false).clearData();
       } catch (e) {}
+
+      if (isLogout) {
+        try {
+          Provider.of<NavigationProvider>(context, listen: false).reset();
+        } catch (e) {}
+      }
 
       try {
         await Provider.of<InvoiceProvider>(context, listen: false).clearData();

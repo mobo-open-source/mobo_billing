@@ -145,77 +145,89 @@ class SwitchAccountWidget extends StatelessWidget {
           color: isDark ? Colors.grey[800]! : Colors.grey[200]!,
         ),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: _buildUserAvatar(account, isDark),
-        title: Text(
-          account['userName'] ?? account['userLogin'] ?? 'Unknown User',
-          style: TextStyle(
-            color: isDark ? Colors.white : Colors.black87,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 8,
           ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${account['userLogin']} @ ${account['database']}',
-              style: TextStyle(
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 12,
-              ),
+          leading: _buildUserAvatar(account, isDark),
+          title: Text(
+            account['userName'] ?? account['userLogin'] ?? 'Unknown User',
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black87,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
             ),
-            if (account['needsReauth']?.toString() == 'true' ||
-                account['password']?.toString().isEmpty == true)
-              Row(
-                children: [
-                  Icon(
-                    Icons.warning_amber_rounded,
-                    size: 12,
-                    color: Colors.orange[600],
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Needs re-authentication',
-                    style: TextStyle(
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${account['userLogin']} @ ${account['database']}',
+                style: TextStyle(
+                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  fontSize: 12,
+                ),
+              ),
+              if (account['needsReauth']?.toString() == 'true' ||
+                  account['password']?.toString().isEmpty == true)
+                Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      size: 12,
                       color: Colors.orange[600],
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
                     ),
-                  ),
-                ],
-              ),
-          ],
-        ),
-        trailing: PopupMenuButton<String>(
-          icon: Icon(
-            Icons.more_vert,
-            color: isDark ? Colors.grey[400] : Colors.grey[600],
-            size: 18,
+                    const SizedBox(width: 4),
+                    Text(
+                      'Needs re-authentication',
+                      style: TextStyle(
+                        color: Colors.orange[600],
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+            ],
           ),
-          onSelected: (value) async {
-            if (value == 'remove') {
-              await _confirmRemoveAccount(context, account, sessionService);
-            }
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem<String>(
-              value: 'remove',
-              child: Row(
-                children: [
-                  Icon(Icons.delete_outline, size: 18, color: Colors.red[600]),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Remove',
-                    style: TextStyle(color: Colors.red[600], fontSize: 14),
-                  ),
-                ],
-              ),
+          trailing: PopupMenuButton<String>(
+            icon: Icon(
+              Icons.more_vert,
+              color: isDark ? Colors.grey[400] : Colors.grey[600],
+              size: 18,
             ),
-          ],
+            onSelected: (value) async {
+              if (value == 'remove') {
+                await _confirmRemoveAccount(context, account, sessionService);
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                value: 'remove',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: Colors.red[600],
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Remove',
+                      style: TextStyle(color: Colors.red[600], fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          onTap: () => _switchAccount(context, account, sessionService),
         ),
-        onTap: () => _switchAccount(context, account, sessionService),
       ),
     );
   }
@@ -355,10 +367,15 @@ class SwitchAccountWidget extends StatelessWidget {
   ) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final password = await sessionService.getStoredPassword(account);
+    final storedSessionId = (account['sessionId'] ?? '').toString();
+    final hasStoredSession = storedSessionId.isNotEmpty;
 
-    if (password == null ||
-        account['needsReauth']?.toString() == 'true' ||
-        account['password']?.toString().isEmpty == true) {
+    // A stored session id is what actually re-authenticates the account, so a
+    // missing password only forces a fresh login when there is no session to
+    // reuse. Requiring both sent 2FA accounts back through the TOTP page even
+    // though they were already signed in.
+    if ((password == null && !hasStoredSession) ||
+        account['needsReauth']?.toString() == 'true') {
       if (context.mounted) {
         Navigator.push(
           context,
@@ -405,16 +422,15 @@ class SwitchAccountWidget extends StatelessWidget {
     }
 
     try {
-      final storedSessionId = account['sessionId']?.toString();
-      if (storedSessionId != null &&
-          storedSessionId.isNotEmpty &&
-          password != null &&
-          password.isNotEmpty) {
+      if (hasStoredSession) {
+        // The password is only carried into the session model here; the
+        // session cookie is what authenticates, so an account with 2FA and no
+        // stored password still switches without a new TOTP code.
         final reused = await OdooSessionManager.loginWithSessionId(
           serverUrl: (account['serverUrl'] ?? '').toString(),
           database: (account['database'] ?? '').toString(),
           userLogin: (account['userLogin'] ?? '').toString(),
-          password: password,
+          password: password ?? '',
           sessionId: storedSessionId,
         );
         if (reused) {
@@ -442,6 +458,27 @@ class SwitchAccountWidget extends StatelessWidget {
             return;
           }
         }
+      }
+
+      // The stored session is gone or no longer accepted, so the account has
+      // to sign in again. Without a stored password there is nothing to send,
+      // so hand over to the login screen instead of a doomed RPC call.
+      if (password == null || password.isEmpty) {
+        if (context.mounted && Navigator.of(context).canPop()) {
+          Navigator.pop(context);
+        }
+        if (context.mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LoginScreen(
+                serverUrl: account['serverUrl'],
+                database: account['database'],
+              ),
+            ),
+          );
+        }
+        return;
       }
 
       final newSession = await OdooSessionManager.authenticate(

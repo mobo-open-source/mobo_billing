@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
@@ -29,7 +30,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
 
   bool _isLoading = false;
-  bool _submitted = false;
+  bool _shouldValidate = false;
+  bool _emailHasError = false;
+  bool _passwordHasError = false;
   String? _errorMessage;
   bool _isPasswordVisible = false;
   String _protocol = 'https://';
@@ -78,10 +81,6 @@ class _LoginScreenState extends State<LoginScreen> {
     _usernameController.clear();
   }
 
-  Future<void> _loadSavedCredentials() async {
-    return;
-  }
-
   @override
   void dispose() {
     _passwordController.dispose();
@@ -93,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return LoginLayout(
       title: 'Sign In',
-      subtitle: 'Enter your credentials to access the app',
+      subtitle: 'Enter your credentials to continue',
       backButton: Positioned(
         top: 24,
         left: 0,
@@ -127,70 +126,86 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        LoginTextField(
-          controller: _usernameController,
-          hint: 'Username',
-          autofillHints: const [AutofillHints.username, AutofillHints.email],
-          prefixIcon: Transform.scale(
-            scale: 20 / 24.0,
-            child: HugeIcon(
-              icon: HugeIcons.strokeRoundedUser,
-              color: _isLoading ? Colors.black26 : Colors.black54,
-            ),
-          ),
-          enabled: !_isLoading,
-          validator: (value) {
-            if (value == null || value.trim().isEmpty) {
-              return 'Username is required';
-            }
-            return null;
-          },
-          autovalidateMode: _submitted
-              ? AutovalidateMode.onUserInteraction
-              : AutovalidateMode.disabled,
-        ),
-
-        const SizedBox(height: 16),
-
-        LoginTextField(
-          controller: _passwordController,
-          hint: 'Password',
-          autofillHints: const [AutofillHints.password],
-          prefixIcon: Transform.scale(
-            scale: 20 / 24.0,
-            child: HugeIcon(
-              icon: HugeIcons.strokeRoundedLockPassword,
-              color: _isLoading ? Colors.black26 : Colors.black54,
-            ),
-          ),
-          obscureText: !_isPasswordVisible,
-          enabled: !_isLoading,
-          suffixIcon: IconButton(
-            icon: Transform.scale(
-              scale: 20 / 24.0,
-              child: HugeIcon(
-                icon: _isPasswordVisible
-                    ? HugeIcons.strokeRoundedView
-                    : HugeIcons.strokeRoundedViewOff,
-                color: Colors.black54,
+        AutofillGroup(
+          child: Column(
+            children: [
+              LoginTextField(
+                controller: _usernameController,
+                hint: 'Email',
+                prefixIcon: HugeIcons.strokeRoundedMail01,
+                keyboardType: TextInputType.emailAddress,
+                enabled: !_isLoading,
+                hasError: _emailHasError,
+                autofillHints: const [
+                  AutofillHints.email,
+                  AutofillHints.username,
+                ],
+                autovalidateMode: _shouldValidate
+                    ? AutovalidateMode.onUserInteraction
+                    : AutovalidateMode.disabled,
+                validator: (value) {
+                  if (!_shouldValidate) return null;
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Email is required';
+                  }
+                  return null;
+                },
+                onChanged: (value) {
+                  setState(() {
+                    _emailHasError = value.trim().isEmpty;
+                    if (_errorMessage != null) _errorMessage = null;
+                  });
+                },
               ),
-            ),
-            onPressed: () {
-              setState(() {
-                _isPasswordVisible = !_isPasswordVisible;
-              });
-            },
+
+              const SizedBox(height: 16),
+
+              LoginTextField(
+                controller: _passwordController,
+                hint: 'Password',
+                prefixIcon: HugeIcons.strokeRoundedLockPassword,
+                obscureText: !_isPasswordVisible,
+                enabled: !_isLoading,
+                hasError: _passwordHasError,
+                autofillHints: const [AutofillHints.password],
+                autovalidateMode: _shouldValidate
+                    ? AutovalidateMode.onUserInteraction
+                    : AutovalidateMode.disabled,
+                validator: (value) {
+                  if (!_shouldValidate) return null;
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Password is required';
+                  }
+                  return null;
+                },
+                suffixIcon: IconButton(
+                  icon: Transform.scale(
+                    scale: 20 / 24.0,
+                    child: HugeIcon(
+                      icon: _isPasswordVisible
+                          ? HugeIcons.strokeRoundedView
+                          : HugeIcons.strokeRoundedViewOff,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _isPasswordVisible = !_isPasswordVisible;
+                    });
+                  },
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    _passwordHasError = value.isEmpty;
+                    if (_errorMessage != null) _errorMessage = null;
+                  });
+                },
+              ),
+            ],
           ),
-          validator: (value) {
-            if (value == null || value.trim().isEmpty) {
-              return 'Password is required';
-            }
-            return null;
-          },
-          autovalidateMode: _submitted
-              ? AutovalidateMode.onUserInteraction
-              : AutovalidateMode.disabled,
         ),
+
+        const SizedBox(height: 8),
 
         Align(
           alignment: Alignment.centerRight,
@@ -206,6 +221,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     );
                   },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
             child: Text(
               'Forgot Password?',
               style: GoogleFonts.manrope(
@@ -220,8 +241,6 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 8),
 
         LoginErrorDisplay(error: _errorMessage),
-
-        const SizedBox(height: 8),
 
         LoginButton(
           text: 'Sign In',
@@ -250,11 +269,28 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _performLogin() async {
-    if (!_loginFormKey.currentState!.validate()) {
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _shouldValidate = true;
+      _errorMessage = null;
+    });
+
+    final formValid = _loginFormKey.currentState?.validate() ?? false;
+
+    setState(() {
+      _emailHasError = _usernameController.text.trim().isEmpty;
+      _passwordHasError = _passwordController.text.isEmpty;
+    });
+
+    if (!formValid) {
+      await HapticFeedback.lightImpact();
       return;
     }
 
     if (serverUrl.isEmpty || database.isEmpty) {
+      await HapticFeedback.heavyImpact();
+      if (!mounted) return;
       setState(() {
         _errorMessage =
             'Server configuration missing. Please go back and setup server.';
@@ -264,8 +300,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() {
       _isLoading = true;
-      _submitted = true;
-      _errorMessage = null;
     });
 
     try {
@@ -298,18 +332,24 @@ class _LoginScreenState extends State<LoginScreen> {
         } catch (_) {}
 
         if (mounted) {
-          final isBillingInstalled = await authProvider.checkRequiredModules();
+          final accessResult = await authProvider.checkAppAccess();
 
-          if (!isBillingInstalled) {
+          if (accessResult != AppAccessResult.ok) {
             await authProvider.logout();
             if (mounted) {
-              showModuleMissingDialog(context);
+              if (accessResult == AppAccessResult.accessDenied) {
+                showAccessDeniedDialog(context);
+              } else {
+                showModuleMissingDialog(context);
+              }
               setState(() {
                 _isLoading = false;
               });
             }
             return;
           }
+
+          TextInput.finishAutofillContext();
 
           Navigator.pushAndRemoveUntil(
             context,
@@ -318,11 +358,12 @@ class _LoginScreenState extends State<LoginScreen> {
           );
         }
       } else {
+        await HapticFeedback.heavyImpact();
+        if (!mounted) return;
         setState(() {
           _errorMessage =
-              'Invalid credentials. Please check your username and password.';
+              'Invalid credentials. Please check your email and password.';
           _isLoading = false;
-          _submitted = false;
         });
       }
     } catch (e) {
@@ -350,10 +391,11 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       }
 
+      await HapticFeedback.heavyImpact();
+      if (!mounted) return;
       setState(() {
         _errorMessage = _parseLoginError(e.toString());
         _isLoading = false;
-        _submitted = false;
       });
     }
   }
@@ -367,7 +409,7 @@ class _LoginScreenState extends State<LoginScreen> {
         errorLower.contains('wrong login/password') ||
         errorLower.contains('invalid username or password') ||
         errorLower.contains('login failed')) {
-      return 'Invalid username or password. Please check your credentials and try again.';
+      return 'Invalid email or password. Please check your credentials and try again.';
     }
 
     if (errorLower.contains('database') && errorLower.contains('not found')) {

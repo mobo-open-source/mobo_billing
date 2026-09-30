@@ -276,13 +276,27 @@ class LoginTextField extends StatelessWidget {
                     : Colors.black54,
               )
             : null,
+        // Built like the prefix above: a 48x48 box with the glyph centred in
+        // it. Handing `InputDecoration` a bare icon let it size the suffix
+        // from its own constraints, so the error icon came out far larger
+        // than the 20px prefix it sits opposite.
         suffixIcon: hasError
-            ? HugeIcon(
-                icon: HugeIcons.strokeRoundedAlertCircle,
-                color: Colors.red,
-                size: 20,
+            ? SizedBox(
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: HugeIcon(
+                    icon: HugeIcons.strokeRoundedAlertCircle,
+                    color: Colors.red,
+                    size: 20,
+                  ),
+                ),
               )
             : suffixIcon,
+        suffixIconConstraints: const BoxConstraints(
+          minWidth: 48,
+          minHeight: 48,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -436,10 +450,16 @@ class _LoginDropdownFieldState extends State<LoginDropdownField> {
                     ),
                   ),
                   suffixIcon: showErrorIcon
-                      ? HugeIcon(
-                          icon: HugeIcons.strokeRoundedAlertCircle,
-                          color: Colors.red,
-                          size: 20,
+                      ? SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: Center(
+                            child: HugeIcon(
+                              icon: HugeIcons.strokeRoundedAlertCircle,
+                              color: Colors.red,
+                              size: 20,
+                            ),
+                          ),
                         )
                       : SizedBox(
                           width: 48,

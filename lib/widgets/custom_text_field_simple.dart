@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
+import '../theme/app_theme.dart';
+
+/// A customizable [TextFormField] wrapper with a label above the field,
+/// used throughout the Invoice, Credit Note and Payment forms.
 class CustomTextField extends StatelessWidget {
   final TextEditingController controller;
   final String labelText;
   final String? hintText;
   final String? Function(String?)? validator;
   final bool isDark;
+  final bool showBorder;
   final TextInputType? keyboardType;
   final int? maxLines;
   final Widget? suffixIcon;
+  final bool enabled;
 
   const CustomTextField({
     required this.controller,
@@ -16,9 +23,11 @@ class CustomTextField extends StatelessWidget {
     this.hintText,
     this.validator,
     this.isDark = false,
+    this.showBorder = false,
     this.keyboardType,
     this.maxLines = 1,
     this.suffixIcon,
+    this.enabled = true,
     Key? key,
   }) : super(key: key);
 
@@ -30,40 +39,54 @@ class CustomTextField extends StatelessWidget {
         Text(
           labelText,
           style: TextStyle(
+            fontFamily: GoogleFonts.manrope(
+              fontWeight: FontWeight.w400,
+            ).fontFamily,
             color: isDark ? Colors.white70 : const Color(0xff7F7F7F),
-            fontWeight: FontWeight.w400,
           ),
         ),
         const SizedBox(height: 8),
         TextFormField(
           style: TextStyle(
-            fontWeight: FontWeight.w600,
+            fontFamily: GoogleFonts.manrope(
+              fontWeight: FontWeight.w600,
+            ).fontFamily,
             color: isDark ? Colors.white70 : const Color(0xff000000),
           ),
           controller: controller,
+          enabled: enabled,
           keyboardType: keyboardType ?? TextInputType.text,
           maxLines: maxLines,
           decoration: InputDecoration(
             hintText: hintText,
             hintStyle: TextStyle(
+              fontFamily: GoogleFonts.manrope(
+                fontWeight: FontWeight.w400,
+              ).fontFamily,
               color: isDark ? Colors.white38 : Colors.grey[500],
               fontStyle: FontStyle.italic,
               fontSize: 14,
-              fontWeight: FontWeight.w400,
             ),
+            prefixText: '',
             suffixIcon: suffixIcon,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+              borderSide: BorderSide(
+                color: showBorder ? _getBorderColor() : Colors.transparent,
+                width: 2,
+              ),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+              borderSide: BorderSide(
+                color: showBorder ? AppTheme.primaryColor : Colors.transparent,
+                width: 1,
+              ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: Theme.of(context).primaryColor,
+              borderSide: const BorderSide(
+                color: AppTheme.primaryColor,
                 width: 1,
               ),
             ),
@@ -76,5 +99,9 @@ class CustomTextField extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Color _getBorderColor() {
+    return isDark ? Colors.grey[700]! : Colors.grey[400]!;
   }
 }

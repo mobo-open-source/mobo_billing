@@ -14,8 +14,10 @@ import 'package:intl/intl.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
 
 import 'invoice_detail_screen.dart';
@@ -118,27 +120,15 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
                 Expanded(
                   child: Consumer2<ConnectivityService, SessionService>(
                     builder: (context, connectivityService, sessionService, child) {
+                      // Offline with records in hand: keep showing them under
+                      // a banner instead of blanking the screen.
                       if (!connectivityService.isConnected) {
+                        if (provider.invoices.isNotEmpty) {
+                          return _buildCachedContent(isDark, provider);
+                        }
+
                         return ConnectionStatusWidget(
-                          onRetry: () {
-                            if (connectivityService.isConnected &&
-                                sessionService.hasValidSession) {
-                              if (provider.currentSearchQuery != null &&
-                                  provider.currentSearchQuery!.isNotEmpty) {
-                                provider.searchInvoices(
-                                  provider.currentSearchQuery!,
-                                  offset: 0,
-                                  limit: 40,
-                                );
-                              } else {
-                                provider.loadInvoices(
-                                  filter: _currentFilter,
-                                  offset: 0,
-                                  limit: 40,
-                                );
-                              }
-                            }
-                          },
+                          onRetry: _reload,
                           customMessage:
                               'No internet connection. Please check your connection and try again.',
                         );
@@ -148,6 +138,16 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
                         return const ConnectionStatusWidget();
                       }
 
+                      // A failed refresh keeps the last good page on screen.
+                      if (provider.error != null &&
+                          provider.invoices.isNotEmpty) {
+                        return _buildCachedContent(
+                          isDark,
+                          provider,
+                          message: "Couldn't refresh invoices",
+                        );
+                      }
+
                       if (provider.error != null && provider.invoices.isEmpty) {
                         return ConnectionStatusWidget(
                           serverUnreachable: true,
@@ -155,10 +155,9 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
                           onRetry: () {
                             if (provider.currentSearchQuery != null &&
                                 provider.currentSearchQuery!.isNotEmpty) {
-                              provider.searchInvoices(
+                              _runSearch(
+                                provider,
                                 provider.currentSearchQuery!,
-                                offset: 0,
-                                limit: 40,
                               );
                             } else {
                               provider.loadInvoices(
@@ -223,11 +222,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
         try {
           if (provider.currentSearchQuery != null &&
               provider.currentSearchQuery!.isNotEmpty) {
-            await provider.searchInvoices(
-              provider.currentSearchQuery!,
-              offset: 0,
-              limit: 40,
-            );
+            await _runSearch(provider, provider.currentSearchQuery!);
           } else {
             await _applyFilters();
           }
@@ -262,6 +257,38 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     return const CommonListShimmer();
   }
 
+  /// Re-runs whatever the list is currently showing — the active search, or
+  /// the filtered page.
+  void _reload() {
+    final provider = Provider.of<InvoiceProvider>(context, listen: false);
+    final query = provider.currentSearchQuery;
+
+    if (query != null && query.isNotEmpty) {
+      _runSearch(provider, query);
+    } else {
+      _applyFilters();
+    }
+  }
+
+  /// The normal list under an [OfflineDataBanner], used when the records on
+  /// screen came from the cache rather than a live fetch.
+  Widget _buildCachedContent(
+    bool isDark,
+    InvoiceProvider provider, {
+    String? message,
+  }) {
+    return Column(
+      children: [
+        OfflineDataBanner(
+          lastUpdated: provider.cacheUpdatedAt,
+          onRetry: _reload,
+          message: message,
+        ),
+        Expanded(child: _buildListContent(isDark, provider)),
+      ],
+    );
+  }
+
   Widget _buildEmptyState(bool isDark, InvoiceProvider provider) {
     return EmptyStateWidget(
       title: _hasActiveFilters() ? 'No results found' : 'No invoices found',
@@ -269,15 +296,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
           ? 'Try adjusting your filters'
           : 'There are no invoice records to display',
       showClearButton: _hasActiveFilters(),
-      onClearFilters: () {
-        setState(() {
-          _activeFilters.clear();
-          _startDate = null;
-          _endDate = null;
-          _selectedGroupBy = null;
-        });
-        _applyFilters();
-      },
+      onClearFilters: _clearAllFilters,
     );
   }
 
@@ -328,132 +347,29 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
   }
 
   Widget _buildSearchAndFilterBar(InvoiceProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
-      child: Container(
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF000000).withOpacity(0.05),
-              offset: const Offset(0, 6),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          enabled: true,
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xff1E1E1E),
-            fontWeight: FontWeight.w400,
-            fontStyle: FontStyle.normal,
-            fontSize: 15,
-            height: 1.0,
-            letterSpacing: 0.0,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Search invoices...',
-            hintStyle: TextStyle(
-              color: isDark ? Colors.white : const Color(0xff1E1E1E),
-              fontWeight: FontWeight.w400,
-              fontStyle: FontStyle.normal,
-              fontSize: 15,
-              height: 1.0,
-              letterSpacing: 0.0,
-            ),
-            prefixIcon: IconButton(
-              icon: HugeIcon(
-                icon: HugeIcons.strokeRoundedFilterHorizontal,
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                size: 18,
-              ),
-              tooltip: 'Filter & Group By',
-              onPressed: () => _showFilterBottomSheet(provider),
-            ),
-            suffixIcon: Container(
-              constraints: const BoxConstraints(maxWidth: 140),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (provider.isLoading &&
-                      (provider.currentSearchQuery != null &&
-                          provider.currentSearchQuery!.isNotEmpty))
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppTheme.primaryColor,
-                        ),
-                      ),
-                    ),
-                  if (_searchController.text.isNotEmpty)
-                    IconButton(
-                      icon: Icon(
-                        Icons.clear,
-                        color: isDark ? Colors.grey[400] : Colors.grey,
-                        size: 20,
-                      ),
-                      onPressed: () {
-                        _searchController.clear();
-                        _searchDebounce?.cancel();
-                        _applyFilters();
-                        setState(() {});
-                      },
-                      padding: const EdgeInsets.all(8),
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            filled: true,
-            fillColor: isDark ? Colors.grey[850] : Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1.5,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            isDense: true,
-            alignLabelWithHint: true,
-          ),
-          onChanged: (value) {
-            setState(() {});
-            _searchDebounce?.cancel();
-            _searchDebounce = Timer(const Duration(milliseconds: 350), () {
-              if (!mounted) return;
-              if (value.isEmpty) {
-                _applyFilters();
-              } else {
-                provider.searchInvoices(value, offset: 0, limit: 40);
-              }
-            });
-          },
-        ),
+      child: MoboSearchField(
+        controller: _searchController,
+        hintText: 'Search invoices...',
+        hasActiveFilters: _hasActiveFilters(),
+        onFilterTap: () => _showFilterBottomSheet(provider),
+        onClear: () {
+          _searchDebounce?.cancel();
+          _applyFilters();
+        },
+        onChanged: (value) {
+          setState(() {});
+          _searchDebounce?.cancel();
+          _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+            if (!mounted) return;
+            if (value.isEmpty) {
+              _applyFilters();
+            } else {
+              _runSearch(provider, value);
+            }
+          });
+        },
       ),
     );
   }
@@ -830,15 +746,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
               ),
             ),
           TextButton(
-            onPressed: () {
-              setState(() {
-                _activeFilters.clear();
-                _startDate = null;
-                _endDate = null;
-                _selectedGroupBy = null;
-              });
-              _applyFilters();
-            },
+            onPressed: _clearAllFilters,
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               minimumSize: Size.zero,
@@ -970,15 +878,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
           ),
           const SizedBox(width: 8),
           InkWell(
-            onTap: () {
-              setState(() {
-                _activeFilters.clear();
-                _startDate = null;
-                _endDate = null;
-                _selectedGroupBy = null;
-              });
-              _applyFilters();
-            },
+            onTap: _clearAllFilters,
             child: Icon(
               Icons.close,
               size: 16,
@@ -990,8 +890,23 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     );
   }
 
+  /// Runs a search that keeps the selected status pill and the bottom-sheet
+  /// filters applied.
+  Future<void> _runSearch(InvoiceProvider provider, String query) {
+    final domain = _buildFilterDomain();
+    return provider.searchInvoices(
+      query,
+      offset: 0,
+      limit: 40,
+      filter: _currentFilter,
+      customFilter: domain.isNotEmpty ? domain : null,
+      clearCustomFilter: domain.isEmpty,
+    );
+  }
+
   Future<void> _applyFilters() async {
     final provider = Provider.of<InvoiceProvider>(context, listen: false);
+    final query = _searchController.text.trim();
 
     if (_selectedGroupBy != null) {
       final filterDomain = _buildFilterDomain();
@@ -1000,15 +915,38 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
         customFilter: filterDomain.isNotEmpty ? filterDomain : null,
         filter: _currentFilter,
       );
-    } else {
-      final domain = _buildFilterDomain();
-      provider.loadInvoices(
-        filter: _currentFilter,
-        offset: 0,
-        limit: 40,
-        customFilter: domain.isNotEmpty ? domain : null,
-      );
+      return;
     }
+
+    if (query.isNotEmpty) {
+      await _runSearch(provider, query);
+      return;
+    }
+
+    final domain = _buildFilterDomain();
+    await provider.loadInvoices(
+      filter: _currentFilter,
+      offset: 0,
+      limit: 40,
+      customFilter: domain.isNotEmpty ? domain : null,
+      // Without this the provider keeps re-applying the last domain it saw,
+      // so clearing the filters would leave the list filtered.
+      clearCustomFilter: domain.isEmpty,
+    );
+  }
+
+  /// Resets every filter affordance on this screen — status chips, date range,
+  /// group-by and the search box — and reloads the unfiltered list.
+  void _clearAllFilters() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    setState(() {
+      _activeFilters.clear();
+      _startDate = null;
+      _endDate = null;
+      _selectedGroupBy = null;
+    });
+    _applyFilters();
   }
 
   void _showErrorSnackBar(String error) {

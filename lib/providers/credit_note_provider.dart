@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import '../services/connectivity_service.dart';
+import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 import '../models/invoice.dart';
 import '../models/customer.dart';
@@ -15,6 +17,9 @@ class CreditNoteProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
+
   int _currentOffset = 0;
   int _limit = 40;
   int _totalCount = 0;
@@ -22,6 +27,12 @@ class CreditNoteProvider with ChangeNotifier {
   String? _currentSearchQuery;
 
   List<Invoice> get creditNotes => _creditNotes;
+
+  /// Whether [creditNotes] came from the cache instead of a live request.
+  bool get isShowingCachedData => _isShowingCachedData;
+
+  /// When the cached records on screen were fetched.
+  DateTime? get cacheUpdatedAt => _cacheUpdatedAt;
   bool get isLoading => _isLoading;
   String? get error => _error;
 
@@ -47,6 +58,9 @@ class CreditNoteProvider with ChangeNotifier {
     _currentSearchQuery = null;
     _groupSummary = {};
     _loadedGroups = {};
+    _isShowingCachedData = false;
+    _cacheUpdatedAt = null;
+    DataCache.invalidatePrefix(DataCache.creditNotePrefix);
     notifyListeners();
   }
 
@@ -57,6 +71,11 @@ class CreditNoteProvider with ChangeNotifier {
     List<dynamic>? customFilter,
   }) async {
     _currentSearchQuery = null;
+
+    // Offline: serve what was loaded last instead of clearing the screen.
+    if (!ConnectivityService.instance.isConnected && _serveCachedNotes()) {
+      return;
+    }
 
     _setLoading(true);
     _setError(null);
@@ -74,35 +93,44 @@ class CreditNoteProvider with ChangeNotifier {
           domain.addAll(customFilter);
         }
 
-        final results = await _apiService.searchRead(
-          'account.move',
-          domain,
-          [
-            'name',
-            'partner_id',
-            'invoice_date',
-            'invoice_date_due',
-            'amount_total',
-            'amount_residual',
-            'amount_untaxed',
-            'amount_tax',
-            'state',
-            'payment_state',
-            'currency_id',
-            'ref',
-            'invoice_origin',
-            'company_id',
-            'move_type',
-            'invoice_line_ids',
-          ],
-          offset,
-          limit,
-          'invoice_date desc, id desc',
-        );
+        // Count and page data are independent reads — run them concurrently
+        // instead of waiting on the count before even starting the page fetch.
+        final results = await Future.wait([
+          _apiService.searchRead(
+            'account.move',
+            domain,
+            [
+              'name',
+              'partner_id',
+              'invoice_date',
+              'invoice_date_due',
+              'amount_total',
+              'amount_residual',
+              'amount_untaxed',
+              'amount_tax',
+              'state',
+              'payment_state',
+              'currency_id',
+              'ref',
+              'invoice_origin',
+              'company_id',
+              'move_type',
+              'invoice_line_ids',
+            ],
+            offset,
+            limit,
+            'invoice_date desc, id desc',
+          ),
+          _apiService.getInvoiceCount(domain: domain),
+        ]);
 
-        _creditNotes = results.map((json) => Invoice.fromJson(json)).toList();
+        _creditNotes = (results[0] as List<Map<String, dynamic>>)
+            .map((json) => Invoice.fromJson(json))
+            .toList();
+        _totalCount = results[1] as int;
 
-        _totalCount = await _apiService.getInvoiceCount(domain: domain);
+        _cacheNotes();
+        _isShowingCachedData = false;
 
         _setLoading(false);
         notifyListeners();
@@ -115,24 +143,47 @@ class CreditNoteProvider with ChangeNotifier {
         },
       );
     } on TimeoutException catch (e) {
+      _setLoading(false);
+
+      if (_creditNotes.isEmpty && _serveCachedNotes()) return;
+
       _setError(
         'Request timed out. Please check your connection and try again.',
       );
-
-      if (_creditNotes.isEmpty) {
-        _creditNotes = [];
-        _totalCount = 0;
-      }
-      _setLoading(false);
     } catch (e) {
-      _setError(e.toString());
-
-      if (_creditNotes.isEmpty) {
-        _creditNotes = [];
-        _totalCount = 0;
-      }
       _setLoading(false);
+
+      if (_creditNotes.isEmpty && _serveCachedNotes()) return;
+
+      _setError(e.toString());
     }
+  }
+
+  /// Stores the current page so it can be shown again offline.
+  void _cacheNotes() {
+    final key = DataCache.listKey(DataCache.creditNotePrefix);
+    DataCache.write(
+      key,
+      CachedList<Invoice>(List.of(_creditNotes), _totalCount),
+    );
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+  }
+
+  /// Publishes the cached page, if there is one. Returns whether it did.
+  bool _serveCachedNotes() {
+    final key = DataCache.listKey(DataCache.creditNotePrefix);
+    final cached = DataCache.read<CachedList<Invoice>>(key);
+    if (cached == null || cached.items.isEmpty) return false;
+
+    _creditNotes = List.of(cached.items);
+    _totalCount = cached.totalCount;
+    _currentOffset = 0;
+    _isShowingCachedData = true;
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+    return true;
   }
 
   /// Searches for credit notes based on a query string (name or customer).
@@ -140,10 +191,15 @@ class CreditNoteProvider with ChangeNotifier {
     String query, {
     int offset = 0,
     int limit = 40,
+    List<dynamic>? customFilter,
   }) async {
     if (query.isEmpty) {
       _currentSearchQuery = null;
-      await loadCreditNotes(offset: 0, limit: _limit);
+      await loadCreditNotes(
+        offset: 0,
+        limit: _limit,
+        customFilter: customFilter,
+      );
       return;
     }
 
@@ -155,41 +211,54 @@ class CreditNoteProvider with ChangeNotifier {
       await Future(() async {
         List domain = [
           ['move_type', '=', 'out_refund'],
+        ];
+
+        if (customFilter != null && customFilter.isNotEmpty) {
+          domain.addAll(customFilter);
+        }
+
+        // The OR group goes last so it binds to the two name/partner leaves.
+        domain.addAll([
           '|',
           ['name', 'ilike', query],
           ['partner_id', 'ilike', query],
-        ];
+        ]);
 
         _currentOffset = offset;
         _limit = limit;
 
-        final results = await _apiService.searchRead(
-          'account.move',
-          domain,
-          [
-            'name',
-            'partner_id',
-            'invoice_date',
-            'invoice_date_due',
-            'amount_total',
-            'amount_residual',
-            'amount_untaxed',
-            'amount_tax',
-            'state',
-            'payment_state',
-            'currency_id',
-            'ref',
-            'invoice_origin',
-            'company_id',
-            'move_type',
-            'invoice_line_ids',
-          ],
-          offset,
-          limit,
-        );
+        final results = await Future.wait([
+          _apiService.searchRead(
+            'account.move',
+            domain,
+            [
+              'name',
+              'partner_id',
+              'invoice_date',
+              'invoice_date_due',
+              'amount_total',
+              'amount_residual',
+              'amount_untaxed',
+              'amount_tax',
+              'state',
+              'payment_state',
+              'currency_id',
+              'ref',
+              'invoice_origin',
+              'company_id',
+              'move_type',
+              'invoice_line_ids',
+            ],
+            offset,
+            limit,
+          ),
+          _apiService.getInvoiceCount(domain: domain),
+        ]);
 
-        _creditNotes = results.map((json) => Invoice.fromJson(json)).toList();
-        _totalCount = await _apiService.getInvoiceCount(domain: domain);
+        _creditNotes = (results[0] as List<Map<String, dynamic>>)
+            .map((json) => Invoice.fromJson(json))
+            .toList();
+        _totalCount = results[1] as int;
 
         _setLoading(false);
         notifyListeners();
@@ -254,13 +323,50 @@ class CreditNoteProvider with ChangeNotifier {
   }
 
   /// Fetches detailed information for a specific credit note.
+  /// Loads one credit note's detail, falling back to the cached copy when the
+  /// device is offline or the request fails.
   Future<Invoice?> getCreditNoteDetails(int id) async {
+    final key = DataCache.detailKey(DataCache.creditNotePrefix, id);
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<Invoice>(key);
+    }
+
     try {
       final json = await _apiService.getInvoiceDetails(id);
-      return json != null ? Invoice.fromJson(json) : null;
+      if (json == null) return DataCache.read<Invoice>(key);
+
+      final note = Invoice.fromJson(json);
+      DataCache.write(key, note);
+      return note;
     } catch (e) {
+      final cached = DataCache.read<Invoice>(key);
+      if (cached != null) return cached;
       _setError(e.toString());
       return null;
+    }
+  }
+
+  /// Updates an existing draft credit note on the server.
+  Future<bool> updateCreditNote(int id, Map<String, dynamic> data) async {
+    _setLoading(true);
+    _setError(null);
+    try {
+      final success = await _apiService
+          .updateInvoice(id, data)
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () =>
+                throw TimeoutException('Updating credit note timed out'),
+          );
+      if (success) {
+        await loadCreditNotes();
+      }
+      _setLoading(false);
+      return success;
+    } catch (e) {
+      _setLoading(false);
+      rethrow;
     }
   }
 
@@ -386,7 +492,14 @@ class CreditNoteProvider with ChangeNotifier {
   }
 
   /// Fetches detailed information for the customer associated with a credit note.
+  /// Partner detail for the credit-note screens, cached for offline viewing.
   Future<Customer?> getCustomerDetails(int partnerId) async {
+    final key = DataCache.detailKey(DataCache.customerPrefix, partnerId);
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<Customer>(key);
+    }
+
     try {
       final res = await _apiService.searchRead(
         'res.partner',
@@ -411,18 +524,35 @@ class CreditNoteProvider with ChangeNotifier {
           'partner_longitude',
         ],
       );
-      return res.isNotEmpty ? Customer.fromJson(res.first) : null;
+      if (res.isEmpty) return DataCache.read<Customer>(key);
+
+      final customer = Customer.fromJson(res.first);
+      DataCache.write(key, customer);
+      return customer;
     } catch (e) {
-      return null;
+      return DataCache.read<Customer>(key);
     }
   }
 
-  /// Retrieves the list of payments applied to a credit note.
+  /// Retrieves the list of payments applied to a credit note, cached so the
+  /// detail screen keeps showing them offline.
   Future<List<Map<String, dynamic>>> getPaymentsForCreditNote(int id) async {
+    final key = DataCache.relatedKey(
+      DataCache.creditNotePrefix,
+      id,
+      'payments',
+    );
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<List<Map<String, dynamic>>>(key) ?? [];
+    }
+
     try {
-      return await _apiService.getInvoicePayments(id);
+      final payments = await _apiService.getInvoicePayments(id);
+      DataCache.write(key, payments);
+      return payments;
     } catch (e) {
-      return [];
+      return DataCache.read<List<Map<String, dynamic>>>(key) ?? [];
     }
   }
 

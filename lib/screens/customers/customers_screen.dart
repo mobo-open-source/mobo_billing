@@ -7,11 +7,13 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../providers/customer_provider.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../widgets/customer_list_tile.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/empty_state_widget.dart';
 import 'customer_details_screen.dart';
 import 'customer_form_screen.dart';
@@ -134,7 +136,10 @@ class _CustomersScreenState extends State<CustomersScreen> {
                           (provider.showActiveOnly ? 0 : 1) +
                           (provider.showCompaniesOnly ? 1 : 0) +
                           (provider.showIndividualsOnly ? 1 : 0) +
-                          (provider.showCreditBreachesOnly ? 1 : 0) +
+                          // Credit Breaches isn't wired up to any query
+                          // filtering yet (see CustomerProvider._buildDomain),
+                          // so it's deliberately left out of this count —
+                          // toggling it has no effect on the results shown.
                           (provider.startDate != null ||
                                   provider.endDate != null
                               ? 1
@@ -159,14 +164,15 @@ class _CustomersScreenState extends State<CustomersScreen> {
               Expanded(
                 child: Consumer2<ConnectivityService, SessionService>(
                   builder: (context, connectivityService, sessionService, child) {
+                    // Offline with records in hand: keep them on screen under
+                    // a banner instead of blanking the list.
                     if (!connectivityService.isConnected) {
+                      if (provider.customers.isNotEmpty) {
+                        return _buildCachedContent(provider);
+                      }
+
                       return ConnectionStatusWidget(
-                        onRetry: () {
-                          if (connectivityService.isConnected &&
-                              sessionService.hasValidSession) {
-                            _loadData();
-                          }
-                        },
+                        onRetry: _loadData,
                         customMessage:
                             'No internet connection. Please check your connection and try again.',
                       );
@@ -174,6 +180,15 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
                     if (!sessionService.hasValidSession) {
                       return const ConnectionStatusWidget();
+                    }
+
+                    // A failed refresh keeps the last good page on screen.
+                    if (provider.error != null &&
+                        provider.customers.isNotEmpty) {
+                      return _buildCachedContent(
+                        provider,
+                        message: "Couldn't refresh customers",
+                      );
                     }
 
                     if (provider.error != null && provider.customers.isEmpty) {
@@ -234,101 +249,21 @@ class _CustomersScreenState extends State<CustomersScreen> {
   }
 
   Widget _buildSearchField() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final provider = Provider.of<CustomerProvider>(context, listen: false);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
-      child: Container(
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF000000).withOpacity(0.05),
-              offset: const Offset(0, 6),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          onChanged: _onSearchChanged,
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xff1E1E1E),
-            fontWeight: FontWeight.w400,
-            fontStyle: FontStyle.normal,
-            fontSize: 15,
-            height: 1.0,
-            letterSpacing: 0.0,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Search customers...',
-            hintStyle: TextStyle(
-              color: isDark ? Colors.white : const Color(0xff1E1E1E),
-              fontWeight: FontWeight.w400,
-              fontStyle: FontStyle.normal,
-              fontSize: 15,
-              height: 1.0,
-              letterSpacing: 0.0,
-            ),
-            prefixIcon: IconButton(
-              icon: HugeIcon(
-                icon: HugeIcons.strokeRoundedFilterHorizontal,
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-              ),
-              onPressed: _showFilterBottomSheet,
-            ),
-            suffixIcon: _searchController.text.isNotEmpty
-                ? IconButton(
-                    icon: Icon(
-                      Icons.clear,
-                      color: isDark ? Colors.grey[400] : Colors.grey,
-                      size: 20,
-                    ),
-                    onPressed: () {
-                      _searchController.clear();
-                      _searchDebounce?.cancel();
-                      Provider.of<CustomerProvider>(
-                        context,
-                        listen: false,
-                      ).loadCustomers();
-                      setState(() {});
-                    },
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                  )
-                : null,
-            filled: true,
-            fillColor: isDark ? Colors.grey[850] : Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1.5,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            isDense: true,
-            alignLabelWithHint: true,
-          ),
-        ),
+      child: MoboSearchField(
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        hintText: 'Search customers...',
+        hasActiveFilters: _hasActiveFilters(provider),
+        onFilterTap: _showFilterBottomSheet,
+        onChanged: _onSearchChanged,
+        onClear: () {
+          _searchDebounce?.cancel();
+          Provider.of<CustomerProvider>(context, listen: false).loadCustomers();
+        },
       ),
     );
   }
@@ -438,6 +373,21 @@ class _CustomersScreenState extends State<CustomersScreen> {
         provider.clearFilters();
         provider.setGroupBy(null);
       },
+    );
+  }
+
+  /// The customer list under an [OfflineDataBanner], used when the records
+  /// came from the cache rather than a live fetch.
+  Widget _buildCachedContent(CustomerProvider provider, {String? message}) {
+    return Column(
+      children: [
+        OfflineDataBanner(
+          lastUpdated: provider.cacheUpdatedAt,
+          onRetry: _loadData,
+          message: message,
+        ),
+        Expanded(child: _buildCustomerList(provider.customers, provider)),
+      ],
     );
   }
 
@@ -1071,7 +1021,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (tempState['showActiveOnly'] == true ||
+          if (tempState['showActiveOnly'] == false ||
               tempState['showCompaniesOnly'] == true ||
               tempState['showIndividualsOnly'] == true ||
               tempState['showCreditBreachesOnly'] == true ||
@@ -1089,10 +1039,14 @@ class _CustomersScreenState extends State<CustomersScreen> {
               spacing: 6,
               runSpacing: 6,
               children: [
-                if (tempState['showActiveOnly'] == true)
+                // "Active Only" defaults to ON — hiding archived customers
+                // is the baseline, not something the user applied — so the
+                // deviation worth surfacing (and offering to undo) here is
+                // turning it OFF, i.e. choosing to include archived ones too.
+                if (tempState['showActiveOnly'] == false)
                   Chip(
                     label: const Text(
-                      'Active Only',
+                      'Including Archived',
                       style: TextStyle(fontSize: 13),
                     ),
                     backgroundColor: isDark
@@ -1100,7 +1054,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                         : theme.primaryColor.withOpacity(0.08),
                     deleteIcon: const Icon(Icons.close, size: 16),
                     onDeleted: () => setDialogState(
-                      () => tempState['showActiveOnly'] = false,
+                      () => tempState['showActiveOnly'] = true,
                     ),
                   ),
                 if (tempState['showCompaniesOnly'] == true)
@@ -1586,10 +1540,11 @@ class _CustomersScreenState extends State<CustomersScreen> {
   }
 
   bool _hasActiveFilters(CustomerProvider provider) {
+    // Credit Breaches is excluded here too — it's not wired up to any query
+    // filtering yet, so it shouldn't count as a result-affecting filter.
     return !provider.showActiveOnly ||
         provider.showCompaniesOnly ||
         provider.showIndividualsOnly ||
-        provider.showCreditBreachesOnly ||
         provider.startDate != null ||
         provider.endDate != null ||
         provider.selectedGroupBy != null;

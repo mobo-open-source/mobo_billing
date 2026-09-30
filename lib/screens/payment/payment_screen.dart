@@ -6,7 +6,9 @@ import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:form_builder_validators/form_builder_validators.dart';
 import '../../providers/invoice_provider.dart';
 import '../../services/payment_service.dart';
-import '../../widgets/custom_text_field.dart';
+import '../../widgets/custom_text_field_simple.dart';
+import '../../widgets/form_section_card.dart';
+import '../../utils/date_picker_utils.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
 import 'package:hugeicons/hugeicons.dart';
 import '../../providers/currency_provider.dart';
@@ -33,6 +35,7 @@ class PaymentScreen extends StatefulWidget {
 class _PaymentScreenState extends State<PaymentScreen> {
   final _formKey = GlobalKey<FormBuilderState>();
   final _amountController = TextEditingController();
+  final _memoController = TextEditingController();
   final PaymentService _paymentService = PaymentService();
 
   PaymentMethod _selectedPaymentMethod = PaymentMethod.cash;
@@ -50,6 +53,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
   bool _loadingPaymentOptions = false;
 
   @override
+  void dispose() {
+    _amountController.dispose();
+    _memoController.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     _dueAmount = widget.invoice.amountResidual;
@@ -61,7 +71,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshInvoiceState();
       try {
-        final invName = widget.invoice.name.isEmpty
+            final invName = widget.invoice.name.isEmpty
             ? 'Invoice'
             : widget.invoice.name;
         Provider.of<LastOpenedProvider>(context, listen: false).trackPageAccess(
@@ -169,17 +179,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
 
     final backgroundColor = isDark ? Colors.grey[900] : Colors.grey[50];
-    final cardColor = isDark ? Colors.grey[850] : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
-    final labelColor = isDark ? Colors.grey[400] : Colors.grey[900];
 
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: Text(
           'Record Payment',
           style: GoogleFonts.manrope(
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.bold,
             fontSize: 20,
             color: textColor,
           ),
@@ -201,107 +210,83 @@ class _PaymentScreenState extends State<PaymentScreen> {
           children: [
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        color: cardColor,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: isDark ? Colors.grey[800]! : Colors.grey[200]!,
+                    FormSectionCard(
+                      title: 'Invoice Summary',
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Theme.of(
+                                  context,
+                                ).primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                widget.invoice.name.isEmpty
+                                    ? 'N/A'
+                                    : widget.invoice.name,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Invoice Summary',
-                                style: GoogleFonts.manrope(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: textColor,
-                                ),
+                        const SizedBox(height: 20),
+                        _buildSummaryRow(
+                          'Customer',
+                          widget.invoice.customerName.isNotEmpty
+                              ? widget.invoice.customerName
+                              : 'N/A',
+                          isDark,
+                        ),
+                        const SizedBox(height: 12),
+                        _buildSummaryRow(
+                          'Total Amount',
+                          formattedTotal,
+                          isDark,
+                        ),
+                        const SizedBox(height: 12),
+                        _buildSummaryRow('Paid Amount', formattedPaid, isDark),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Divider(height: 1),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Due Amount',
+                              style: GoogleFonts.manrope(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: textColor,
                               ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).primaryColor.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  widget.invoice.name.isEmpty
-                                      ? 'N/A'
-                                      : widget.invoice.name,
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: Theme.of(context).primaryColor,
-                                  ),
-                                ),
+                            ),
+                            Text(
+                              formattedDue,
+                              style: GoogleFonts.manrope(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black,
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                          _buildSummaryRow(
-                            'Customer',
-                            widget.invoice.customerName.isNotEmpty
-                                ? widget.invoice.customerName
-                                : 'N/A',
-                            isDark,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildSummaryRow(
-                            'Total Amount',
-                            formattedTotal,
-                            isDark,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildSummaryRow(
-                            'Paid Amount',
-                            formattedPaid,
-                            isDark,
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 16),
-                            child: Divider(height: 1),
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Due Amount',
-                                style: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: textColor,
-                                ),
-                              ),
-                              Text(
-                                formattedDue,
-                                style: GoogleFonts.manrope(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.black,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-
                     if (_paymentState == 'in_payment') ...[
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -336,266 +321,228 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       ),
                       const SizedBox(height: 24),
                     ],
-
-                    Padding(
-                      padding: const EdgeInsets.only(left: 6.0),
-                      child: Text(
-                        'Payment Details',
-                        style: GoogleFonts.manrope(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: labelColor,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    Container(
-                      decoration: BoxDecoration(
-                        color: cardColor,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: isDark ? Colors.grey[800]! : Colors.grey[200]!,
-                        ),
-                      ),
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        children: [
-                          CustomGenericDropdownField<int>(
-                            value: _selectedJournalId,
-                            labelText: 'Payment Journal',
-                            isDark: isDark,
-                            items: _journals
-                                .map(
-                                  (j) => DropdownMenuItem<int>(
-                                    value: j['id'] as int,
-                                    child: Text(
-                                      j['name']?.toString() ?? 'Journal',
-                                    ),
+                    FormSectionCard(
+                      title: 'Payment Details',
+                      children: [
+                        CustomGenericDropdownField<int>(
+                          value:
+                              _journals.any(
+                                (j) => j['id'] == _selectedJournalId,
+                              )
+                              ? _selectedJournalId
+                              : null,
+                          labelText: 'Payment Journal',
+                          isDark: isDark,
+                          items: _journals
+                              .map(
+                                (j) => DropdownMenuItem<int>(
+                                  value: j['id'] as int,
+                                  child: Text(
+                                    j['name']?.toString() ?? 'Journal',
                                   ),
-                                )
-                                .toList(),
-                            onChanged: (val) async {
-                              if (val == null) return;
-                              setState(() {
-                                _selectedJournalId = val;
-                                _methodLines = [];
-                                _selectedMethodLineId = null;
-                              });
-                              await _loadMethodsForJournal(val);
-                            },
-                          ),
-                          const SizedBox(height: 20),
-
-                          CustomGenericDropdownField<int>(
-                            value: _selectedMethodLineId,
-                            labelText: 'Payment Method',
-                            isDark: isDark,
-                            items: _methodLines
-                                .map(
-                                  (m) => DropdownMenuItem<int>(
-                                    value: m['id'] as int,
-                                    child: Text(
-                                      m['name']?.toString() ?? 'Method',
-                                    ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (val) async {
+                            if (val == null) return;
+                            setState(() {
+                              _selectedJournalId = val;
+                              _methodLines = [];
+                              _selectedMethodLineId = null;
+                            });
+                            await _loadMethodsForJournal(val);
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        CustomGenericDropdownField<int>(
+                          value:
+                              _methodLines.any(
+                                (m) => m['id'] == _selectedMethodLineId,
+                              )
+                              ? _selectedMethodLineId
+                              : null,
+                          labelText: 'Payment Method',
+                          isDark: isDark,
+                          items: _methodLines
+                              .map(
+                                (m) => DropdownMenuItem<int>(
+                                  value: m['id'] as int,
+                                  child: Text(
+                                    m['name']?.toString() ?? 'Method',
                                   ),
-                                )
-                                .toList(),
-                            onChanged: (val) {
-                              setState(() => _selectedMethodLineId = val);
-                            },
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (val) {
+                            setState(() => _selectedMethodLineId = val);
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        CustomDateSelector(
+                          onTap: _selectPaymentDate,
+                          selectedDate: _selectedDate,
+                          labelText: 'Payment Date',
+                          isDark: isDark,
+                          showBorder: true,
+                        ),
+                        const SizedBox(height: 20),
+                        CustomTextField(
+                          controller: _amountController,
+                          labelText: 'Amount',
+                          hintText: '0.00',
+                          isDark: isDark,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
                           ),
-                          const SizedBox(height: 20),
-
-                          CustomDateSelector(
-                            onTap: () async {
-                              final picked = await showDatePicker(
-                                context: context,
-                                initialDate: _selectedDate,
-                                firstDate: DateTime(2000),
-                                lastDate: DateTime(2100),
-                                builder: (context, child) {
-                                  return Theme(
-                                    data: Theme.of(context).copyWith(
-                                      colorScheme: isDark
-                                          ? ColorScheme.dark(
-                                              primary: Theme.of(
-                                                context,
-                                              ).primaryColor,
-                                              surface: Colors.grey[900]!,
-                                            )
-                                          : ColorScheme.light(
-                                              primary: Theme.of(
-                                                context,
-                                              ).primaryColor,
-                                            ),
-                                    ),
-                                    child: child!,
-                                  );
-                                },
-                              );
-                              if (picked != null) {
-                                setState(() => _selectedDate = picked);
-                              }
-                            },
-                            selectedDate: _selectedDate,
-                            labelText: 'Payment Date',
-                            isDark: isDark,
-                          ),
-                          const SizedBox(height: 20),
-
-                          CustomTextField(
-                            controller: _amountController,
-                            name: 'payment_amount',
-                            labelText: 'Amount',
-                            hintText: '0.00',
-                            showLabelAbove: true,
-                            isMinimal: true,
-                            prefixIcon: Icons.attach_money,
-                            keyboardType: TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            validator: FormBuilderValidators.compose([
-                              FormBuilderValidators.required(),
-                              FormBuilderValidators.numeric(),
-                              (value) {
-                                if (value != null) {
-                                  final amount = double.tryParse(value);
-                                  if (amount != null && amount > _dueAmount) {
-                                    return 'Amount cannot exceed due amount';
-                                  }
-                                  if (amount != null && amount <= 0) {
-                                    return 'Amount must be greater than 0';
-                                  }
+                          validator: FormBuilderValidators.compose([
+                            FormBuilderValidators.required(),
+                            FormBuilderValidators.numeric(),
+                            (value) {
+                              if (value != null) {
+                                final amount = double.tryParse(value);
+                                if (amount != null && amount > _dueAmount) {
+                                  return 'Amount cannot exceed due amount';
                                 }
-                                return null;
-                              },
-                            ]),
+                                if (amount != null && amount <= 0) {
+                                  return 'Amount must be greater than 0';
+                                }
+                              }
+                              return null;
+                            },
+                          ]),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: Row(
+                            children: [
+                              _buildAmountChip(
+                                'Full Amount',
+                                !_isPartialPayment,
+                                isDark,
+                                () {
+                                  setState(() {
+                                    _isPartialPayment = false;
+                                    _amountController.text = _dueAmount
+                                        .toStringAsFixed(2);
+                                  });
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              _buildAmountChip(
+                                'Partial Amount',
+                                _isPartialPayment,
+                                isDark,
+                                () {
+                                  setState(() {
+                                    _isPartialPayment = true;
+                                    _amountController.clear();
+                                  });
+                                },
+                              ),
+                            ],
                           ),
-
-                          Padding(
-                            padding: const EdgeInsets.only(top: 16),
-                            child: Row(
-                              children: [
-                                _buildAmountChip(
-                                  'Full Amount',
-                                  !_isPartialPayment,
-                                  isDark,
-                                  () {
-                                    setState(() {
-                                      _isPartialPayment = false;
-                                      _amountController.text = _dueAmount
-                                          .toStringAsFixed(2);
-                                    });
-                                  },
-                                ),
-                                const SizedBox(width: 8),
-                                _buildAmountChip(
-                                  'Partial Amount',
-                                  _isPartialPayment,
-                                  isDark,
-                                  () {
-                                    setState(() {
-                                      _isPartialPayment = true;
-                                      _amountController.clear();
-                                    });
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 20),
-
-                          CustomTextField(
-                            name: 'payment_notes',
-                            labelText: 'Memo',
-                            hintText: 'Add a note...',
-                            showLabelAbove: true,
-                            isMinimal: true,
-                            prefixIcon: Icons.edit_note,
-                            maxLines: 2,
-                          ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 20),
+                        CustomTextField(
+                          controller: _memoController,
+                          labelText: 'Memo',
+                          hintText: 'Add a note...',
+                          isDark: isDark,
+                          maxLines: 2,
+                          validator: (v) => null,
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 8),
+                    _buildSaveButton(isDark),
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
 
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: cardColor,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, -5),
-                  ),
-                ],
-              ),
-              child: SafeArea(
-                child: Container(
-                  width: double.infinity,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Consumer<InvoiceProvider>(
-                    builder: (context, invoiceProvider, child) {
-                      final isLoading =
-                          invoiceProvider.isLoading || _isProcessingPayment;
-                      return ElevatedButton.icon(
-                        onPressed: isLoading ? null : _registerPayment,
-                        icon: isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
-                                  ),
-                                ),
-                              )
-                            : const HugeIcon(
-                                icon: HugeIcons.strokeRoundedFileAdd,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                        label: Text(
-                          isLoading ? 'Creating Payment...' : 'Create Payment',
-                          style: GoogleFonts.manrope(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).primaryColor,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shadowColor: Colors.transparent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 14,
-                            horizontal: 16,
-                          ),
-                          disabledBackgroundColor: isDark
-                              ? Colors.grey[700]
-                              : Colors.grey[400],
-                        ),
-                      );
-                    },
-                  ),
+  /// Opens the themed date picker for the payment date.
+  Future<void> _selectPaymentDate() async {
+    final date = await DatePickerUtils.showStandardDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      helpText: 'Select Payment Date',
+      cancelText: 'Cancel',
+      confirmText: 'Select',
+    );
+
+    if (date != null && mounted) setState(() => _selectedDate = date);
+  }
+
+  Widget _buildSaveButton(bool isDark) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withOpacity(0.18)
+                : Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        height: 56,
+        child: Consumer<InvoiceProvider>(
+          builder: (context, invoiceProvider, child) {
+            final isLoading = invoiceProvider.isLoading || _isProcessingPayment;
+            return ElevatedButton.icon(
+              onPressed: isLoading ? null : _registerPayment,
+              icon: isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const HugeIcon(
+                      icon: HugeIcons.strokeRoundedFileAdd,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+              label: Text(
+                isLoading ? 'Creating Payment...' : 'Create Payment',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
                 ),
               ),
-            ),
-          ],
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shadowColor: Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 16,
+                ),
+                disabledBackgroundColor: isDark
+                    ? Colors.grey[700]!
+                    : Colors.grey[400]!,
+              ),
+            );
+          },
         ),
       ),
     );
@@ -670,6 +617,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
   }
 
+  /// Strips the nested `Exception:` / `Payment registration failed:` prefixes
+  /// the API layer wraps around a failure so the snackbar reads cleanly.
+  String _friendlyError(Object error) {
+    var message = error.toString();
+    while (message.startsWith('Exception: ')) {
+      message = message.substring('Exception: '.length);
+    }
+    message = message.replaceAll('Payment registration failed: ', '');
+    while (message.startsWith('Exception: ')) {
+      message = message.substring('Exception: '.length);
+    }
+    return message.isEmpty ? 'Failed to register payment' : message;
+  }
+
   Future<void> _registerPayment() async {
     if (_formKey.currentState?.saveAndValidate() ?? false) {
       setState(() => _isProcessingPayment = true);
@@ -681,8 +642,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
         final date = _selectedDate;
         final amount = double.tryParse(_amountController.text) ?? _dueAmount;
-        final notes =
-            _formKey.currentState?.fields['payment_notes']?.value as String?;
+        final notes = _memoController.text.trim().isEmpty
+            ? null
+            : _memoController.text.trim();
 
         if (_selectedJournalId == null) {
           CustomSnackbar.showError(context, 'Please select a payment journal');
@@ -701,11 +663,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
         if (success) {
           if (mounted) {
+            // CustomSnackbar is a dialog route, so it has to be shown *after*
+            // this screen is popped — otherwise the pop just closes the
+            // snackbar and the form stays on screen. `navigator.context`
+            // outlives this route, so the toast lands on the invoice below.
+            final navigator = Navigator.of(context);
+            navigator.pop(true);
             CustomSnackbar.showSuccess(
-              context,
+              navigator.context,
               'Payment registered successfully',
             );
-            Navigator.of(context).pop(true);
           }
         } else {
           if (mounted) {
@@ -714,7 +681,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         }
       } catch (e) {
         if (mounted) {
-          CustomSnackbar.showError(context, 'Error: $e');
+          CustomSnackbar.showError(context, _friendlyError(e));
         }
       } finally {
         if (mounted) setState(() => _isProcessingPayment = false);

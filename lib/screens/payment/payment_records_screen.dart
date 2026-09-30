@@ -13,11 +13,13 @@ import 'payment_detail_screen.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../providers/currency_provider.dart';
 import '../../widgets/invoice_filter_bottomsheet.dart';
 import 'package:intl/intl.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
 
 class PaymentRecordsScreen extends StatefulWidget {
@@ -62,7 +64,7 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 500), () {
       final provider = Provider.of<PaymentProvider>(context, listen: false);
-      provider.searchPayments(query, status: provider.currentStatusFilter);
+      _runSearch(provider, query);
     });
   }
 
@@ -87,6 +89,16 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
           _applyFilters();
         },
       ),
+    );
+  }
+
+  /// Runs a search that keeps the selected status pill and the bottom-sheet
+  /// filters applied.
+  Future<void> _runSearch(PaymentProvider provider, String query) {
+    final domain = _buildFilterDomain();
+    return provider.searchPayments(
+      query,
+      customFilter: domain.isNotEmpty ? domain : null,
     );
   }
 
@@ -359,113 +371,16 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                     left: 16.0,
                     right: 16.0,
                   ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF000000).withOpacity(0.05),
-                          offset: const Offset(0, 6),
-                          blurRadius: 16,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: TextField(
-                      controller: _searchController,
-                      enabled: true,
-                      style: TextStyle(
-                        color: isDark ? Colors.white : const Color(0xff1E1E1E),
-                        fontWeight: FontWeight.w400,
-                        fontStyle: FontStyle.normal,
-                        fontSize: 15,
-                        height: 1.0,
-                        letterSpacing: 0.0,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: 'Search payments...',
-                        hintStyle: TextStyle(
-                          color: isDark
-                              ? Colors.white
-                              : const Color(0xff1E1E1E),
-                          fontWeight: FontWeight.w400,
-                          fontStyle: FontStyle.normal,
-                          fontSize: 15,
-                          height: 1.0,
-                          letterSpacing: 0.0,
-                        ),
-                        prefixIcon: IconButton(
-                          icon: HugeIcon(
-                            icon: HugeIcons.strokeRoundedFilterHorizontal,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                            size: 18,
-                          ),
-                          tooltip: 'Filter & Group By',
-                          onPressed: () {
-                            _showFilterBottomSheet();
-                          },
-                        ),
-                        suffixIcon:
-                            _searchController.text.isNotEmpty ||
-                                _activeFilters.isNotEmpty ||
-                                _startDate != null ||
-                                _endDate != null ||
-                                _selectedGroupBy != null
-                            ? IconButton(
-                                icon: Icon(
-                                  Icons.clear,
-                                  color: isDark
-                                      ? Colors.grey[400]
-                                      : Colors.grey,
-                                  size: 20,
-                                ),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  _debounceTimer?.cancel();
-                                  setState(() {
-                                    _activeFilters.clear();
-                                    _startDate = null;
-                                    _endDate = null;
-                                    _selectedGroupBy = null;
-                                  });
-                                  provider.loadPayments();
-                                },
-                                padding: const EdgeInsets.all(8),
-                                constraints: const BoxConstraints(
-                                  minWidth: 32,
-                                  minHeight: 32,
-                                ),
-                              )
-                            : null,
-
-                        filled: true,
-                        fillColor: isDark ? Colors.grey[850] : Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.grey[850]! : Colors.white,
-                            width: 1,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.grey[850]! : Colors.white,
-                            width: 1.5,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        isDense: true,
-                        alignLabelWithHint: true,
-                      ),
-                      onChanged: _onSearchChanged,
-                    ),
+                  child: MoboSearchField(
+                    controller: _searchController,
+                    hintText: 'Search payments...',
+                    hasActiveFilters: _hasActiveFilters(),
+                    onFilterTap: _showFilterBottomSheet,
+                    onClear: () {
+                      _debounceTimer?.cancel();
+                      _applyFilters();
+                    },
+                    onChanged: _onSearchChanged,
                   ),
                 ),
 
@@ -498,26 +413,26 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                 Expanded(
                   child: Consumer2<ConnectivityService, SessionService>(
                     builder: (context, connectivityService, sessionService, child) {
+                      // Offline with records in hand: keep them on screen under
+                      // a banner instead of blanking the list.
                       if (!connectivityService.isConnected) {
+                        if (provider.payments.isNotEmpty) {
+                          return _buildCachedContent(provider);
+                        }
+
                         return ConnectionStatusWidget(
-                          onRetry: () {
-                            if (connectivityService.isConnected &&
-                                sessionService.hasValidSession) {
-                              if (provider.currentSearchQuery != null &&
-                                  provider.currentSearchQuery!.isNotEmpty) {
-                                provider.searchPayments(
-                                  provider.currentSearchQuery!,
-                                  status: provider.currentStatusFilter,
-                                );
-                              } else {
-                                provider.loadPayments(
-                                  status: provider.currentStatusFilter,
-                                );
-                              }
-                            }
-                          },
+                          onRetry: () => _reload(provider),
                           customMessage:
                               'No internet connection. Please check your connection and try again.',
+                        );
+                      }
+
+                      // A failed refresh keeps the last good page on screen.
+                      if (provider.error != null &&
+                          provider.payments.isNotEmpty) {
+                        return _buildCachedContent(
+                          provider,
+                          message: "Couldn't refresh payments",
                         );
                       }
 
@@ -528,14 +443,12 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                           onRetry: () {
                             if (provider.currentSearchQuery != null &&
                                 provider.currentSearchQuery!.isNotEmpty) {
-                              provider.searchPayments(
+                              _runSearch(
+                                provider,
                                 provider.currentSearchQuery!,
-                                status: provider.currentStatusFilter,
                               );
                             } else {
-                              provider.loadPayments(
-                                status: provider.currentStatusFilter,
-                              );
+                              _applyFilters();
                             }
                           },
                         );
@@ -581,14 +494,12 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                           try {
                             if (provider.currentSearchQuery != null &&
                                 provider.currentSearchQuery!.isNotEmpty) {
-                              await provider.searchPayments(
+                              await _runSearch(
+                                provider,
                                 provider.currentSearchQuery!,
-                                status: provider.currentStatusFilter,
                               );
                             } else {
-                              await provider.loadPayments(
-                                status: provider.currentStatusFilter,
-                              );
+                              await _applyFilters();
                             }
 
                             if (provider.error != null && mounted) {
@@ -646,6 +557,40 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
           color: isDark ? Colors.black : Colors.white,
         ),
       ),
+    );
+  }
+
+  /// Re-runs the active search or reloads the current page.
+  void _reload(PaymentProvider provider) {
+    final query = provider.currentSearchQuery;
+    if (query != null && query.isNotEmpty) {
+      _runSearch(provider, query);
+    } else {
+      _applyFilters();
+    }
+  }
+
+  /// The payment list under an [OfflineDataBanner], used when the records came
+  /// from the cache rather than a live fetch.
+  Widget _buildCachedContent(PaymentProvider provider, {String? message}) {
+    return Column(
+      children: [
+        OfflineDataBanner(
+          lastUpdated: provider.cacheUpdatedAt,
+          onRetry: () => _reload(provider),
+          message: message,
+        ),
+        Expanded(
+          child: _selectedGroupBy != null
+              ? _buildGroupedContent(provider)
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: provider.payments.length,
+                  itemBuilder: (context, index) =>
+                      _buildPaymentCard(provider.payments[index]),
+                ),
+        ),
+      ],
     );
   }
 
@@ -902,19 +847,7 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
   }
 
   Color _getStateColor(String? state) {
-    switch (state?.toLowerCase()) {
-      case 'posted':
-        return Colors.green;
-      case 'draft':
-        return Colors.orange;
-      case 'cancel':
-        return Colors.red;
-      case 'in_progress':
-      case 'in_process':
-        return Colors.blue;
-      default:
-        return Colors.blue;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getStateLabel(String? state) {

@@ -11,8 +11,10 @@ import 'credit_note_detail_screen.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../providers/currency_provider.dart';
 import '../../widgets/invoice_filter_bottomsheet.dart';
 import 'package:intl/intl.dart';
@@ -74,126 +76,30 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
                     left: 16.0,
                     right: 16.0,
                   ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF000000).withOpacity(0.05),
-                          offset: const Offset(0, 6),
-                          blurRadius: 16,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: TextField(
-                      controller: _searchController,
-                      enabled: true,
-                      style: TextStyle(
-                        color: isDark ? Colors.white : const Color(0xff1E1E1E),
-                        fontWeight: FontWeight.w400,
-                        fontStyle: FontStyle.normal,
-                        fontSize: 15,
-                        height: 1.0,
-                        letterSpacing: 0.0,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: 'Search credit notes...',
-                        hintStyle: TextStyle(
-                          color: isDark
-                              ? Colors.white
-                              : const Color(0xff1E1E1E),
-                          fontWeight: FontWeight.w400,
-                          fontStyle: FontStyle.normal,
-                          fontSize: 15,
-                          height: 1.0,
-                          letterSpacing: 0.0,
-                        ),
-                        prefixIcon: IconButton(
-                          icon: HugeIcon(
-                            icon: HugeIcons.strokeRoundedFilterHorizontal,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                            size: 18,
-                          ),
-                          onPressed: () {
-                            _showFilterBottomSheet();
-                          },
-                        ),
-                        suffixIcon:
-                            _searchController.text.isNotEmpty ||
-                                _activeFilters.isNotEmpty ||
-                                _startDate != null ||
-                                _endDate != null ||
-                                _selectedGroupBy != null
-                            ? IconButton(
-                                icon: Icon(
-                                  Icons.clear,
-                                  color: isDark
-                                      ? Colors.grey[400]
-                                      : Colors.grey,
-                                  size: 20,
-                                ),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  _searchDebounce?.cancel();
-                                  setState(() {
-                                    _activeFilters.clear();
-                                    _startDate = null;
-                                    _endDate = null;
-                                    _selectedGroupBy = null;
-                                  });
-                                  provider.loadCreditNotes();
-                                },
-                                padding: const EdgeInsets.all(8),
-                                constraints: const BoxConstraints(
-                                  minWidth: 32,
-                                  minHeight: 32,
-                                ),
-                              )
-                            : null,
-
-                        filled: true,
-                        fillColor: isDark ? Colors.grey[850] : Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.grey[850]! : Colors.white,
-                            width: 1,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.grey[850]! : Colors.white,
-                            width: 1.5,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        isDense: true,
-                        alignLabelWithHint: true,
-                      ),
-                      onChanged: (value) {
-                        setState(() {});
-                        _searchDebounce?.cancel();
-                        _searchDebounce = Timer(
-                          const Duration(milliseconds: 350),
-                          () {
-                            if (!mounted) return;
-                            if (value.isEmpty) {
-                              provider.loadCreditNotes();
-                            } else {
-                              provider.searchCreditNotes(value);
-                            }
-                          },
-                        );
-                      },
-                    ),
+                  child: MoboSearchField(
+                    controller: _searchController,
+                    hintText: 'Search credit notes...',
+                    hasActiveFilters: _hasActiveFilters(),
+                    onFilterTap: _showFilterBottomSheet,
+                    onClear: () {
+                      _searchDebounce?.cancel();
+                      _applyFilters();
+                    },
+                    onChanged: (value) {
+                      setState(() {});
+                      _searchDebounce?.cancel();
+                      _searchDebounce = Timer(
+                        const Duration(milliseconds: 350),
+                        () {
+                          if (!mounted) return;
+                          if (value.isEmpty) {
+                            _applyFilters();
+                          } else {
+                            _runSearch(provider, value);
+                          }
+                        },
+                      );
+                    },
                   ),
                 ),
 
@@ -227,22 +133,26 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
                 Expanded(
                   child: Consumer2<ConnectivityService, SessionService>(
                     builder: (context, connectivityService, sessionService, child) {
+                      // Offline with records in hand: keep them on screen under
+                      // a banner instead of blanking the list.
                       if (!connectivityService.isConnected) {
+                        if (provider.creditNotes.isNotEmpty) {
+                          return _buildCachedContent(provider);
+                        }
+
                         return ConnectionStatusWidget(
-                          onRetry: () {
-                            if (connectivityService.isConnected &&
-                                sessionService.hasValidSession) {
-                              if (_searchController.text.isNotEmpty) {
-                                provider.searchCreditNotes(
-                                  _searchController.text,
-                                );
-                              } else {
-                                provider.loadCreditNotes();
-                              }
-                            }
-                          },
+                          onRetry: () => _reload(provider),
                           customMessage:
                               'No internet connection. Please check your connection and try again.',
+                        );
+                      }
+
+                      // A failed refresh keeps the last good page on screen.
+                      if (provider.error != null &&
+                          provider.creditNotes.isNotEmpty) {
+                        return _buildCachedContent(
+                          provider,
+                          message: "Couldn't refresh credit notes",
                         );
                       }
 
@@ -263,9 +173,7 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
                             serverErrorMessage: provider.error,
                             onRetry: () {
                               if (_searchController.text.isNotEmpty) {
-                                provider.searchCreditNotes(
-                                  _searchController.text,
-                                );
+                                _runSearch(provider, _searchController.text);
                               } else {
                                 provider.loadCreditNotes();
                               }
@@ -319,7 +227,8 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
                         onRefresh: () async {
                           try {
                             if (_searchController.text.isNotEmpty) {
-                              await provider.searchCreditNotes(
+                              await _runSearch(
+                                provider,
                                 _searchController.text,
                               );
                             } else {
@@ -480,6 +389,39 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
     );
   }
 
+  /// Re-runs the active search or reloads the current page.
+  void _reload(CreditNoteProvider provider) {
+    if (_searchController.text.isNotEmpty) {
+      _runSearch(provider, _searchController.text);
+    } else {
+      provider.loadCreditNotes();
+    }
+  }
+
+  /// The credit-note list under an [OfflineDataBanner], used when the records
+  /// came from the cache rather than a live fetch.
+  Widget _buildCachedContent(CreditNoteProvider provider, {String? message}) {
+    return Column(
+      children: [
+        OfflineDataBanner(
+          lastUpdated: provider.cacheUpdatedAt,
+          onRetry: () => _reload(provider),
+          message: message,
+        ),
+        Expanded(
+          child: _selectedGroupBy != null
+              ? _buildGroupedContent(provider)
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: provider.creditNotes.length,
+                  itemBuilder: (context, index) =>
+                      _buildCreditNoteCard(provider.creditNotes[index]),
+                ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildCreditNoteCard(Invoice creditNote) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final customerName = creditNote.customerName;
@@ -504,19 +446,20 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
 
     switch (state) {
       case 'posted':
-        statusColor = paymentState == 'paid' ? Colors.green : Colors.orange;
-        statusText = paymentState == 'paid' ? 'Paid' : 'Posted';
+        final isPaid = paymentState == 'paid';
+        statusColor = StatusColors.forState(isPaid ? 'paid' : 'draft');
+        statusText = isPaid ? 'Paid' : 'Posted';
         break;
       case 'draft':
-        statusColor = Colors.orange;
+        statusColor = StatusColors.forState('draft');
         statusText = 'Draft';
         break;
       case 'cancel':
-        statusColor = Colors.red;
+        statusColor = StatusColors.forState('cancel');
         statusText = 'Cancelled';
         break;
       default:
-        statusColor = Colors.grey;
+        statusColor = StatusColors.grey;
         statusText = state.isNotEmpty
             ? state.substring(0, 1).toUpperCase() + state.substring(1)
             : 'Unknown';
@@ -969,6 +912,16 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Runs a search that keeps the selected status pill and the bottom-sheet
+  /// filters applied.
+  Future<void> _runSearch(CreditNoteProvider provider, String query) {
+    final domain = _buildFilterDomain();
+    return provider.searchCreditNotes(
+      query,
+      customFilter: domain.isNotEmpty ? domain : null,
     );
   }
 

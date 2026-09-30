@@ -120,6 +120,11 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     return false;
   }
 
+  bool get _supportsMobile {
+    final version = OdooSessionManager.cachedSession?.serverVersion ?? '';
+    return OdooSessionManager.parseMajorVersion(version) < 19;
+  }
+
   String _normalizeForEdit(dynamic value) {
     if (value == null) return '';
     if (value is bool) return value ? 'true' : '';
@@ -471,17 +476,8 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
             'login',
             'email',
             'image_1920',
-            'phone',
-            'website',
-            'function',
             'company_id',
             'partner_id',
-            'street',
-            'street2',
-            'city',
-            'state_id',
-            'zip',
-            'country_id',
             'active',
             'write_date',
           ],
@@ -489,7 +485,41 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       });
 
       if (result is List && result.isNotEmpty && result[0] is Map && mounted) {
-        final data = result[0] as Map<String, dynamic>;
+        final data = Map<String, dynamic>.from(result[0] as Map);
+        final pid = data['partner_id'];
+        if (pid is List && pid.isNotEmpty && pid[0] is int) {
+          try {
+            // Contact fields live on the partner; `mobile` was removed in Odoo 19.
+            final partnerRes = await OdooSessionManager.callKwWithCompany({
+              'model': 'res.partner',
+              'method': 'read',
+              'args': [
+                [pid[0]],
+              ],
+              'kwargs': {
+                'fields': [
+                  'phone',
+                  if (_supportsMobile) 'mobile',
+                  'website',
+                  'function',
+                  'street',
+                  'street2',
+                  'city',
+                  'state_id',
+                  'zip',
+                  'country_id',
+                ],
+              },
+            });
+            if (partnerRes is List &&
+                partnerRes.isNotEmpty &&
+                partnerRes[0] is Map) {
+              final partner = Map<String, dynamic>.from(partnerRes[0] as Map);
+              partner.remove('id');
+              data.addAll(partner);
+            }
+          } catch (_) {}
+        }
         setState(() {
           _userData = data;
           if (data['partner_id'] is List &&
@@ -577,8 +607,9 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
           _normalizeForEdit(_userData!['phone'])) {
         updates['phone'] = _phoneController.text.trim();
       }
-      if (_mobileController.text.trim() !=
-          _normalizeForEdit(_userData!['mobile'])) {
+      if (_supportsMobile &&
+          _mobileController.text.trim() !=
+              _normalizeForEdit(_userData!['mobile'])) {
         updates['mobile'] = _mobileController.text.trim();
       }
       if (_websiteController.text.trim() !=
@@ -591,24 +622,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       }
 
       if (updates.isNotEmpty) {
-        final sessionService = Provider.of<SessionService>(
-          context,
-          listen: false,
-        );
-        final session = sessionService.currentSession;
-        final uid = session?.userId;
-
-        if (uid != null) {
-          await OdooSessionManager.callKwWithCompany({
-            'model': 'res.users',
-            'method': 'write',
-            'args': [
-              [uid],
-              updates,
-            ],
-            'kwargs': {},
-          });
-        }
+        await _writeProfileValues(updates);
       }
 
       await _fetchUserProfile();
@@ -656,6 +670,22 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     if (mounted) {
       Navigator.of(context).pop(_saveSuccess);
     }
+  }
+
+  /// Writes to res.partner (works for all users in Odoo 17/18/19); the
+  /// user's name/email are related fields, so they stay in sync.
+  Future<void> _writeProfileValues(Map<String, dynamic> values) async {
+    final partnerId = _partnerId;
+    if (partnerId == null) throw Exception('Partner record not found');
+    await OdooSessionManager.callKwWithCompany({
+      'model': 'res.partner',
+      'method': 'write',
+      'args': [
+        [partnerId],
+        values,
+      ],
+      'kwargs': {},
+    });
   }
 
   Future<void> _updateProfileField(String field, dynamic value) async {
@@ -1456,15 +1486,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     }
 
     try {
-      await OdooSessionManager.callKwWithCompany({
-        'model': 'res.users',
-        'method': 'write',
-        'args': [
-          [uid],
-          addressData,
-        ],
-        'kwargs': {},
-      });
+      await _writeProfileValues(addressData);
       await _fetchUserProfile();
     } catch (e) {
       rethrow;
@@ -2159,6 +2181,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                                 keyboardType: TextInputType.phone,
                               ),
                               const SizedBox(height: 16),
+                              if (_supportsMobile) ...[
                               _buildCustomTextField(
                                 context,
                                 'Mobile',
@@ -2169,6 +2192,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                                 keyboardType: TextInputType.phone,
                               ),
                               const SizedBox(height: 16),
+                              ],
                               _buildCustomTextField(
                                 context,
                                 'Website',

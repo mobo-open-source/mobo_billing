@@ -6,10 +6,12 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../providers/currency_provider.dart';
 import '../../providers/invoice_provider.dart';
+import '../../providers/credit_note_provider.dart';
 import '../../services/odoo_api_service.dart';
 import '../../services/review_service.dart';
-import '../../widgets/custom_text_field.dart';
+import '../../widgets/mobo_form_fields.dart';
 import '../../models/contact.dart';
+import '../../models/product.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../utils/date_picker_utils.dart';
@@ -17,17 +19,24 @@ import '../../services/odoo_error_handler.dart';
 import '../../widgets/confetti_dialog.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../../utils/data_loss_warning_mixin.dart';
-import '../../widgets/product_typeahead.dart';
-import '../../widgets/customer_typeahead.dart';
 import '../../services/connectivity_service.dart';
+import '../../services/data_cache.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 
 class CreateCreditNoteScreen extends StatefulWidget {
   final Map<String, dynamic>? sourceInvoice;
 
-  const CreateCreditNoteScreen({Key? key, this.sourceInvoice})
-    : super(key: key);
+  /// When set (expects at least an `id`), the screen edits that existing draft
+  /// credit note instead of creating a new one.
+  final Map<String, dynamic>? creditNoteToEdit;
+
+  const CreateCreditNoteScreen({
+    Key? key,
+    this.sourceInvoice,
+    this.creditNoteToEdit,
+  }) : super(key: key);
 
   @override
   State<CreateCreditNoteScreen> createState() => _CreateCreditNoteScreenState();
@@ -39,6 +48,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
   final OdooApiService _apiService = OdooApiService();
 
   List<Map<String, dynamic>> _journals = [];
+
+  /// Whether the device currently has no connection. Reference data is then
+  /// served from the cache so the form's pickers still have options.
+  bool get _isOffline => !ConnectivityService.instance.isConnected;
   List<Map<String, dynamic>> _accounts = [];
   List<Map<String, dynamic>> _taxes = [];
   List<Map<String, dynamic>> _currencies = [];
@@ -46,6 +59,14 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
   List<Map<String, dynamic>> _analytics = [];
   List<Map<String, dynamic>> _uoms = [];
   List<Map<String, dynamic>> _creditNoteLines = [];
+
+  /// IDs of the `account.move.line` records loaded when editing an existing
+  /// draft credit note. Used to build the Odoo `2` (delete) commands on save.
+  final Set<int> _originalLineIds = {};
+
+  bool get _isEditing => widget.creditNoteToEdit != null;
+
+  int? get _editingCreditNoteId => widget.creditNoteToEdit?['id'] as int?;
 
   Contact? _selectedCustomer;
   int? _selectedJournalId;
@@ -68,7 +89,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
 
   @override
   bool get hasUnsavedData {
-    if (widget.sourceInvoice != null || _isSaving) return false;
+    if (widget.sourceInvoice != null || _isEditing || _isSaving) return false;
     return _selectedCustomer != null ||
         _creditNoteLines.isNotEmpty ||
         _reasonController.text.isNotEmpty;
@@ -108,6 +129,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
         _loadAnalytics(),
         _loadUoMs(),
       ]);
+
+      if (_isEditing) {
+        await _loadCreditNoteForEditing();
+      }
     } catch (e) {
       setState(() => _errorMessage = e.toString());
     } finally {
@@ -119,7 +144,13 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
 
   Future<void> _loadJournals() async {
     try {
-      _journals = await _apiService.getJournals(journalType: 'sale');
+      _journals =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('journals:sale:all'),
+            () => _apiService.getJournals(journalType: 'sale'),
+            isOffline: _isOffline,
+          ) ??
+          [];
       if (_journals.isNotEmpty && _selectedJournalId == null) {
         _selectedJournalId = _journals.first['id'];
       }
@@ -130,7 +161,13 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
 
   Future<void> _loadAccounts() async {
     try {
-      _accounts = await _apiService.getAccounts();
+      _accounts =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('accounts'),
+            () => _apiService.getAccounts(),
+            isOffline: _isOffline,
+          ) ??
+          [];
     } catch (e) {
       _showError('Error loading accounts: $e');
     }
@@ -138,7 +175,13 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
 
   Future<void> _loadTaxes() async {
     try {
-      _taxes = await _apiService.getTaxes(taxType: 'sale');
+      _taxes =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('taxes:sale:all'),
+            () => _apiService.getTaxes(taxType: 'sale'),
+            isOffline: _isOffline,
+          ) ??
+          [];
     } catch (e) {
       _showError('Error loading taxes: $e');
     }
@@ -146,13 +189,19 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
 
   Future<void> _loadCurrencies() async {
     try {
-      _currencies = await _apiService.searchRead(
-        'res.currency',
-        [
-          ['active', '=', true],
-        ],
-        ['id', 'name', 'symbol'],
-      );
+      _currencies =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('currencies'),
+            () => _apiService.searchRead(
+              'res.currency',
+              [
+                ['active', '=', true],
+              ],
+              ['id', 'name', 'symbol'],
+            ),
+            isOffline: _isOffline,
+          ) ??
+          [];
       if (_currencies.isNotEmpty && _selectedCurrencyId == null) {
         final usd = _currencies.firstWhere(
           (c) => c['name'] == 'USD',
@@ -167,25 +216,37 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
 
   Future<void> _loadAnalytics() async {
     try {
-      _analytics = await _apiService.searchRead(
-        'account.analytic.account',
-        [
-          ['active', '=', true],
-        ],
-        ['id', 'name', 'code'],
-      );
+      _analytics =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('analytics'),
+            () => _apiService.searchRead(
+              'account.analytic.account',
+              [
+                ['active', '=', true],
+              ],
+              ['id', 'name', 'code'],
+            ),
+            isOffline: _isOffline,
+          ) ??
+          [];
     } catch (e) {}
   }
 
   Future<void> _loadUoMs() async {
     try {
-      _uoms = await _apiService.searchRead(
-        'uom.uom',
-        [
-          ['active', '=', true],
-        ],
-        ['id', 'name'],
-      );
+      _uoms =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('uoms'),
+            () => _apiService.searchRead(
+              'uom.uom',
+              [
+                ['active', '=', true],
+              ],
+              ['id', 'name'],
+            ),
+            isOffline: _isOffline,
+          ) ??
+          [];
     } catch (e) {}
   }
 
@@ -257,6 +318,242 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     }
   }
 
+  /// Loads an existing draft credit note into the form so it can be edited.
+  ///
+  /// Mirrors Odoo: only a move in the `draft` state may be modified, so the
+  /// screen bails out (and pops) for any other state.
+  Future<void> _loadCreditNoteForEditing() async {
+    final creditNoteId = _editingCreditNoteId;
+    if (creditNoteId == null) return;
+
+    final records = await _apiService.read(
+      'account.move',
+      [creditNoteId],
+      [
+        'state',
+        'partner_id',
+        'partner_shipping_id',
+        'invoice_date',
+        'invoice_date_due',
+        'journal_id',
+        'currency_id',
+        'ref',
+        'narration',
+        'invoice_line_ids',
+      ],
+    );
+
+    if (records.isEmpty) {
+      throw Exception('Credit note not found. It may have been deleted.');
+    }
+    final data = records.first;
+
+    if (data['state']?.toString() != 'draft') {
+      _exitBecauseNotDraft();
+      return;
+    }
+
+    final partner = data['partner_id'];
+    if (partner is List && partner.isNotEmpty) {
+      final partnerId = partner[0] as int;
+      final partnerName = partner.length > 1
+          ? partner[1]?.toString() ?? ''
+          : '';
+      _selectedCustomer = Contact(id: partnerId, name: partnerName);
+      _customerSearchController.text = partnerName;
+      await _loadShippingAddresses(partnerId);
+    }
+
+    final shipping = data['partner_shipping_id'];
+    if (shipping is List && shipping.isNotEmpty) {
+      final shippingId = shipping[0] as int?;
+      if (_shippingAddresses.any((a) => a['id'] == shippingId)) {
+        _selectedShippingAddressId = shippingId;
+      }
+    }
+
+    final invoiceDate = DateTime.tryParse(
+      data['invoice_date']?.toString() ?? '',
+    );
+    if (invoiceDate != null) _invoiceDate = invoiceDate;
+
+    final dueDate = DateTime.tryParse(
+      data['invoice_date_due']?.toString() ?? '',
+    );
+    if (dueDate != null) _dueDate = dueDate;
+
+    _selectedJournalId = _adoptRelation(
+      data['journal_id'],
+      _journals,
+      (id, name) => {'id': id, 'name': name},
+    );
+
+    _selectedCurrencyId = _adoptRelation(
+      data['currency_id'],
+      _currencies,
+      (id, name) => {'id': id, 'name': name, 'symbol': ''},
+    );
+
+    final reason = _stringOrEmpty(data['ref']).isNotEmpty
+        ? _stringOrEmpty(data['ref'])
+        : _stringOrEmpty(data['narration']);
+    _reasonController.text = reason;
+
+    await _loadCreditNoteLinesForEditing(data['invoice_line_ids']);
+  }
+
+  Future<void> _loadCreditNoteLinesForEditing(dynamic rawLineIds) async {
+    final lineIds = rawLineIds is List ? List<int>.from(rawLineIds) : <int>[];
+    _originalLineIds.clear();
+    _creditNoteLines = [];
+    if (lineIds.isEmpty) return;
+
+    final lines = await _apiService.read('account.move.line', lineIds, [
+      'product_id',
+      'name',
+      'quantity',
+      'price_unit',
+      'discount',
+      'tax_ids',
+      'product_uom_id',
+      'price_subtotal',
+      'account_id',
+      'display_type',
+    ]);
+
+    for (final line in lines) {
+      final displayType = line['display_type'];
+      // Section / note lines have no product and are left untouched on save.
+      if (displayType is String && displayType != 'product') continue;
+
+      final lineId = line['id'] as int?;
+      if (lineId != null) _originalLineIds.add(lineId);
+
+      final product = line['product_id'];
+      final uom = line['product_uom_id'];
+      final account = line['account_id'];
+      final description = _stringOrEmpty(line['name']);
+      final productName = product is List && product.length > 1
+          ? product[1]?.toString() ?? ''
+          : description;
+
+      _creditNoteLines.add({
+        'id': lineId,
+        'product_id': product is List && product.isNotEmpty
+            ? product[0] as int?
+            : null,
+        'product_name': productName,
+        'name': description.isNotEmpty ? description : productName,
+        'quantity': (line['quantity'] as num?)?.toDouble() ?? 0.0,
+        'price_unit': (line['price_unit'] as num?)?.toDouble() ?? 0.0,
+        'price_subtotal': (line['price_subtotal'] as num?)?.toDouble() ?? 0.0,
+        'discount': (line['discount'] as num?)?.toDouble() ?? 0.0,
+        'tax_ids': line['tax_ids'] is List
+            ? List<int>.from(line['tax_ids'])
+            : <int>[],
+        'product_uom_id': uom is List && uom.isNotEmpty ? uom[0] as int? : null,
+        'account_id': account is List && account.isNotEmpty
+            ? account[0] as int?
+            : null,
+      });
+    }
+  }
+
+  /// Returns the id of an Odoo `[id, name]` pair, adding it to [options] when
+  /// that record is missing so the dropdown can still show the saved value.
+  int? _adoptRelation(
+    dynamic relation,
+    List<Map<String, dynamic>> options,
+    Map<String, dynamic> Function(int id, String name) build,
+  ) {
+    if (relation is! List || relation.isEmpty) return null;
+    final id = relation[0] as int?;
+    if (id == null) return null;
+    if (!options.any((o) => o['id'] == id)) {
+      options.add(
+        build(id, relation.length > 1 ? relation[1]?.toString() ?? '' : ''),
+      );
+    }
+    return id;
+  }
+
+  String _stringOrEmpty(dynamic value) {
+    if (value == null || value == false || value.toString() == 'false') {
+      return '';
+    }
+    return value.toString();
+  }
+
+  /// Builds the Odoo `invoice_line_ids` write commands for an edited credit
+  /// note: `1` to update a kept line, `0` to create a new one and `2` to drop a
+  /// line the user removed from the form.
+  List<List<dynamic>> _buildLineUpdateCommands(
+    List<Map<String, dynamic>> lines,
+  ) {
+    final commands = <List<dynamic>>[];
+    final keptIds = <int>{};
+
+    for (final line in lines) {
+      final values = {
+        'product_id': line['product_id'],
+        'name': line['name'] ?? line['product_name'],
+        'quantity': line['quantity'],
+        'price_unit': line['price_unit'],
+        if (line['account_id'] != null) 'account_id': line['account_id'],
+        'tax_ids': [
+          [6, 0, line['tax_ids'] is List ? line['tax_ids'] : <int>[]],
+        ],
+        'discount': line['discount'] ?? 0.0,
+        'product_uom_id': line['product_uom_id'],
+      };
+
+      final lineId = line['id'] as int?;
+      if (lineId != null && _originalLineIds.contains(lineId)) {
+        keptIds.add(lineId);
+        commands.add([1, lineId, values]);
+      } else {
+        commands.add([0, 0, values]);
+      }
+    }
+
+    for (final id in _originalLineIds) {
+      if (!keptIds.contains(id)) commands.add([2, id]);
+    }
+
+    return commands;
+  }
+
+  /// Re-checks the server state right before writing, so a credit note
+  /// confirmed elsewhere in the meantime is not silently modified.
+  Future<void> _ensureStillDraft(int creditNoteId) async {
+    final records = await _apiService.read(
+      'account.move',
+      [creditNoteId],
+      ['state'],
+    );
+    if (records.isEmpty) {
+      throw Exception('Credit note not found. It may have been deleted.');
+    }
+    if (records.first['state']?.toString() != 'draft') {
+      throw Exception(
+        'This credit note is no longer a draft and can no longer be edited.',
+      );
+    }
+  }
+
+  /// Leaves the screen when the credit note is no longer editable on the server.
+  void _exitBecauseNotDraft() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      CustomSnackbar.showError(
+        context,
+        'Only draft credit notes can be edited. Reset it to draft first.',
+      );
+      Navigator.of(context).pop();
+    });
+  }
+
   void _removeCreditNoteLine(int index) {
     setState(() {
       _creditNoteLines.removeAt(index);
@@ -314,9 +611,11 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark ? Colors.grey[900] : Colors.grey[50];
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final backgroundColor = isDark ? Colors.grey[900]! : Colors.grey[50]!;
 
     return PopScope(
       canPop: !hasUnsavedData,
@@ -330,10 +629,13 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
       child: Scaffold(
         backgroundColor: backgroundColor,
         appBar: AppBar(
+          backgroundColor: backgroundColor,
+          foregroundColor: isDark ? Colors.white : theme.primaryColor,
+          elevation: 0,
           title: Text(
-            'Create Credit Note',
+            _isEditing ? 'Edit Credit Note' : 'Create Credit Note',
             style: GoogleFonts.manrope(
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.bold,
               color: isDark ? Colors.white : Colors.black,
             ),
           ),
@@ -341,7 +643,6 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
             icon: HugeIcon(
               icon: HugeIcons.strokeRoundedArrowLeft01,
               color: isDark ? Colors.white : Colors.black,
-              size: 20,
             ),
             onPressed: () =>
                 handleNavigation(() => Navigator.of(context).pop()),
@@ -349,14 +650,11 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
         ),
         body: Consumer2<ConnectivityService, SessionService>(
           builder: (context, connectivityService, sessionService, child) {
-            if (!connectivityService.isConnected) {
+            // Offline: the form still opens on cached reference data; saving
+            // is blocked in _saveCreditNote with a clear message.
+            if (!connectivityService.isConnected && _journals.isEmpty) {
               return ConnectionStatusWidget(
-                onRetry: () {
-                  if (connectivityService.isConnected &&
-                      sessionService.hasValidSession) {
-                    _loadInitialData();
-                  }
-                },
+                onRetry: _loadInitialData,
                 customMessage:
                     'No internet connection. Please check your connection and try again.',
               );
@@ -378,30 +676,26 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
               return const Center(child: CircularProgressIndicator());
             }
 
-            return Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(20.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _buildCustomerSection(isDark),
-                          const SizedBox(height: 24),
-                          _buildDetailsSection(isDark),
-                          const SizedBox(height: 24),
-                          _buildLinesSection(isDark),
-                          const SizedBox(height: 24),
-                          _buildTotalsSection(isDark),
-                          const SizedBox(height: 100),
-                        ],
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!connectivityService.isConnected)
+                      OfflineDataBanner(
+                        onRetry: _loadInitialData,
+                        message: "You're offline — saving is unavailable",
                       ),
-                    ),
-                  ),
-                  _buildBottomActionBar(isDark),
-                ],
+                    _buildCustomerSection(isDark),
+                    _buildDetailsSection(isDark),
+                    _buildLinesSection(isDark),
+                    const SizedBox(height: 8),
+                    _buildSaveButton(isDark),
+                    const SizedBox(height: 20),
+                  ],
+                ),
               ),
             );
           },
@@ -411,645 +705,323 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
   }
 
   Widget _buildCustomerSection(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black26 : Colors.black.withOpacity(0.05),
-            blurRadius: 16,
-            spreadRadius: 2,
-            offset: const Offset(0, 6),
-          ),
+    return MoboFormCard(
+      title: 'Customer Information',
+      children: [
+        MoboInlineDropdown<Contact>(
+          label: 'Customer',
+          hintText: 'Search customers...',
+          isRequired: true,
+          leadingIcon: HugeIcons.strokeRoundedUser,
+          selectedLabel: _selectedCustomer?.name,
+          asyncSearch: _searchCustomers,
+          titleBuilder: (c) => c.name,
+          subtitleBuilder: (c) =>
+              (c.email != null && c.email!.isNotEmpty && c.email != 'false')
+              ? c.email
+              : null,
+          isItemSelected: (c) => _selectedCustomer?.id == c.id,
+          emptyText: 'No customers found',
+          onItemTap: (customer) {
+            FocusScope.of(context).unfocus();
+            setState(() {
+              _selectedCustomer = customer;
+              _customerSearchController.text = customer.name;
+              _loadShippingAddresses(customer.id);
+            });
+          },
+          onClear: () {
+            setState(() {
+              _selectedCustomer = null;
+              _customerSearchController.clear();
+              _shippingAddresses = [];
+              _selectedShippingAddressId = null;
+            });
+          },
+          validator: (value) =>
+              _selectedCustomer == null ? 'Please select a customer' : null,
+        ),
+        if (_shippingAddresses.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _buildShippingAddressDropdown(isDark),
         ],
+      ],
+    );
+  }
+
+  /// Looks customers up on the server for the inline dropdown panel.
+  Future<List<Contact>> _searchCustomers(String query) async {
+    final results = await _apiService.searchCustomers(
+      query,
+      limit: query.isEmpty ? 20 : 100,
+    );
+    return results
+        .map(
+          (data) => Contact(
+            id: data['id'] ?? 0,
+            name: data['name']?.toString() ?? 'Unknown',
+            email: data['email']?.toString(),
+            phone: data['phone']?.toString(),
+            mobile: data['mobile']?.toString(),
+            imageUrl: data['image_128'] is String
+                ? data['image_128'] as String
+                : null,
+            isCompany: data['is_company'] == true,
+          ),
+        )
+        .toList();
+  }
+
+  /// Looks products up on the server for the inline dropdown panel.
+  Future<List<Product>> _searchProducts(String query) async {
+    final results = await _apiService.searchProducts(
+      query,
+      limit: query.isEmpty ? 20 : 100,
+    );
+    return results.map((data) => Product.fromJson(data)).toList();
+  }
+
+  String? _addressLabel(Map<String, dynamic>? address) {
+    if (address == null) return null;
+    final parts = [
+      address['street'],
+      address['city'],
+    ].where((e) => e != null && e != false && '$e'.isNotEmpty).join(', ');
+    return parts.isEmpty ? address['name']?.toString() : parts;
+  }
+
+  Widget _buildShippingAddressDropdown(bool isDark) {
+    return MoboInlineDropdown<Map<String, dynamic>>(
+      label: 'Delivery Address',
+      hintText: 'Select delivery address',
+      leadingIcon: HugeIcons.strokeRoundedLocation01,
+      selectedLabel: _addressLabel(
+        _shippingAddresses
+            .where((a) => a['id'] == _selectedShippingAddressId)
+            .firstOrNull,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            child: Text(
-              'Customer',
-              style: GoogleFonts.manrope(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : Colors.grey[900],
-                letterSpacing: -0.3,
-              ),
-            ),
-          ),
-          Divider(
-            height: 1,
-            color: isDark ? Colors.grey[700] : Colors.grey[200],
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                CustomerTypeAhead(
-                  controller: _customerSearchController,
-                  labelText: 'Customer',
-                  hintText: 'Search customer...',
-                  isDark: isDark,
-                  onCustomerSelected: (customer) {
-                    FocusScope.of(context).unfocus();
-                    setState(() {
-                      _selectedCustomer = customer;
-                      _customerSearchController.text = customer.name;
-                      _loadShippingAddresses(customer.id);
-                    });
-                  },
-                  onClear: () {
-                    setState(() {
-                      _selectedCustomer = null;
-                      _customerSearchController.clear();
-                      _shippingAddresses = [];
-                      _selectedShippingAddressId = null;
-                    });
-                  },
-                  validator: (value) {
-                    if (_selectedCustomer == null) {
-                      return 'Please select a customer';
-                    }
-                    return null;
-                  },
-                ),
-                if (_shippingAddresses.isNotEmpty) ...[
-                  const SizedBox(height: 20),
-                  if (_shippingAddresses.isNotEmpty) ...[
-                    const SizedBox(height: 20),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Delivery Address',
-                          style: TextStyle(
-                            color: isDark
-                                ? Colors.white70
-                                : const Color(0xff7F7F7F),
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            return PopupMenuButton<int>(
-                              initialValue: _selectedShippingAddressId,
-                              constraints: BoxConstraints(
-                                minWidth: constraints.maxWidth,
-                                maxWidth: constraints.maxWidth,
-                                maxHeight: 400,
-                              ),
-                              offset: const Offset(0, 56),
-                              color: isDark ? Colors.grey[850] : Colors.white,
-                              surfaceTintColor: Colors.transparent,
-                              onSelected: (val) {
-                                setState(
-                                  () => _selectedShippingAddressId = val,
-                                );
-                              },
-                              itemBuilder: (context) =>
-                                  _shippingAddresses.isEmpty
-                                  ? [
-                                      PopupMenuItem<int>(
-                                        enabled: false,
-                                        child: Text(
-                                          'No records found',
-                                          style: GoogleFonts.manrope(
-                                            color: isDark
-                                                ? Colors.white54
-                                                : Colors.grey[600],
-                                          ),
-                                        ),
-                                      ),
-                                    ]
-                                  : _shippingAddresses
-                                        .map(
-                                          (addr) => PopupMenuItem<int>(
-                                            value: addr['id'] as int,
-                                            child: Text(
-                                              addr['name'] ?? 'Unnamed Address',
-                                              style: GoogleFonts.manrope(
-                                                fontWeight: FontWeight.w500,
-                                                color: isDark
-                                                    ? Colors.white
-                                                    : Colors.black87,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 16,
-                                ),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(12),
-                                  color: isDark
-                                      ? const Color(0xFF2A2A2A)
-                                      : const Color(0xffF8FAFB),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        _shippingAddresses.isEmpty
-                                            ? 'No records found'
-                                            : (_shippingAddresses.firstWhere(
-                                                    (addr) =>
-                                                        addr['id'] ==
-                                                        _selectedShippingAddressId,
-                                                    orElse: () => {'name': ''},
-                                                  )['name'] ??
-                                                  ''),
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color: isDark
-                                              ? Colors.white70
-                                              : (_shippingAddresses.isEmpty
-                                                    ? Colors.grey
-                                                    : const Color(0xff000000)),
-                                        ),
-                                      ),
-                                    ),
-                                    Icon(
-                                      Icons.arrow_drop_down,
-                                      color: isDark
-                                          ? Colors.white70
-                                          : Colors.grey[700],
-                                      size: 24,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
+      items: _shippingAddresses,
+      titleBuilder: (a) => a['name']?.toString() ?? 'Address',
+      subtitleBuilder: _addressLabel,
+      isItemSelected: (a) => a['id'] == _selectedShippingAddressId,
+      emptyText: 'No delivery addresses found',
+      onItemTap: (a) =>
+          setState(() => _selectedShippingAddressId = a['id'] as int?),
     );
   }
 
   Widget _buildDetailsSection(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black26 : Colors.black.withOpacity(0.05),
-            blurRadius: 16,
-            spreadRadius: 2,
-            offset: const Offset(0, 6),
+    return MoboFormCard(
+      title: 'Credit Note Details',
+      children: [
+        MoboDateField(
+          label: 'Invoice Date',
+          value: _invoiceDate,
+          isRequired: true,
+          formatter: (d) => DateFormat('MMM dd, yyyy').format(d),
+          onTap: () => _selectDate(
+            initialDate: _invoiceDate,
+            helpText: 'Select Invoice Date',
+            onConfirm: (date) => setState(() => _invoiceDate = date),
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            child: Text(
-              'Credit Note Details',
-              style: GoogleFonts.manrope(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : Colors.grey[900],
-                letterSpacing: -0.3,
-              ),
-            ),
+        ),
+        const SizedBox(height: 16),
+        MoboDateField(
+          label: 'Due Date',
+          value: _dueDate,
+          formatter: (d) => DateFormat('MMM dd, yyyy').format(d),
+          onTap: () => _selectDate(
+            initialDate: _dueDate,
+            helpText: 'Select Due Date',
+            onConfirm: (date) => setState(() => _dueDate = date),
           ),
-          Divider(
-            height: 1,
-            color: isDark ? Colors.grey[700] : Colors.grey[200],
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildDatePicker(
-                  label: 'Invoice Date',
-                  selectedDate: _invoiceDate,
-                  onConfirm: (date) => setState(() => _invoiceDate = date),
-                  isDark: isDark,
-                ),
-                const SizedBox(height: 16),
-                _buildDatePicker(
-                  label: 'Due Date',
-                  selectedDate: _dueDate,
-                  onConfirm: (date) => setState(() => _dueDate = date),
-                  isDark: isDark,
-                ),
-                const SizedBox(height: 20),
-                const SizedBox(height: 20),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Journal',
-                      style: TextStyle(
-                        color: isDark
-                            ? Colors.white70
-                            : const Color(0xff7F7F7F),
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        return PopupMenuButton<int>(
-                          initialValue: _selectedJournalId,
-                          constraints: BoxConstraints(
-                            minWidth: constraints.maxWidth,
-                            maxWidth: constraints.maxWidth,
-                            maxHeight: 400,
-                          ),
-                          offset: const Offset(0, 56),
-                          color: isDark ? Colors.grey[850] : Colors.white,
-                          surfaceTintColor: Colors.transparent,
-                          onSelected: (val) {
-                            setState(() => _selectedJournalId = val);
-                          },
-                          itemBuilder: (context) => _journals.isEmpty
-                              ? [
-                                  PopupMenuItem<int>(
-                                    enabled: false,
-                                    child: Text(
-                                      'No journals found',
-                                      style: GoogleFonts.manrope(
-                                        color: isDark
-                                            ? Colors.white54
-                                            : Colors.grey[600],
-                                      ),
-                                    ),
-                                  ),
-                                ]
-                              : _journals
-                                    .map(
-                                      (j) => PopupMenuItem<int>(
-                                        value: j['id'] as int,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              j['name'] ?? 'Unknown',
-                                              style: GoogleFonts.manrope(
-                                                fontWeight: FontWeight.w500,
-                                                color: isDark
-                                                    ? Colors.white
-                                                    : Colors.black87,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              '${j['type']?.toString().toUpperCase() ?? ''} • ${j['code'] ?? ''}',
-                                              style: GoogleFonts.manrope(
-                                                fontSize: 12,
-                                                color: isDark
-                                                    ? Colors.grey[400]
-                                                    : Colors.grey[600],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 16,
-                            ),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              color: isDark
-                                  ? const Color(0xFF2A2A2A)
-                                  : const Color(0xffF8FAFB),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    (() {
-                                      if (_journals.isEmpty)
-                                        return 'No journals found';
-                                      try {
-                                        final j = _journals.firstWhere(
-                                          (j) => j['id'] == _selectedJournalId,
-                                        );
-                                        return '${j['name']} ${j['code'] != null ? '(${j['code']})' : ''}';
-                                      } catch (_) {
-                                        return 'Select Journal';
-                                      }
-                                    })(),
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      color: isDark
-                                          ? Colors.white70
-                                          : (_journals.isEmpty
-                                                ? Colors.grey
-                                                : const Color(0xff000000)),
-                                    ),
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.arrow_drop_down,
-                                  color: isDark
-                                      ? Colors.white70
-                                      : Colors.grey[700],
-                                  size: 24,
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                const SizedBox(height: 20),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Currency',
-                      style: TextStyle(
-                        color: isDark
-                            ? Colors.white70
-                            : const Color(0xff7F7F7F),
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        return PopupMenuButton<int>(
-                          initialValue: _selectedCurrencyId,
-                          constraints: BoxConstraints(
-                            minWidth: constraints.maxWidth,
-                            maxWidth: constraints.maxWidth,
-                            maxHeight: 400,
-                          ),
-                          offset: const Offset(0, 56),
-                          color: isDark ? Colors.grey[850] : Colors.white,
-                          surfaceTintColor: Colors.transparent,
-                          onSelected: (val) {
-                            setState(() => _selectedCurrencyId = val);
-                          },
-                          itemBuilder: (context) => _currencies.isEmpty
-                              ? [
-                                  PopupMenuItem<int>(
-                                    enabled: false,
-                                    child: Text(
-                                      'No records found',
-                                      style: GoogleFonts.manrope(
-                                        color: isDark
-                                            ? Colors.white54
-                                            : Colors.grey[600],
-                                      ),
-                                    ),
-                                  ),
-                                ]
-                              : _currencies
-                                    .map(
-                                      (c) => PopupMenuItem<int>(
-                                        value: c['id'] as int,
-                                        child: Text(
-                                          '${c['name']} (${c['symbol']})',
-                                          style: GoogleFonts.manrope(
-                                            fontWeight: FontWeight.w500,
-                                            color: isDark
-                                                ? Colors.white
-                                                : Colors.black87,
-                                          ),
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 16,
-                            ),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              color: isDark
-                                  ? const Color(0xFF2A2A2A)
-                                  : const Color(0xffF8FAFB),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    (() {
-                                      if (_currencies.isEmpty)
-                                        return 'No records found';
-                                      final c = _currencies.firstWhere(
-                                        (c) => c['id'] == _selectedCurrencyId,
-                                        orElse: () => {
-                                          'name': '',
-                                          'symbol': '',
-                                        },
-                                      );
-                                      return '${c['name']} (${c['symbol']})';
-                                    })(),
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      color: isDark
-                                          ? Colors.white70
-                                          : (_currencies.isEmpty
-                                                ? Colors.grey
-                                                : const Color(0xff000000)),
-                                    ),
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.arrow_drop_down,
-                                  color: isDark
-                                      ? Colors.white70
-                                      : Colors.grey[700],
-                                  size: 24,
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                CustomTextField(
-                  name: 'reason',
-                  controller: _reasonController,
-                  labelText: 'Reason',
-                  hintText: 'e.g., Product return',
-                  maxLines: 2,
-                  validator: (v) => null,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 16),
+        _buildJournalDropdown(isDark),
+        const SizedBox(height: 16),
+        _buildCurrencyDropdown(isDark),
+        const SizedBox(height: 16),
+        MoboTextField(
+          controller: _reasonController,
+          label: 'Reason',
+          hintText: 'e.g., Product return',
+          leadingIcon: HugeIcons.strokeRoundedNote01,
+          maxLines: 2,
+        ),
+      ],
     );
   }
 
+  Widget _buildJournalDropdown(bool isDark) {
+    final selected = _journals
+        .where((j) => j['id'] == _selectedJournalId)
+        .toList();
+
+    return MoboInlineDropdown<Map<String, dynamic>>(
+      label: 'Journal',
+      hintText: 'Select journal',
+      isRequired: true,
+      leadingIcon: HugeIcons.strokeRoundedBook02,
+      selectedLabel: selected.isEmpty
+          ? null
+          : selected.first['name']?.toString(),
+      items: _journals,
+      titleBuilder: (j) => j['name']?.toString() ?? 'Unknown',
+      subtitleBuilder: (j) =>
+          (j['code'] != null && j['code'] != false) ? '${j['code']}' : null,
+      isItemSelected: (j) => j['id'] == _selectedJournalId,
+      emptyText: 'No journals found',
+      onItemTap: (j) => setState(() => _selectedJournalId = j['id'] as int?),
+    );
+  }
+
+  Widget _buildCurrencyDropdown(bool isDark) {
+    final selected = _currencies
+        .where((c) => c['id'] == _selectedCurrencyId)
+        .toList();
+
+    return MoboInlineDropdown<Map<String, dynamic>>(
+      label: 'Currency',
+      hintText: 'Select currency',
+      isRequired: true,
+      leadingIcon: HugeIcons.strokeRoundedDollarCircle,
+      selectedLabel: selected.isEmpty
+          ? null
+          : '${selected.first['name'] ?? ''} (${selected.first['symbol'] ?? ''})',
+      items: _currencies,
+      titleBuilder: (c) => '${c['name'] ?? ''} (${c['symbol'] ?? ''})',
+      isItemSelected: (c) => c['id'] == _selectedCurrencyId,
+      emptyText: 'No currencies found',
+      onItemTap: (c) => setState(() => _selectedCurrencyId = c['id'] as int?),
+    );
+  }
+
+  Future<void> _selectDate({
+    required DateTime initialDate,
+    required String helpText,
+    required ValueChanged<DateTime> onConfirm,
+  }) async {
+    final date = await DatePickerUtils.showStandardDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      helpText: helpText,
+      cancelText: 'Cancel',
+      confirmText: 'Select',
+    );
+
+    if (date != null && mounted) onConfirm(date);
+  }
+
   Widget _buildLinesSection(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black26 : Colors.black.withOpacity(0.05),
-            blurRadius: 16,
-            spreadRadius: 2,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return MoboFormCard(
+      title: 'Products',
+      children: [
+        MoboInlineDropdown<Product>(
+          label: 'Add Product',
+          hintText: 'Search products...',
+          leadingIcon: HugeIcons.strokeRoundedPackage,
+          asyncSearch: _searchProducts,
+          titleBuilder: (p) => p.name,
+          subtitleBuilder: (p) =>
+              (p.defaultCode != null && p.defaultCode!.isNotEmpty)
+              ? 'SKU: ${p.defaultCode}'
+              : null,
+          emptyText: 'No products found',
+          onItemTap: (product) {
+            setState(() {
+              _creditNoteLines.insert(0, {
+                'product_id': product.id,
+                'product_name': product.name,
+                'name': product.name,
+                'product_default_code': product.defaultCode,
+                'quantity': 1.0,
+                'price_unit': product.listPrice ?? 0.0,
+                'price_subtotal': product.listPrice ?? 0.0,
+                'product_uom_id': product.uomId,
+                'tax_ids': <int>[],
+                'discount': 0.0,
+              });
+              _productSearchController.clear();
+              _productSearchFocusNode.unfocus();
+            });
+          },
+        ),
+        const SizedBox(height: 20),
+        if (_creditNoteLines.isEmpty)
           Container(
-            padding: const EdgeInsets.all(18),
-            child: Text(
-              'Credit Note Lines',
-              style: GoogleFonts.manrope(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : Colors.grey[900],
-                letterSpacing: -0.3,
+            width: double.infinity,
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.grey[800] : Colors.grey[100],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isDark ? Colors.grey[700]! : Colors.grey[200]!,
               ),
             ),
-          ),
-          Divider(
-            height: 1,
-            color: isDark ? Colors.grey[700] : Colors.grey[200],
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 20.0,
-              vertical: 16.0,
-            ),
-            child: ProductTypeAhead(
-              controller: _productSearchController,
-              focusNode: _productSearchFocusNode,
-              labelText: 'Search Product to Add',
-              isDark: isDark,
-              onProductSelected: (product) {
-                setState(() {
-                  _creditNoteLines.insert(0, {
-                    'product_id': product.id,
-                    'product_name': product.name,
-                    'name': product.name,
-                    'product_default_code': product.defaultCode,
-                    'quantity': 1.0,
-                    'price_unit': product.listPrice ?? 0.0,
-                    'price_subtotal': product.listPrice ?? 0.0,
-                    'product_uom_id': product.uomId,
-                    'tax_ids': <int>[],
-                    'discount': 0.0,
-                  });
-                  _productSearchController.clear();
-                  _productSearchFocusNode.unfocus();
-                });
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20.0),
             child: Column(
               children: [
-                if (_creditNoteLines.isEmpty)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32.0),
-                      child: Column(
-                        children: [
-                          HugeIcon(
-                            icon: HugeIcons.strokeRoundedPackage01,
-                            size: 48,
-                            color: isDark ? Colors.grey[600] : Colors.grey[400],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No line items added yet',
-                            style: GoogleFonts.manrope(
-                              color: isDark
-                                  ? Colors.grey[400]
-                                  : Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  ..._creditNoteLines.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final line = entry.value;
-                    return _buildCreditNoteLineCard(index, line, isDark);
-                  }),
-                if (_creditNoteLines.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                ],
+                HugeIcon(
+                  icon: HugeIcons.strokeRoundedShoppingBasket01,
+                  size: 48,
+                  color: (isDark ? Colors.grey[600] : Colors.grey[400])!,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No products added yet',
+                  style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Search above to add your first product',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    color: isDark ? Colors.grey[500] : Colors.grey[500],
+                  ),
+                ),
               ],
             ),
+          )
+        else
+          Column(
+            children: [
+              ..._creditNoteLines.asMap().entries.map((entry) {
+                return _buildCreditNoteLineCard(entry.key, entry.value, isDark);
+              }),
+              const SizedBox(height: 16),
+              _buildTotalsSection(isDark),
+            ],
           ),
-        ],
-      ),
+      ],
     );
   }
 
   Widget _buildTotalsSection(bool isDark) {
     return Container(
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black26 : Colors.black.withOpacity(0.05),
-            blurRadius: 16,
-            spreadRadius: 2,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: isDark
+            ? Colors.white.withOpacity(.1)
+            : AppTheme.primaryColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withOpacity(.3)
+              : AppTheme.primaryColor.withOpacity(0.3),
+        ),
       ),
-      padding: const EdgeInsets.all(20.0),
       child: Column(
         children: [
-          _buildTotalRow('Untaxed Amount', _untaxedAmount, isDark),
+          _buildTotalRow('Untaxed Amount:', _untaxedAmount, isDark),
           const SizedBox(height: 8),
-          _buildTotalRow('Taxes', _taxAmount, isDark),
-          const SizedBox(height: 8),
-          const Divider(),
-          const SizedBox(height: 8),
-          _buildTotalRow('Total', _totalAmount, isDark, isBold: true),
+          _buildTotalRow('Taxes:', _taxAmount, isDark),
+          const SizedBox(height: 12),
+          _buildTotalRow('Total Amount:', _totalAmount, isDark, isBold: true),
         ],
       ),
     );
@@ -1086,78 +1058,20 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     );
   }
 
-  Widget _buildBottomActionBar(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Consumer<InvoiceProvider>(
-          builder: (context, invoiceProvider, child) {
-            final isLoading = invoiceProvider.isLoading;
-            return Container(
-              width: double.infinity,
-              height: 56,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ElevatedButton.icon(
-                onPressed: (isLoading || _creditNoteLines.isEmpty)
-                    ? null
-                    : _saveCreditNote,
-                icon: isLoading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      )
-                    : const HugeIcon(
-                        icon: HugeIcons.strokeRoundedFileAdd,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                label: Text(
-                  isLoading ? 'Creating Credit Note...' : 'Create Credit Note',
-                  style: GoogleFonts.manrope(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primaryColor,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 14,
-                    horizontal: 16,
-                  ),
-                  disabledBackgroundColor: isDark
-                      ? Colors.grey[700]
-                      : Colors.grey[400],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
+  Widget _buildSaveButton(bool isDark) {
+    return Consumer<InvoiceProvider>(
+      builder: (context, invoiceProvider, child) {
+        final isLoading = invoiceProvider.isLoading || _isSaving;
+        return MoboSubmitButton(
+          label: _isEditing ? 'Update Credit Note' : 'Create Credit Note',
+          loadingLabel: _isEditing
+              ? 'Updating Credit Note'
+              : 'Creating Credit Note',
+          isLoading: isLoading,
+          isReady: _selectedCustomer != null && _creditNoteLines.isNotEmpty,
+          onPressed: _saveCreditNote,
+        );
+      },
     );
   }
 
@@ -1166,6 +1080,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     Map<String, dynamic> line,
     bool isDark,
   ) {
+    final theme = Theme.of(context);
     final cardColor = isDark ? Colors.grey[850] : Colors.white;
     final borderColor = isDark ? Colors.grey[700]! : Colors.grey[200]!;
     final textColor = isDark ? Colors.white : Colors.black87;
@@ -1194,9 +1109,8 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                       children: [
                         Text(
                           line['product_name']?.toString() ?? 'Unnamed Product',
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
                             color: textColor,
                           ),
                           maxLines: 2,
@@ -1215,8 +1129,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
                                 'SKU: $sku',
-                                style: GoogleFonts.manrope(
-                                  fontSize: 12,
+                                style: theme.textTheme.bodySmall?.copyWith(
                                   color: secondaryTextColor,
                                 ),
                               ),
@@ -1244,7 +1157,12 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildLabelText('Quantity', isDark),
+                        Text(
+                          'Quantity',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: secondaryTextColor,
+                          ),
+                        ),
                         const SizedBox(height: 4),
                         _CreditNoteQuantityInput(
                           initialValue: (line['quantity'] as num).toDouble(),
@@ -1264,41 +1182,23 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildLabelText('Unit Price', isDark),
-                        const SizedBox(height: 4),
-                        SizedBox(
-                          height: 45,
-                          child: TextFormField(
-                            key: ValueKey(
-                              'price_${index}_${line['price_unit']}',
-                            ),
-                            initialValue: line['price_unit'].toString(),
-                            style: GoogleFonts.manrope(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: textColor,
-                            ),
-                            decoration: _buildInputDecoration('', isDark)
-                                .copyWith(
-                                  prefixText: '$_currentCurrencySymbol ',
-                                  prefixStyle: GoogleFonts.manrope(
-                                    fontSize: 12,
-                                    color: secondaryTextColor,
-                                  ),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
-                                  ),
-                                ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (val) {
-                              setState(() {
-                                line['price_unit'] =
-                                    double.tryParse(val) ?? 0.0;
-                                _updateLineSubtotal(index);
-                              });
-                            },
+                        Text(
+                          'Unit Price',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: secondaryTextColor,
                           ),
+                        ),
+                        const SizedBox(height: 4),
+                        _CreditNotePriceInput(
+                          initialValue: (line['price_unit'] as num).toDouble(),
+                          onChanged: (value) {
+                            setState(() {
+                              line['price_unit'] = value;
+                              _updateLineSubtotal(index);
+                            });
+                          },
+                          isDark: isDark,
+                          currencySymbol: _currentCurrencySymbol,
                         ),
                       ],
                     ),
@@ -1307,14 +1207,18 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      _buildLabelText('Total', isDark),
+                      Text(
+                        'Total',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: secondaryTextColor,
+                        ),
+                      ),
                       const SizedBox(height: 4),
                       Text(
                         '$_currentCurrencySymbol${(line['price_subtotal'] ?? 0.0).toStringAsFixed(2)}',
-                        style: GoogleFonts.manrope(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.primaryColor,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white : AppTheme.primaryColor,
                         ),
                       ),
                     ],
@@ -1328,174 +1232,17 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     );
   }
 
-  Widget _buildLabelText(String text, bool isDark) {
-    return Text(
-      text,
-      style: GoogleFonts.manrope(
-        fontSize: 13,
-        fontWeight: FontWeight.w500,
-        color: isDark ? Colors.grey[400] : Colors.grey[700],
-      ),
-    );
-  }
-
-  Widget _buildDatePicker({
-    required String label,
-    required DateTime selectedDate,
-    required Function(DateTime) onConfirm,
-    required bool isDark,
-  }) {
-    return InkWell(
-      onTap: () async {
-        final date = await DatePickerUtils.showStandardDatePicker(
-          context: context,
-          initialDate: selectedDate,
-          firstDate: DateTime(2000),
-          lastDate: DateTime(2100),
-        );
-        if (date != null) {
-          onConfirm(date);
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-          ),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            HugeIcon(
-              icon: HugeIcons.strokeRoundedCalendar03,
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    DateFormat('MMM dd, yyyy').format(selectedDate),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  InputDecoration _buildDropdownDecoration(bool isDark) {
-    return InputDecoration(
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(
-          color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-        ),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(
-          color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-        ),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(color: AppTheme.primaryColor, width: 2),
-      ),
-      filled: true,
-      fillColor: isDark ? Colors.grey[850] : Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-    );
-  }
-
-  InputDecoration _buildInputDecoration(String hint, bool isDark) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: GoogleFonts.manrope(
-        fontWeight: FontWeight.w400,
-        color: isDark ? Colors.white30 : Colors.grey[400],
-      ),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(
-          color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-        ),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(
-          color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-        ),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide(color: AppTheme.primaryColor, width: 2),
-      ),
-      filled: true,
-      fillColor: isDark ? Colors.grey[850] : Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-    );
-  }
-
-  Widget _buildTaxSelector(Map<String, dynamic> line, bool isDark) {
-    return DropdownButtonFormField<int>(
-      isExpanded: true,
-      value: (line['tax_ids'] as List?)?.isNotEmpty == true
-          ? (line['tax_ids'] as List).first
-          : null,
-      decoration: _buildDropdownDecoration(isDark),
-      dropdownColor: isDark ? Colors.grey[850] : Colors.white,
-      style: GoogleFonts.manrope(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: isDark ? Colors.white : Colors.black87,
-      ),
-      hint: Text(
-        'Select Tax',
-        style: GoogleFonts.manrope(
-          fontSize: 14,
-          color: isDark ? Colors.grey[500] : Colors.grey[400],
-        ),
-      ),
-      items: _taxes
-          .map(
-            (tax) => DropdownMenuItem<int>(
-              value: tax['id'],
-              child: Text(
-                tax['name'] ?? 'Tax',
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          )
-          .toList(),
-      onChanged: (val) {
-        setState(() {
-          line['tax_ids'] = val != null ? [val] : [];
-        });
-      },
-    );
-  }
-
   Future<void> _saveCreditNote() async {
     _productSearchFocusNode.unfocus();
     FocusScope.of(context).unfocus();
+
+    if (_isOffline) {
+      CustomSnackbar.showError(
+        context,
+        "You're offline. Reconnect to save this credit note.",
+      );
+      return;
+    }
 
     if (_formKey.currentState?.validate() ?? false) {
       if (_selectedCustomer == null) {
@@ -1577,7 +1324,9 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'Creating credit note...',
+                    _isEditing
+                        ? 'Updating credit note...'
+                        : 'Creating credit note...',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -1586,7 +1335,9 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Please wait while we create your credit note.',
+                    _isEditing
+                        ? 'Please wait while we update your credit note.'
+                        : 'Please wait while we create your credit note.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 14,
@@ -1606,8 +1357,23 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
           listen: false,
         );
 
+        final validLines = _creditNoteLines
+            .where(
+              (line) =>
+                  (line['name']?.isNotEmpty == true ||
+                      line['product_name']?.isNotEmpty == true) &&
+                  (line['quantity'] ?? 0.0) > 0 &&
+                  (line['price_unit'] ?? 0.0) > 0,
+            )
+            .toList();
+
+        final editingId = _editingCreditNoteId;
+        final creditNoteProvider = editingId != null
+            ? Provider.of<CreditNoteProvider>(context, listen: false)
+            : null;
+
         final creditNoteData = {
-          'move_type': 'out_refund',
+          if (editingId == null) 'move_type': 'out_refund',
           'partner_id': _selectedCustomer?.id,
           'partner_shipping_id': _selectedShippingAddressId,
           'invoice_date': DateFormat('yyyy-MM-dd').format(_invoiceDate),
@@ -1616,37 +1382,46 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
           'ref': _reasonController.text.trim(),
           'narration': _reasonController.text.trim(),
           'journal_id': _selectedJournalId,
-          'invoice_line_ids': _creditNoteLines
-              .where(
-                (line) =>
-                    (line['name']?.isNotEmpty == true ||
-                        line['product_name']?.isNotEmpty == true) &&
-                    (line['quantity'] ?? 0.0) > 0 &&
-                    (line['price_unit'] ?? 0.0) > 0,
-              )
-              .map(
-                (line) => [
-                  0,
-                  0,
-                  {
-                    'product_id': line['product_id'],
-                    'name': line['name'] ?? line['product_name'],
-                    'quantity': line['quantity'],
-                    'price_unit': line['price_unit'],
-                    if (line['account_id'] != null)
-                      'account_id': line['account_id'],
-                    'tax_ids': line['tax_ids'] is List
-                        ? [
-                            [6, 0, line['tax_ids']],
-                          ]
-                        : [],
-                    'discount': line['discount'] ?? 0.0,
-                    'product_uom_id': line['product_uom_id'],
-                  },
-                ],
-              )
-              .toList(),
+          'invoice_line_ids': editingId != null
+              ? _buildLineUpdateCommands(validLines)
+              : validLines
+                    .map(
+                      (line) => [
+                        0,
+                        0,
+                        {
+                          'product_id': line['product_id'],
+                          'name': line['name'] ?? line['product_name'],
+                          'quantity': line['quantity'],
+                          'price_unit': line['price_unit'],
+                          if (line['account_id'] != null)
+                            'account_id': line['account_id'],
+                          'tax_ids': line['tax_ids'] is List
+                              ? [
+                                  [6, 0, line['tax_ids']],
+                                ]
+                              : [],
+                          'discount': line['discount'] ?? 0.0,
+                          'product_uom_id': line['product_uom_id'],
+                        },
+                      ],
+                    )
+                    .toList(),
         };
+
+        if (editingId != null) {
+          await _ensureStillDraft(editingId);
+          await creditNoteProvider!.updateCreditNote(editingId, creditNoteData);
+
+          if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
+            Navigator.of(dialogContext!).pop();
+          }
+
+          if (mounted) {
+            Navigator.of(context).pop(true);
+          }
+          return;
+        }
 
         final creditNoteId = await invoiceProvider.createInvoiceReturnId(
           creditNoteData,
@@ -1700,7 +1475,9 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                   borderRadius: BorderRadius.circular(20),
                 ),
                 title: Text(
-                  'Failed to Create Credit Note',
+                  _isEditing
+                      ? 'Failed to Update Credit Note'
+                      : 'Failed to Create Credit Note',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w700,
                     color: isDark ? Colors.white : Colors.black87,
@@ -1758,7 +1535,9 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                 borderRadius: BorderRadius.circular(20),
               ),
               title: Text(
-                'Failed to Create Credit Note',
+                _isEditing
+                    ? 'Failed to Update Credit Note'
+                    : 'Failed to Create Credit Note',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w700,
                   color: isDark ? Colors.white : Colors.black87,

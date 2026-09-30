@@ -46,7 +46,7 @@ class CustomDateSelector extends StatelessWidget {
             child: Row(
               children: [
                 HugeIcon(
-                  icon: HugeIcons.strokeRoundedCalendar03,
+                  icon: HugeIcons.strokeRoundedCalendar01,
                   color: isDark ? Colors.grey[400]! : Colors.grey[600]!,
                 ),
                 const SizedBox(width: 12),

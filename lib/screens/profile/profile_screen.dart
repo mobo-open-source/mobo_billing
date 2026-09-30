@@ -1618,7 +1618,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
         ],
       ),
-      child: Column(children: children),
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(children: children),
+      ),
     );
   }
 

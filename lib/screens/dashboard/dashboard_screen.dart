@@ -29,6 +29,7 @@ import 'package:mobo_billing/screens/payment/payment_records_screen.dart';
 import 'package:mobo_billing/services/connectivity_service.dart';
 import 'package:mobo_billing/services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../providers/currency_provider.dart';
 import '../CreditNotes/credit_notes_screen.dart';
@@ -113,12 +114,16 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     return Consumer2<ConnectivityService, SessionService>(
       builder: (context, connectivityService, sessionService, child) {
+        // Offline with a cached snapshot: show the dashboard as it last looked
+        // rather than replacing it with a connection error.
         if (!connectivityService.isConnected) {
-          return ConnectionStatusWidget(
-            onRetry: _loadData,
-            customMessage:
-                'No internet connection. Please check your connection and try again.',
-          );
+          if (!provider.dashboardLoaded) {
+            return ConnectionStatusWidget(
+              onRetry: _loadData,
+              customMessage:
+                  'No internet connection. Please check your connection and try again.',
+            );
+          }
         }
 
         if (!sessionService.hasValidSession) {
@@ -165,6 +170,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildHeader(context, profileProvider, isDark),
+                      if (!connectivityService.isConnected ||
+                          provider.isShowingCachedData)
+                        OfflineDataBanner(
+                          lastUpdated: provider.cacheUpdatedAt,
+                          onRetry: _loadData,
+                          message: connectivityService.isConnected
+                              ? "Couldn't refresh the dashboard"
+                              : null,
+                        ),
                       const SizedBox(height: 32),
                       _buildMetricsGrid(provider, isDark),
                       const SizedBox(height: 16),

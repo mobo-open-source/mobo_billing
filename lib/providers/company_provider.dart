@@ -276,7 +276,11 @@ class CompanyProvider extends ChangeNotifier {
 
     _selectedCompanyId = desiredId;
 
-    List<int> defaultAllowed = companyIds;
+    // Default to just the active company (matching what's "turned on" for
+    // this user on the Odoo server / what its own web session shows by
+    // default), not every company the user happens to be a member of. The
+    // in-app company selector still lets the user opt into more companies.
+    List<int> defaultAllowed = desiredId != null ? [desiredId] : companyIds;
     final restoredValid = restoredAllowed
         .where((id) => companyIds.contains(id))
         .toList();

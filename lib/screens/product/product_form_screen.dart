@@ -137,18 +137,40 @@ class _ProductFormScreenState extends State<ProductFormScreen>
       final categories = await _apiService.searchRead('product.category', [], [
         'name',
       ]);
+      // Explicit <String, dynamic> map literals: without it, Dart infers
+      // Map<String, Object> here (int id + String name have no narrower
+      // common type), which reifies these lists as List<Map<String, Object>>
+      // even though the field is declared List<Map<String, dynamic>>. Any
+      // later .firstWhere(orElse: () => {...}) on them then throws at
+      // runtime — the orElse closure is checked against the list's actual
+      // reified type, not its declared one.
       _categoryOptions = categories
-          .map((c) => {'id': c['id'] as int, 'name': c['name'].toString()})
+          .map(
+            (c) => <String, dynamic>{
+              'id': c['id'] as int,
+              'name': c['name'].toString(),
+            },
+          )
           .toList();
 
       final taxes = await _apiService.searchRead('account.tax', [], ['name']);
       _taxOptions = taxes
-          .map((t) => {'id': t['id'] as int, 'name': t['name'].toString()})
+          .map(
+            (t) => <String, dynamic>{
+              'id': t['id'] as int,
+              'name': t['name'].toString(),
+            },
+          )
           .toList();
 
       final uoms = await _apiService.searchRead('uom.uom', [], ['name']);
       _uomOptions = uoms
-          .map((u) => {'id': u['id'] as int, 'name': u['name'].toString()})
+          .map(
+            (u) => <String, dynamic>{
+              'id': u['id'] as int,
+              'name': u['name'].toString(),
+            },
+          )
           .toList();
 
       final currencies = await _apiService.searchRead('res.currency', [], [
@@ -157,7 +179,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
       ]);
       _currencyOptions = currencies
           .map(
-            (c) => {
+            (c) => <String, dynamic>{
               'id': c['id'] as int,
               'name': c['name'].toString(),
               'symbol': c['symbol']?.toString() ?? '',

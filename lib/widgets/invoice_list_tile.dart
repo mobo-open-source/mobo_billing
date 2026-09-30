@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/invoice.dart';
 import '../providers/currency_provider.dart';
+import '../theme/app_theme.dart';
 
 class InvoiceListTile extends StatelessWidget {
   final Invoice invoice;
@@ -19,25 +20,10 @@ class InvoiceListTile extends StatelessWidget {
     final status = invoice.state;
     final paymentState = invoice.paymentState ?? 'not_paid';
 
-    if (status == 'posted') {
-      switch (paymentState) {
-        case 'paid':
-          return const Color(0xFF10B981);
-        case 'in_payment':
-          return const Color(0xFF3B82F6);
-        case 'partial':
-          return const Color(0xFFF59E0B);
-        case 'not_paid':
-          return const Color(0xFFEF4444);
-        default:
-          return const Color(0xFFEF4444);
-      }
-    } else if (status == 'draft') {
-      return const Color(0xFFF59E0B);
-    } else if (status == 'cancel') {
-      return const Color(0xFF6B7280);
-    }
-    return Colors.grey;
+    // A posted invoice is coloured by how much of it has been paid.
+    if (status == 'posted') return StatusColors.forState(paymentState);
+    if (status == 'cancel') return StatusColors.grey;
+    return StatusColors.forState(status);
   }
 
   String getStateValue() {
@@ -233,28 +219,9 @@ class InvoiceListTile extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusBadge(bool isDark) {
-    final statusColor = getStateColor();
-    final textColor = isDark ? Colors.white : statusColor;
-    final backgroundColor = isDark
-        ? Colors.white.withOpacity(0.15)
-        : statusColor.withOpacity(0.10);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        getStateValue(),
-        style: GoogleFonts.manrope(
-          fontSize: 11,
-          fontWeight: isDark ? FontWeight.bold : FontWeight.w600,
-          color: textColor,
-          letterSpacing: 0.1,
-        ),
-      ),
-    );
-  }
+  Widget _buildStatusBadge(bool isDark) => StatusColors.buildStatusBadge(
+    getStateValue(),
+    getStateColor(),
+    isDark: isDark,
+  );
 }

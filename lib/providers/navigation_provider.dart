@@ -13,4 +13,12 @@ class NavigationProvider extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// Returns to the default (Dashboard) tab, e.g. after logout or account switch.
+  void reset() {
+    if (_currentIndex != 0) {
+      _currentIndex = 0;
+      notifyListeners();
+    }
+  }
 }

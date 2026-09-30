@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/customer.dart';
+import '../services/connectivity_service.dart';
+import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 import '../services/odoo_error_handler.dart';
 import '../services/odoo_session_manager.dart';
@@ -15,6 +17,9 @@ class CustomerProvider extends ChangeNotifier {
   List<Customer> _customers = [];
   bool _isLoading = false;
   String? _error;
+
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
 
   int _currentOffset = 0;
   final int _limit = 40;
@@ -36,6 +41,12 @@ class CustomerProvider extends ChangeNotifier {
   List<String> _availableFields = [];
 
   List<Customer> get customers => _customers;
+
+  /// Whether [customers] came from the cache instead of a live request.
+  bool get isShowingCachedData => _isShowingCachedData;
+
+  /// When the cached records on screen were fetched.
+  DateTime? get cacheUpdatedAt => _cacheUpdatedAt;
   bool get isLoading => _isLoading;
   String? get error => _error;
   int get totalCount => _totalCount;
@@ -87,11 +98,19 @@ class CustomerProvider extends ChangeNotifier {
     _loadedGroups = {};
     _isFieldsFetched = false;
     _availableFields = [];
+    _isShowingCachedData = false;
+    _cacheUpdatedAt = null;
+    DataCache.invalidatePrefix(DataCache.customerPrefix);
     notifyListeners();
   }
 
   /// Loads a paginated list of customers from the server with optional search.
   Future<void> loadCustomers({int offset = 0, String search = ''}) async {
+    // Offline: serve what was loaded last instead of clearing the screen.
+    if (!ConnectivityService.instance.isConnected && _serveCachedCustomers()) {
+      return;
+    }
+
     try {
       _isLoading = true;
       _error = null;
@@ -101,95 +120,123 @@ class CustomerProvider extends ChangeNotifier {
 
       final List<dynamic> domain = await _buildDomain(search);
 
-      final countResult = await _apiService
-          .call('res.partner', 'search_count', [domain])
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () => throw TimeoutException(
-              'Loading customers timed out after 30 seconds',
+      // Count and page data are independent reads — run them concurrently
+      // instead of waiting on the count before even starting the page fetch.
+      final results = await Future.wait([
+        _apiService
+            .call('res.partner', 'search_count', [domain])
+            .timeout(
+              const Duration(seconds: 30),
+              onTimeout: () => throw TimeoutException(
+                'Loading customers timed out after 30 seconds',
+              ),
             ),
-          );
+        _apiService
+            .call(
+              'res.partner',
+              'search_read',
+              [domain],
+              {
+                'fields': [
+                  'name',
+                  'email',
+                  'phone',
+                  'mobile',
+                  'vat',
+                  'street',
+                  'street2',
+                  'city',
+                  'zip',
+                  'website',
+                  'comment',
+                  'function',
+                  'credit_limit',
+                  'industry_id',
+                  'company_name',
+                  'lang',
+                  'tz',
+                  'user_id',
+                  'property_payment_term_id',
+                  'country_id',
+                  'state_id',
+                  'image_128',
+                  'customer_rank',
+                  'supplier_rank',
+                  'is_company',
+                  'create_date',
+                  'write_date',
+                  'currency_id',
+                  'active',
+                  'total_invoiced',
+                  'credit',
+                  'debit',
+                  'partner_latitude',
+                  'partner_longitude',
+                ],
+                'offset': offset,
+                'limit': _limit,
+                'order': 'name asc',
+              },
+            )
+            .timeout(
+              const Duration(seconds: 30),
+              onTimeout: () => throw TimeoutException(
+                'Loading customers timed out after 30 seconds',
+              ),
+            ),
+      ]);
+      final countResult = results[0];
       _totalCount = countResult is int ? countResult : 0;
-
-      final result = await _apiService
-          .call(
-            'res.partner',
-            'search_read',
-            [domain],
-            {
-              'fields': [
-                'name',
-                'email',
-                'phone',
-                'mobile',
-                'vat',
-                'street',
-                'street2',
-                'city',
-                'zip',
-                'website',
-                'comment',
-                'function',
-                'credit_limit',
-                'industry_id',
-                'company_name',
-                'lang',
-                'tz',
-                'user_id',
-                'property_payment_term_id',
-                'country_id',
-                'state_id',
-                'image_128',
-                'customer_rank',
-                'supplier_rank',
-                'is_company',
-                'create_date',
-                'write_date',
-                'currency_id',
-                'active',
-                'total_invoiced',
-                'credit',
-                'debit',
-                'partner_latitude',
-                'partner_longitude',
-              ],
-              'offset': offset,
-              'limit': _limit,
-              'order': 'name asc',
-            },
-          )
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () => throw TimeoutException(
-              'Loading customers timed out after 30 seconds',
-            ),
-          );
+      final result = results[1];
 
       if (result is List) {
         _customers = result
             .map((json) => Customer.fromJson(json as Map<String, dynamic>))
             .toList();
+        _cacheCustomers();
+        _isShowingCachedData = false;
       } else {
         _customers = [];
       }
     } on TimeoutException catch (e) {
+      if (_customers.isEmpty && _serveCachedCustomers()) return;
+
       _error = 'TIMEOUT: ${e.message}';
-
-      if (_customers.isEmpty) {
-        _customers = [];
-        _totalCount = 0;
-      }
     } catch (e) {
-      _error = OdooErrorHandler.toUserMessage(e);
+      if (_customers.isEmpty && _serveCachedCustomers()) return;
 
-      if (_customers.isEmpty) {
-        _customers = [];
-        _totalCount = 0;
-      }
+      _error = OdooErrorHandler.toUserMessage(e);
     } finally {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// Stores the current page so it can be shown again offline.
+  void _cacheCustomers() {
+    final key = DataCache.listKey(DataCache.customerPrefix);
+    DataCache.write(
+      key,
+      CachedList<Customer>(List.of(_customers), _totalCount),
+    );
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+  }
+
+  /// Publishes the cached page, if there is one. Returns whether it did.
+  bool _serveCachedCustomers() {
+    final key = DataCache.listKey(DataCache.customerPrefix);
+    final cached = DataCache.read<CachedList<Customer>>(key);
+    if (cached == null || cached.items.isEmpty) return false;
+
+    _customers = List.of(cached.items);
+    _totalCount = cached.totalCount;
+    _currentOffset = 0;
+    _isShowingCachedData = true;
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+    return true;
   }
 
   Future<List<dynamic>> _buildDomain(String search) async {
@@ -235,22 +282,29 @@ class CustomerProvider extends ChangeNotifier {
     return domain;
   }
 
-  /// Updates the current filter state (active, company, individual, date range).
+  /// Replaces the current filter state (active, company, individual, date
+  /// range) wholesale with the values passed in.
+  ///
+  /// The caller (the filter bottom sheet's "Apply" button) always supplies
+  /// its complete staged state here, including an explicit `null` for
+  /// `startDate`/`endDate` when the user cleared the date range — so every
+  /// field is assigned unconditionally. A previous `if (x != null) ...`
+  /// guard here meant passing `null` to clear a date silently kept the old
+  /// date instead, so date-range filters could never actually be cleared.
   void setFilterState({
-    bool? showActiveOnly,
-    bool? showCompaniesOnly,
-    bool? showIndividualsOnly,
-    bool? showCreditBreachesOnly,
+    required bool showActiveOnly,
+    required bool showCompaniesOnly,
+    required bool showIndividualsOnly,
+    required bool showCreditBreachesOnly,
     DateTime? startDate,
     DateTime? endDate,
   }) {
-    if (showActiveOnly != null) _showActiveOnly = showActiveOnly;
-    if (showCompaniesOnly != null) _showCompaniesOnly = showCompaniesOnly;
-    if (showIndividualsOnly != null) _showIndividualsOnly = showIndividualsOnly;
-    if (showCreditBreachesOnly != null)
-      _showCreditBreachesOnly = showCreditBreachesOnly;
-    if (startDate != null) _startDate = startDate;
-    if (endDate != null) _endDate = endDate;
+    _showActiveOnly = showActiveOnly;
+    _showCompaniesOnly = showCompaniesOnly;
+    _showIndividualsOnly = showIndividualsOnly;
+    _showCreditBreachesOnly = showCreditBreachesOnly;
+    _startDate = startDate;
+    _endDate = endDate;
     notifyListeners();
   }
 

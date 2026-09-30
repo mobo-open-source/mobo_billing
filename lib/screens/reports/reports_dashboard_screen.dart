@@ -8,7 +8,9 @@ import '../../services/connectivity_service.dart';
 import '../../services/odoo_api_service.dart';
 import '../../services/session_service.dart';
 import '../../theme/app_theme.dart';
+import '../../services/data_cache.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/dashboard_metric_card.dart';
 import '../../widgets/shimmer_loading.dart';
 
@@ -23,6 +25,10 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
   final OdooApiService _apiService = OdooApiService();
   bool _isLoading = true;
   String _error = '';
+
+  /// True when the figures on screen came from the offline cache.
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
 
   String _selectedRange = 'Last 30 Days';
   DateTime _startDate = DateTime.now().subtract(const Duration(days: 30));
@@ -80,8 +86,20 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
     _loadAllData();
   }
 
+  /// Cache key for the report snapshot — per date range, since the figures
+  /// only mean anything alongside the range they were computed for.
+  String get _reportCacheKey =>
+      'reports:${_selectedRange}_${_startDate.toIso8601String().split('T').first}';
+
   Future<void> _loadAllData() async {
     if (!mounted) return;
+
+    // Offline: redraw the last snapshot for this range instead of replacing
+    // the whole screen with a connection error.
+    if (!ConnectivityService.instance.isConnected) {
+      if (_restoreCachedReports()) return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = '';
@@ -99,10 +117,17 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
           throw TimeoutException('Reports loading timed out after 30 seconds');
         },
       );
+      _cacheReports();
+      _isShowingCachedData = false;
     } on TimeoutException catch (e) {
-      _error = 'Request timed out. Please check your connection and try again.';
+      if (!_restoreCachedReports()) {
+        _error =
+            'Request timed out. Please check your connection and try again.';
+      }
     } catch (e) {
-      _error = e.toString();
+      if (!_restoreCachedReports()) {
+        _error = e.toString();
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -110,6 +135,44 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
         });
       }
     }
+  }
+
+  /// Snapshots the computed figures so they can be redrawn offline.
+  void _cacheReports() {
+    DataCache.write(_reportCacheKey, {
+      'summaryStats': Map<String, double>.from(_summaryStats),
+      'trendData': List<FlSpot>.from(_trendData),
+      'maxTrendValue': _maxTrendValue,
+      'trendLabels': List<String>.from(_trendLabels),
+      'statusDistribution': Map<String, double>.from(_statusDistribution),
+      'topCustomers': List<Map<String, dynamic>>.from(_topCustomers),
+    });
+  }
+
+  /// Restores the cached snapshot for the selected range. Returns whether it
+  /// found one.
+  bool _restoreCachedReports() {
+    final cached = DataCache.read<Map<String, dynamic>>(_reportCacheKey);
+    if (cached == null) return false;
+
+    if (!mounted) return false;
+    setState(() {
+      _summaryStats = Map<String, double>.from(cached['summaryStats'] as Map);
+      _trendData = List<FlSpot>.from(cached['trendData'] as List);
+      _maxTrendValue = cached['maxTrendValue'] as double;
+      _trendLabels = List<String>.from(cached['trendLabels'] as List);
+      _statusDistribution = Map<String, double>.from(
+        cached['statusDistribution'] as Map,
+      );
+      _topCustomers = List<Map<String, dynamic>>.from(
+        cached['topCustomers'] as List,
+      );
+      _cacheUpdatedAt = DataCache.updatedAt(_reportCacheKey);
+      _isShowingCachedData = true;
+      _isLoading = false;
+      _error = '';
+    });
+    return true;
   }
 
   Future<void> _fetchSummaryStats() async {
@@ -299,7 +362,8 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
           : Colors.grey[50],
       body: Consumer2<ConnectivityService, SessionService>(
         builder: (context, connectivity, session, _) {
-          if (!connectivity.isConnected) {
+          // Offline with a cached snapshot: keep the report on screen.
+          if (!connectivity.isConnected && !_isShowingCachedData) {
             return const ConnectionStatusWidget();
           }
           if (!session.hasValidSession) {
@@ -316,6 +380,14 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (_isShowingCachedData)
+                        OfflineDataBanner(
+                          lastUpdated: _cacheUpdatedAt,
+                          onRetry: _loadAllData,
+                          message: connectivity.isConnected
+                              ? "Couldn't refresh reports"
+                              : null,
+                        ),
                       _buildDateFilter(),
                       const SizedBox(height: 20),
                       if (_isLoading &&
@@ -827,22 +899,7 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
   }
 
   Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'paid':
-        return Colors.green;
-      case 'unpaid':
-      case 'not_paid':
-        return Colors.red;
-      case 'partial':
-        return Colors.orange;
-      case 'in payment':
-      case 'in_payment':
-        return Colors.blue;
-      case 'reversed':
-        return Colors.grey;
-      default:
-        return Colors.purple;
-    }
+    return StatusColors.forState(status);
   }
 
   Widget _buildTopCustomersList(bool isDark) {

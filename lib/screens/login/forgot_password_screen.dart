@@ -201,26 +201,21 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
             ),
 
             Positioned(
-              top: 0,
+              top: 24,
               left: 0,
-              child: SafeArea(
-                bottom: false,
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: _isLoading
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                    borderRadius: BorderRadius.circular(32),
-                    child: Container(
-                      height: 64,
-                      width: 64,
-                      alignment: Alignment.center,
-                      child: HugeIcon(
-                        icon: HugeIcons.strokeRoundedArrowLeft01,
-                        color: _isLoading ? Colors.white54 : Colors.white,
-                        size: 24,
-                      ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _isLoading ? null : () => Navigator.of(context).pop(),
+                  borderRadius: BorderRadius.circular(32),
+                  child: Container(
+                    height: 64,
+                    width: 64,
+                    alignment: Alignment.center,
+                    child: HugeIcon(
+                      icon: HugeIcons.strokeRoundedArrowLeft01,
+                      color: _isLoading ? Colors.white54 : Colors.white,
+                      size: 24,
                     ),
                   ),
                 ),
@@ -243,7 +238,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
         const SizedBox(height: 24),
         Text(
           'Reset Password',
-          style: GoogleFonts.manrope(
+          style: GoogleFonts.montserrat(
             fontSize: 28,
             fontWeight: FontWeight.w600,
             color: Colors.white,
@@ -300,7 +295,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
             },
             onChanged: (value) {
               setState(() {
-                _emailHasError = value.trim().isEmpty;
+                _emailHasError =
+                    value.trim().isEmpty ||
+                    !ResetPasswordService.isValidEmail(value.trim());
                 if (_errorMessage != null) {
                   _errorMessage = null;
                 }
@@ -331,7 +328,19 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
                 ),
               ),
 
-              suffixIcon: null,
+              suffixIcon: _emailHasError
+                  ? SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Center(
+                        child: HugeIcon(
+                          icon: HugeIcons.strokeRoundedAlertCircle,
+                          color: Colors.red,
+                          size: 20,
+                        ),
+                      ),
+                    )
+                  : null,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
@@ -355,14 +364,20 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
           ),
           const SizedBox(height: 24),
 
-          AnimatedContainer(
+          /// Grows to the message instead of holding a fixed 48px: an
+          /// explanatory error ("reset is not enabled on this server —
+          /// contact your administrator") runs to three lines at 12px, and
+          /// the old fixed height clipped exactly the part that tells the
+          /// user what to do about it.
+          AnimatedSize(
             duration: const Duration(milliseconds: 300),
-            height: _errorMessage != null ? 48 : 0,
+            curve: Curves.easeInOut,
+            alignment: Alignment.topCenter,
             child: _errorMessage != null
                 ? Padding(
                     padding: const EdgeInsets.only(bottom: 8.0),
                     child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         HugeIcon(
                           icon: HugeIcons.strokeRoundedAlertCircle,
@@ -377,13 +392,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
                               color: Colors.white,
                               fontSize: 12,
                               fontWeight: FontWeight.w400,
+                              height: 1.4,
                             ),
                           ),
                         ),
                       ],
                     ),
                   )
-                : null,
+                : const SizedBox(width: double.infinity),
           ),
 
           const SizedBox(height: 24),

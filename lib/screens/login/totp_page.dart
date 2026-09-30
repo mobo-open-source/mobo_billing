@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -45,10 +46,41 @@ class _TotpPageState extends State<TotpPage> {
   bool _isSessionExtracted = false;
   bool _loginSuccess = false;
 
+  /// Whether the server presented its TOTP form, and whether the user has
+  /// answered it. A session that appears while a challenge is outstanding is
+  /// never accepted — see [_acceptWebSession].
+  bool _totpChallengeSeen = false;
+  bool _totpSubmitted = false;
+
+  /// Safety net for the initial page load: nothing here ever un-sticks
+  /// `_loading` on its own if the server's login page doesn't match the
+  /// selectors `_injectCredentials` expects (differs across Odoo 17/18/19
+  /// and custom instances) or the webview simply never fires another
+  /// `onLoadStop`. Without this, that leaves a permanently frozen spinner.
+  Timer? _loadTimeoutTimer;
+
   @override
   void dispose() {
+    _loadTimeoutTimer?.cancel();
     _totpController.dispose();
     super.dispose();
+  }
+
+  void _startLoadTimeout() {
+    _loadTimeoutTimer?.cancel();
+    _loadTimeoutTimer = Timer(const Duration(seconds: 25), () {
+      if (!mounted || !_loading) return;
+      setState(() {
+        _loading = false;
+        _error =
+            'This is taking longer than expected. Please check your connection and try again.';
+      });
+    });
+  }
+
+  void _cancelLoadTimeout() {
+    _loadTimeoutTimer?.cancel();
+    _loadTimeoutTimer = null;
   }
 
   @override
@@ -80,30 +112,25 @@ class _TotpPageState extends State<TotpPage> {
             child: Opacity(
               opacity: 0.0,
               child: InAppWebView(
-                initialUrlRequest: URLRequest(
-                  url: WebUri(
-                    '${widget.serverUrl}/web/login?db=${widget.database}',
-                  ),
-                ),
-                initialOptions: InAppWebViewGroupOptions(
-                  crossPlatform: InAppWebViewOptions(
-                    javaScriptEnabled: true,
-                    cacheEnabled: false,
-                    clearCache: true,
-                    userAgent: OdooSessionManager.USER_AGENT,
-                  ),
-                  android: AndroidInAppWebViewOptions(
-                    useHybridComposition: true,
-                    allowContentAccess: true,
-                    allowFileAccess: true,
-                    mixedContentMode:
-                        AndroidMixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-                    forceDark: AndroidForceDark.FORCE_DARK_AUTO,
-                    disableDefaultErrorPage: true,
-                  ),
+                // Loaded by [_startLogin] once this server's cookies have been
+                // cleared, so a leftover session or trusted-device cookie can
+                // never carry a previous login past the second factor.
+                initialUrlRequest: URLRequest(url: WebUri('about:blank')),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  cacheEnabled: false,
+                  clearCache: true,
+                  userAgent: OdooSessionManager.USER_AGENT,
+                  useHybridComposition: true,
+                  allowContentAccess: true,
+                  allowFileAccess: true,
+                  mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+                  forceDark: ForceDark.AUTO,
+                  disableDefaultErrorPage: true,
                 ),
                 onWebViewCreated: (controller) {
                   _webController = controller;
+                  _startLogin();
                 },
                 onReceivedServerTrustAuthRequest:
                     (controller, challenge) async {
@@ -111,6 +138,19 @@ class _TotpPageState extends State<TotpPage> {
                         action: ServerTrustAuthResponseAction.PROCEED,
                       );
                     },
+                onReceivedError: (controller, request, error) {
+                  // Sub-resource failures (a stray HTTP/2 reset on an icon or
+                  // a tracking pixel) say nothing about the login itself, and
+                  // reporting them buried the real state behind a scary
+                  // message while the form was working fine.
+                  if (request.isForMainFrame != true) return;
+                  if (!mounted || _loginSuccess) return;
+                  _cancelLoadTimeout();
+                  setState(() {
+                    _loading = false;
+                    _error = 'Failed to load: ${error.description}';
+                  });
+                },
                 onLoadStop: (controller, url) async {
                   final urlStr = url?.toString() ?? '';
 
@@ -128,9 +168,12 @@ class _TotpPageState extends State<TotpPage> {
 
                   if (urlStr.contains('/web/login/totp') ||
                       urlStr.contains('totp_token')) {
+                    _cancelLoadTimeout();
                     if (mounted) {
                       setState(() {
                         _loading = false;
+                        _totpChallengeSeen = true;
+                        _error = null;
                       });
                     }
                     await Future.delayed(const Duration(milliseconds: 600));
@@ -152,6 +195,8 @@ class _TotpPageState extends State<TotpPage> {
                       })();
                       """,
                     );
+                    if (!_acceptWebSession()) return;
+
                     final success = await _saveSessionData(
                       sessionInfo: sessionInfo,
                     );
@@ -240,7 +285,7 @@ class _TotpPageState extends State<TotpPage> {
         const SizedBox(height: 16),
         Text(
           'To login, enter below the six-digit authentication code provided by your Authenticator app.',
-          style: GoogleFonts.montserrat(
+          style: GoogleFonts.manrope(
             fontSize: 14,
             color: Colors.white70,
             height: 1.4,
@@ -307,6 +352,7 @@ class _TotpPageState extends State<TotpPage> {
                     scale: 20 / 24.0,
                     child: const HugeIcon(
                       icon: HugeIcons.strokeRoundedSmsCode,
+                      color: Colors.black54,
                       size: 24,
                     ),
                   ),
@@ -417,14 +463,63 @@ class _TotpPageState extends State<TotpPage> {
     );
   }
 
+  /// Clears this server's cookies, then loads the login page.
+  ///
+  /// A fresh login must start with no `session_id` and no trusted-device
+  /// cookie: either one lets Odoo hand back a logged-in page without asking
+  /// for a code, which is exactly the bypass this screen exists to prevent.
+  Future<void> _startLogin() async {
+    _startLoadTimeout();
+
+    final loginUrl = WebUri(
+      '${widget.serverUrl}/web/login?db=${widget.database}',
+    );
+
+    try {
+      await CookieManager.instance().deleteCookies(url: loginUrl);
+    } catch (_) {
+      // Best effort — a jar we cannot clear still gets checked by
+      // [_acceptWebSession] before any session is accepted.
+    }
+
+    if (!mounted) return;
+    await _webController?.loadUrl(urlRequest: URLRequest(url: loginUrl));
+  }
+
+  /// Whether a session the webview just produced may be accepted.
+  ///
+  /// The server decides whether a second factor is required. If it never
+  /// showed the TOTP form the account is not enrolled and the session is
+  /// genuine; but once the form has been shown, only a code the user actually
+  /// submitted may unlock the app.
+  bool _acceptWebSession() {
+    if (!_totpChallengeSeen) {
+      _cancelLoadTimeout();
+      return true;
+    }
+    if (_totpSubmitted) return true;
+
+    _cancelLoadTimeout();
+    if (mounted) {
+      setState(() {
+        _loading = false;
+        _error = 'Enter the six-digit code to continue.';
+      });
+    }
+    return false;
+  }
+
   Future<void> _injectCredentials() async {
     if (_credentialsInjected) return;
+    // Set unconditionally: a failed attempt should surface an error below,
+    // not retry on every subsequent onLoadStop and spin forever.
+    _credentialsInjected = true;
 
     final safeUser = jsonEncode(widget.username);
     final safePass = jsonEncode(widget.password);
     final safeDb = jsonEncode(widget.database);
 
-    await _webController?.evaluateJavascript(
+    final result = await _webController?.evaluateJavascript(
       source:
           """
       (function() {
@@ -450,7 +545,18 @@ class _TotpPageState extends State<TotpPage> {
       })();
     """,
     );
-    _credentialsInjected = true;
+
+    // The login page didn't match the selectors above (a different Odoo
+    // version's markup, a redirect to something unexpected, etc.) — without
+    // this, the form is never submitted and the page just sits there with
+    // the loading overlay up and no way forward until the timeout fires.
+    if (result != 'submitted' && mounted) {
+      _cancelLoadTimeout();
+      setState(() {
+        _loading = false;
+        _error = 'Could not load the login form. Please try again.';
+      });
+    }
   }
 
   Future<void> _handleDatabaseSelector() async {
@@ -496,6 +602,8 @@ class _TotpPageState extends State<TotpPage> {
       return;
     }
 
+    _totpSubmitted = true;
+
     try {
       await _webController!.evaluateJavascript(
         source:
@@ -512,14 +620,13 @@ class _TotpPageState extends State<TotpPage> {
           ['input', 'change', 'keydown', 'keyup', 'keypress'].forEach(eventType => {
             input.dispatchEvent(new KeyboardEvent(eventType, {key: 'Enter', bubbles: true, cancelable: true}));
           });
-          
-          
-          const trustCheckbox = document.querySelector('input[name="trust_device"], input[type="checkbox"], [name="trust"]');
-          if (trustCheckbox && !trustCheckbox.checked) {
-            trustCheckbox.checked = true;
-            trustCheckbox.dispatchEvent(new Event('change', {bubbles: true}));
-          }
-          
+
+          // Odoo's "remember this device" box is left alone on purpose. Ticking
+          // it makes the server store a trusted-device cookie and skip the
+          // second factor on later logins, which silently turns 2FA off for
+          // this install. The old selector also matched `input[type=checkbox]`,
+          // so it ticked whatever checkbox the form happened to carry.
+
           
           const form = input.closest('form') || document.querySelector('form[action*="/web/login"]');
           if (form) {
@@ -553,6 +660,9 @@ class _TotpPageState extends State<TotpPage> {
         );
 
         if (isLoggedIn == 'error') {
+          // The code was rejected, so the challenge is outstanding again and a
+          // session appearing later must not be taken as an answer.
+          _totpSubmitted = false;
           setState(
             () => _error = "Invalid code or login failed. Please try again.",
           );
@@ -647,17 +757,18 @@ class _TotpPageState extends State<TotpPage> {
   Future<void> _onLoginSuccess() async {
     if (!mounted) return;
 
+    _cancelLoadTimeout();
     setState(() {
       _loginSuccess = true;
       _verifying = true;
     });
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final isBillingInstalled = await authProvider.checkRequiredModules();
+    final accessResult = await authProvider.checkAppAccess();
 
     if (!mounted) return;
 
-    if (!isBillingInstalled) {
+    if (accessResult != AppAccessResult.ok) {
       await authProvider.logout();
       if (mounted) {
         setState(() {
@@ -665,7 +776,11 @@ class _TotpPageState extends State<TotpPage> {
           _verifying = false;
         });
         Navigator.of(context).pop();
-        showModuleMissingDialog(context);
+        if (accessResult == AppAccessResult.accessDenied) {
+          showAccessDeniedDialog(context);
+        } else {
+          showModuleMissingDialog(context);
+        }
       }
       return;
     }
@@ -709,24 +824,6 @@ class _TotpPageState extends State<TotpPage> {
           (route) => false,
         );
       }
-    }
-  }
-
-  Future<void> _extractAndSaveSession() async {
-    final currentUrl = await _webController?.getUrl();
-    if (currentUrl == null) return;
-
-    final cookies = await CookieManager.instance().getCookies(url: currentUrl);
-    final sessionCookie = cookies.firstWhere(
-      (c) => c.name == 'session_id',
-      orElse: () => Cookie(name: 'session_id', value: ''),
-    );
-
-    if (sessionCookie.value.isEmpty) {
-      if (mounted) {
-        setState(() => _error = "Login failed. Please try again.");
-      }
-      return;
     }
   }
 

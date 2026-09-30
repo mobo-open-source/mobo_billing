@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobo_billing/screens/payment/create_payment_screen.dart';
 import 'package:provider/provider.dart';
+import 'package:mobo_billing/providers/profile_provider.dart';
 import 'package:flutter_snake_navigationbar/flutter_snake_navigationbar.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:mobo_billing/theme/app_theme.dart';
@@ -35,8 +36,11 @@ class _MainAppScreenState extends State<MainAppScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Always open on the default Dashboard tab for a fresh login.
+      Provider.of<NavigationProvider>(context, listen: false).reset();
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       authProvider.refreshUserName();
+      Provider.of<ProfileProvider>(context, listen: false).loadProfile();
       Provider.of<CompanyProvider>(context, listen: false).initialize();
 
       // Check for rating prompt after a short delay

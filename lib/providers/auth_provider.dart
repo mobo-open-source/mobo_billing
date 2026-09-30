@@ -368,4 +368,22 @@ class AuthProvider with ChangeNotifier {
   Future<bool> checkRequiredModules() async {
     return await _apiService.isModuleInstalled('account');
   }
+
+  /// Checks whether the logged-in user can actually use the app: the
+  /// billing module must be installed on the server AND the user must have
+  /// billing access rights (e.g. an assigned Billing/Invoicing user group).
+  /// Used to block access from the login screen itself, instead of letting
+  /// the user in and surfacing access errors deep inside individual screens.
+  Future<AppAccessResult> checkAppAccess() async {
+    final moduleInstalled = await _apiService.isModuleInstalled('account');
+    if (!moduleInstalled) return AppAccessResult.moduleMissing;
+
+    final hasAccess = await _apiService.hasBillingAccess();
+    if (!hasAccess) return AppAccessResult.accessDenied;
+
+    return AppAccessResult.ok;
+  }
 }
+
+/// Outcome of [AuthProvider.checkAppAccess].
+enum AppAccessResult { ok, moduleMissing, accessDenied }

@@ -714,6 +714,44 @@ class OdooApiService {
     return result as int;
   }
 
+  /// Checks whether the logged-in user has read access to every core model
+  /// the app's main tabs depend on: `account.move` for Invoices/Credit
+  /// Notes/Reports, `account.payment` for Payments, and `res.partner` for
+  /// Customers/Dashboard/Reports. A user can pass an `account.move` check
+  /// (e.g. a portal/limited user granted read-only Invoicing) and still be
+  /// missing rights on a sibling model like Payments — that only surfaces
+  /// as an in-app "not allowed to access" error once they open that tab, so
+  /// every one of these has to be checked up front instead of just one.
+  Future<bool> hasBillingAccess() async {
+    const requiredModels = ['account.move', 'account.payment', 'res.partner'];
+    final results = await Future.wait(
+      requiredModels.map(_checkModelReadAccess),
+    );
+    return results.every((allowed) => allowed);
+  }
+
+  Future<bool> _checkModelReadAccess(String model) async {
+    try {
+      final result = await call(
+        model,
+        'check_access_rights',
+        ['read'],
+        {'raise_exception': false},
+      );
+      if (result is bool) return result;
+      return true;
+    } catch (e) {
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('access') &&
+          (msg.contains('denied') ||
+              msg.contains('rights') ||
+              msg.contains('error'))) {
+        return false;
+      }
+      return true;
+    }
+  }
+
   /// Checks if a specific Odoo module is installed and active.
   Future<bool> isModuleInstalled(String moduleName) async {
     try {
@@ -1228,6 +1266,43 @@ class OdooApiService {
       }
 
       return result == true;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Deletes an invoice from Odoo.
+  ///
+  /// Odoo only allows an `account.move` to be unlinked while it has never been
+  /// posted (`posted_before == false`), so a posted — or previously posted and
+  /// then cancelled — invoice is rejected here instead of hitting the server.
+  Future<bool> deleteInvoice(int invoiceId) async {
+    try {
+      final records = await read(
+        'account.move',
+        [invoiceId],
+        ['state', 'posted_before'],
+      );
+
+      if (records.isNotEmpty) {
+        final record = records.first;
+        final state = record['state'];
+        final postedBefore = record['posted_before'] == true;
+
+        if (state == 'posted') {
+          throw Exception(
+            'You cannot delete a posted invoice. Reset it to draft first.',
+          );
+        }
+
+        if (postedBefore) {
+          throw Exception(
+            'You cannot delete an entry which has been posted once.',
+          );
+        }
+      }
+
+      return await unlink('account.move', [invoiceId]);
     } catch (e) {
       rethrow;
     }

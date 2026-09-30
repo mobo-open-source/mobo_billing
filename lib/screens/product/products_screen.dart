@@ -8,6 +8,7 @@ import '../../models/product.dart';
 import '../../providers/product_provider.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../widgets/product_list_tile.dart';
 import 'product_details_screen.dart';
@@ -236,102 +237,21 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Widget _buildSearchField() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final provider = Provider.of<ProductProvider>(context, listen: false);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
-      child: Container(
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF000000).withOpacity(0.05),
-              offset: const Offset(0, 6),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          onChanged: _onSearchChanged,
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xff1E1E1E),
-            fontWeight: FontWeight.w400,
-            fontStyle: FontStyle.normal,
-            fontSize: 15,
-            height: 1.0,
-            letterSpacing: 0.0,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Search products...',
-            hintStyle: TextStyle(
-              color: isDark ? Colors.white : const Color(0xff1E1E1E),
-              fontWeight: FontWeight.w400,
-              fontStyle: FontStyle.normal,
-              fontSize: 15,
-              height: 1.0,
-              letterSpacing: 0.0,
-            ),
-            prefixIcon: IconButton(
-              icon: HugeIcon(
-                icon: HugeIcons.strokeRoundedFilterHorizontal,
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                size: 18,
-              ),
-              onPressed: _showFilterBottomSheet,
-            ),
-            suffixIcon: _searchController.text.isNotEmpty
-                ? IconButton(
-                    icon: Icon(
-                      Icons.clear,
-                      color: isDark ? Colors.grey[400] : Colors.grey,
-                      size: 20,
-                    ),
-                    onPressed: () {
-                      _searchController.clear();
-                      _searchDebounce?.cancel();
-                      Provider.of<ProductProvider>(
-                        context,
-                        listen: false,
-                      ).loadProducts();
-                      setState(() {});
-                    },
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                  )
-                : null,
-            filled: true,
-            fillColor: isDark ? Colors.grey[850] : Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1.5,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            isDense: true,
-            alignLabelWithHint: true,
-          ),
-        ),
+      child: MoboSearchField(
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        hintText: 'Search products...',
+        hasActiveFilters: _hasActiveFilters(provider),
+        onFilterTap: _showFilterBottomSheet,
+        onChanged: _onSearchChanged,
+        onClear: () {
+          _searchDebounce?.cancel();
+          Provider.of<ProductProvider>(context, listen: false).loadProducts();
+        },
       ),
     );
   }

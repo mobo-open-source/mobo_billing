@@ -18,7 +18,7 @@ dependencies:
   hugeicons: ^1.1.4
   in_app_review: ^2.0.9
   flutter_rating_bar: ^4.0.1
-  font_awesome_flutter: ^10.6.0
+  font_awesome_flutter: ^11.0.0
   flutter_svg: ^2.0.10+1
   lottie: ^3.3.0
 

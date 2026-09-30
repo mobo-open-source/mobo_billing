@@ -1,19 +1,18 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
-import 'package:loading_animation_widget/loading_animation_widget.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../models/customer.dart';
 import '../../providers/customer_provider.dart';
 import '../../providers/customer_form_provider.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
-import '../../widgets/custom_text_field_simple.dart' as simple;
+import '../../widgets/mobo_form_fields.dart';
+import '../../theme/form_styles.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../widgets/confetti_dialog.dart';
 import '../../utils/data_loss_warning_mixin.dart';
@@ -152,6 +151,13 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
   }
 
   Future<void> _save() async {
+    if (!ConnectivityService.instance.isConnected) {
+      CustomSnackbar.showError(
+        context,
+        "You're offline. Reconnect to save this customer.",
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
 
     final customerProvider = Provider.of<CustomerProvider>(
@@ -557,7 +563,12 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
 
     return Consumer2<ConnectivityService, SessionService>(
       builder: (context, connectivityService, sessionService, child) {
-        if (!connectivityService.isConnected) {
+        // Offline: only block when there is no cached dropdown data to fill the
+        // form with. Otherwise it opens read-only-ish, with saving refused in
+        // _save and a banner explaining why.
+        final formProviderForGate = context.read<CustomerFormProvider>();
+        if (!connectivityService.isConnected &&
+            formProviderForGate.countryOptions.isEmpty) {
           return Scaffold(
             appBar: AppBar(
               title: Text(
@@ -676,678 +687,276 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                         _buildPhotoPicker(formProvider, isDark, primaryColor),
                         const SizedBox(height: 16),
 
-                        simple.CustomTextField(
-                          controller: _nameController,
-                          labelText: 'Name *',
-                          hintText: 'Enter full name',
-                          isDark: isDark,
-                          validator: (v) => (v == null || v.trim().isEmpty)
-                              ? 'Name is required'
-                              : null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _emailController,
-                          labelText: 'Email',
-                          hintText: 'Enter email address',
-                          isDark: isDark,
-                          keyboardType: TextInputType.emailAddress,
-                          validator: (v) {
-                            if (v != null && v.trim().isNotEmpty) {
-                              final emailRegex = RegExp(
-                                r'^[^@\s]+@[^@\s]+\.[^@\s]+',
-                              );
-                              if (!emailRegex.hasMatch(v.trim()))
-                                return 'Enter a valid email address';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _phoneController,
-                          labelText: 'Phone',
-                          hintText: 'Enter phone number',
-                          isDark: isDark,
-                          keyboardType: TextInputType.phone,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _mobileController,
-                          labelText: 'Mobile',
-                          hintText: 'Enter mobile number',
-                          isDark: isDark,
-                          keyboardType: TextInputType.phone,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _websiteController,
-                          labelText: 'Website',
-                          hintText: 'Enter website URL',
-                          isDark: isDark,
-                          keyboardType: TextInputType.url,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _functionController,
-                          labelText: 'Job Position',
-                          hintText: 'Enter job title',
-                          isDark: isDark,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
+                        MoboFormCard(
+                          title: 'Basic Information',
                           children: [
-                            Checkbox(
-                              value: _isCompany,
-                              onChanged: (v) =>
-                                  setState(() => _isCompany = v ?? false),
+                            MoboTextField(
+                              controller: _nameController,
+                              label: 'Name',
+                              hintText: 'Enter full name',
+                              isRequired: true,
+                              leadingIcon: HugeIcons.strokeRoundedUser,
+                              validator: (v) => (v == null || v.trim().isEmpty)
+                                  ? 'Name is required'
+                                  : null,
                             ),
-                            const Text('Is Company'),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _companyNameController,
-                          labelText: 'Company Name',
-                          hintText: 'Enter company name',
-                          isDark: isDark,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _vatController,
-                          labelText: 'VAT Number',
-                          hintText: 'Enter VAT/Tax ID',
-                          isDark: isDark,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _industryController,
-                          labelText: 'Industry',
-                          hintText: 'Enter industry type',
-                          isDark: isDark,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _creditLimitController,
-                          labelText: 'Credit Limit',
-                          hintText: 'Enter credit limit amount',
-                          isDark: isDark,
-                          keyboardType: TextInputType.number,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _streetController,
-                          labelText: 'Street',
-                          hintText: 'Enter street address',
-                          isDark: isDark,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _street2Controller,
-                          labelText: 'Street 2',
-                          hintText: 'Enter additional address info',
-                          isDark: isDark,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _cityController,
-                          labelText: 'City',
-                          hintText: 'Enter city name',
-                          isDark: isDark,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 12),
-
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Country',
-                              style: TextStyle(
-                                color: isDark
-                                    ? Colors.white70
-                                    : const Color(0xff7F7F7F),
-                                fontWeight: FontWeight.w400,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                return PopupMenuButton<int?>(
-                                  initialValue: _selectedCountryId,
-                                  constraints: BoxConstraints(
-                                    minWidth: constraints.maxWidth,
-                                    maxWidth: constraints.maxWidth,
-                                    maxHeight: 400,
-                                  ),
-                                  offset: const Offset(0, 56),
-                                  color: isDark
-                                      ? Colors.grey[850]
-                                      : Colors.white,
-                                  surfaceTintColor: Colors.transparent,
-                                  onSelected: (val) {
-                                    setState(() {
-                                      _selectedCountryId = val;
-                                      _selectedStateId = null;
-                                    });
-                                    if (val != null)
-                                      formProvider.fetchStates(val);
-                                  },
-                                  itemBuilder: (context) => [
-                                    PopupMenuItem<int?>(
-                                      value: null,
-                                      child: Text(
-                                        'Select Country',
-                                        style: GoogleFonts.manrope(
-                                          fontWeight: FontWeight.w500,
-                                          fontStyle: FontStyle.italic,
-                                          color: isDark
-                                              ? Colors.white54
-                                              : Colors.grey[600],
-                                        ),
-                                      ),
-                                    ),
-                                    ...formProvider.countryOptions.map(
-                                      (country) => PopupMenuItem<int?>(
-                                        value: country['id'] as int,
-                                        child: Text(
-                                          country['name'] as String,
-                                          style: GoogleFonts.manrope(
-                                            fontWeight: FontWeight.w500,
-                                            color: isDark
-                                                ? Colors.white
-                                                : Colors.black87,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 16,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
-                                      color: isDark
-                                          ? const Color(0xFF2A2A2A)
-                                          : const Color(0xffF8FAFB),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            _selectedCountryId != null
-                                                ? (formProvider.countryOptions
-                                                          .firstWhere(
-                                                            (c) =>
-                                                                c['id'] ==
-                                                                _selectedCountryId,
-                                                            orElse: () => {
-                                                              'name':
-                                                                  'Choose your country',
-                                                            },
-                                                          )['name']
-                                                      as String)
-                                                : 'Choose your country',
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              color: _selectedCountryId != null
-                                                  ? (isDark
-                                                        ? Colors.white70
-                                                        : const Color(
-                                                            0xff000000,
-                                                          ))
-                                                  : (isDark
-                                                        ? Colors.white54
-                                                        : Colors.grey[600]),
-                                              fontStyle:
-                                                  _selectedCountryId == null
-                                                  ? FontStyle.italic
-                                                  : FontStyle.normal,
-                                            ),
-                                          ),
-                                        ),
-                                        Icon(
-                                          Icons.arrow_drop_down,
-                                          color: isDark
-                                              ? Colors.white70
-                                              : Colors.grey[700],
-                                          size: 24,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _emailController,
+                              label: 'Email',
+                              hintText: 'Enter email address',
+                              leadingIcon: HugeIcons.strokeRoundedMail01,
+                              keyboardType: TextInputType.emailAddress,
+                              validator: (v) {
+                                if (v != null && v.trim().isNotEmpty) {
+                                  final emailRegex = RegExp(
+                                    r'^[^@\s]+@[^@\s]+\.[^@\s]+',
+                                  );
+                                  if (!emailRegex.hasMatch(v.trim())) {
+                                    return 'Enter a valid email address';
+                                  }
+                                }
+                                return null;
                               },
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'State',
-                              style: TextStyle(
-                                color: isDark
-                                    ? Colors.white70
-                                    : const Color(0xff7F7F7F),
-                                fontWeight: FontWeight.w400,
-                              ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _phoneController,
+                              label: 'Phone',
+                              hintText: 'Enter phone number',
+                              leadingIcon: HugeIcons.strokeRoundedCall,
+                              keyboardType: TextInputType.phone,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _mobileController,
+                              label: 'Mobile',
+                              hintText: 'Enter mobile number',
+                              leadingIcon: HugeIcons.strokeRoundedSmartPhone01,
+                              keyboardType: TextInputType.phone,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _websiteController,
+                              label: 'Website',
+                              hintText: 'Enter website URL',
+                              leadingIcon: HugeIcons.strokeRoundedGlobe,
+                              keyboardType: TextInputType.url,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _functionController,
+                              label: 'Job Position',
+                              hintText: 'Enter job position',
+                              leadingIcon: HugeIcons.strokeRoundedBriefcase01,
                             ),
                             const SizedBox(height: 8),
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                return PopupMenuButton<int?>(
-                                  initialValue: _selectedStateId,
-                                  constraints: BoxConstraints(
-                                    minWidth: constraints.maxWidth,
-                                    maxWidth: constraints.maxWidth,
-                                    maxHeight: 400,
-                                  ),
-                                  offset: const Offset(0, 56),
-                                  color: isDark
-                                      ? Colors.grey[850]
-                                      : Colors.white,
-                                  surfaceTintColor: Colors.transparent,
-                                  onSelected: (val) {
-                                    setState(() => _selectedStateId = val);
-                                  },
-                                  itemBuilder: (context) => [
-                                    PopupMenuItem<int?>(
-                                      value: null,
-                                      child: Text(
-                                        _selectedCountryId == null
-                                            ? 'Select a country first'
-                                            : 'Select State',
-                                        style: GoogleFonts.manrope(
-                                          fontWeight: FontWeight.w500,
-                                          fontStyle: FontStyle.italic,
-                                          color: isDark
-                                              ? Colors.white54
-                                              : Colors.grey[600],
-                                        ),
-                                      ),
-                                    ),
-                                    ...formProvider.stateOptions.map(
-                                      (state) => PopupMenuItem<int?>(
-                                        value: state['id'] as int,
-                                        child: Text(
-                                          state['name'] as String,
-                                          style: GoogleFonts.manrope(
-                                            fontWeight: FontWeight.w500,
-                                            color: isDark
-                                                ? Colors.white
-                                                : Colors.black87,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 16,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
-                                      color: isDark
-                                          ? const Color(0xFF2A2A2A)
-                                          : const Color(0xffF8FAFB),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            _selectedStateId != null
-                                                ? (formProvider.stateOptions.firstWhere(
-                                                        (s) =>
-                                                            s['id'] ==
-                                                            _selectedStateId,
-                                                        orElse: () => {
-                                                          'name':
-                                                              _selectedCountryId ==
-                                                                  null
-                                                              ? 'Select a country first'
-                                                              : 'Choose your state/province',
-                                                        },
-                                                      )['name']
-                                                      as String)
-                                                : (_selectedCountryId == null
-                                                      ? 'Select a country first'
-                                                      : 'Choose your state/province'),
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              color: _selectedStateId != null
-                                                  ? (isDark
-                                                        ? Colors.white70
-                                                        : const Color(
-                                                            0xff000000,
-                                                          ))
-                                                  : (isDark
-                                                        ? Colors.white54
-                                                        : Colors.grey[600]),
-                                              fontStyle:
-                                                  _selectedStateId == null
-                                                  ? FontStyle.italic
-                                                  : FontStyle.normal,
-                                            ),
-                                          ),
-                                        ),
-                                        Icon(
-                                          Icons.arrow_drop_down,
-                                          color: isDark
-                                              ? Colors.white70
-                                              : Colors.grey[700],
-                                          size: 24,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
+                            Row(
+                              children: [
+                                Checkbox(
+                                  value: _isCompany,
+                                  activeColor: AppTheme.primaryColor,
+                                  onChanged: (v) =>
+                                      setState(() => _isCompany = v ?? false),
+                                ),
+                                Text(
+                                  'Is Company',
+                                  style: AppFormTheme.fieldValueStyle(isDark),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _zipController,
-                          labelText: 'ZIP Code',
-                          hintText: 'Enter postal code',
-                          isDark: isDark,
-                          validator: (v) => null,
+
+                        MoboFormCard(
+                          title: 'Company Details',
+                          children: [
+                            MoboTextField(
+                              controller: _companyNameController,
+                              label: 'Company Name',
+                              hintText: 'Enter company name',
+                              leadingIcon: HugeIcons.strokeRoundedBuilding03,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _vatController,
+                              label: 'VAT Number',
+                              hintText: 'Enter VAT number',
+                              leadingIcon: HugeIcons.strokeRoundedInvoice01,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _industryController,
+                              label: 'Industry',
+                              hintText: 'Enter industry',
+                              leadingIcon: HugeIcons.strokeRoundedFactory01,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _creditLimitController,
+                              label: 'Credit Limit',
+                              hintText: 'Enter credit limit',
+                              leadingIcon: HugeIcons.strokeRoundedDollarCircle,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        if (formProvider.titleOptions.isNotEmpty) ...[
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Title',
-                                style: TextStyle(
-                                  color: isDark
-                                      ? Colors.white70
-                                      : const Color(0xff7F7F7F),
-                                  fontWeight: FontWeight.w400,
+
+                        MoboFormCard(
+                          title: 'Address',
+                          children: [
+                            MoboTextField(
+                              controller: _streetController,
+                              label: 'Street',
+                              hintText: 'Enter street address',
+                              leadingIcon: HugeIcons.strokeRoundedLocation01,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _street2Controller,
+                              label: 'Street 2',
+                              hintText: 'Enter additional address',
+                              leadingIcon: HugeIcons.strokeRoundedLocation01,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _cityController,
+                              label: 'City',
+                              hintText: 'Enter city name',
+                              leadingIcon: HugeIcons.strokeRoundedCity01,
+                            ),
+                            const SizedBox(height: 16),
+                            MoboInlineDropdown<Map<String, dynamic>>(
+                              label: 'Country',
+                              hintText: 'Select country',
+                              leadingIcon: HugeIcons.strokeRoundedGlobe,
+                              selectedLabel: _optionLabel(
+                                formProvider.countryOptions,
+                                (c) => c['id'] == _selectedCountryId,
+                                'name',
+                              ),
+                              items: formProvider.countryOptions,
+                              titleBuilder: (c) =>
+                                  c['name']?.toString() ?? 'Unknown',
+                              isItemSelected: (c) =>
+                                  c['id'] == _selectedCountryId,
+                              emptyText: 'No countries found',
+                              onItemTap: (country) {
+                                final id = country['id'] as int?;
+                                setState(() {
+                                  _selectedCountryId = id;
+                                  _selectedStateId = null;
+                                });
+                                if (id != null) formProvider.fetchStates(id);
+                              },
+                            ),
+                            if (formProvider.stateOptions.isNotEmpty) ...[
+                              const SizedBox(height: 16),
+                              MoboInlineDropdown<Map<String, dynamic>>(
+                                label: 'State',
+                                hintText: 'Select state',
+                                leadingIcon:
+                                    HugeIcons.strokeRoundedMapsLocation01,
+                                selectedLabel: _optionLabel(
+                                  formProvider.stateOptions,
+                                  (st) => st['id'] == _selectedStateId,
+                                  'name',
+                                ),
+                                items: formProvider.stateOptions,
+                                titleBuilder: (st) =>
+                                    st['name']?.toString() ?? 'Unknown',
+                                isItemSelected: (st) =>
+                                    st['id'] == _selectedStateId,
+                                emptyText: 'No states found',
+                                onItemTap: (st) => setState(
+                                  () => _selectedStateId = st['id'] as int?,
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              LayoutBuilder(
-                                builder: (context, constraints) {
-                                  return PopupMenuButton<String>(
-                                    initialValue: _selectedTitle,
-                                    constraints: BoxConstraints(
-                                      minWidth: constraints.maxWidth,
-                                      maxWidth: constraints.maxWidth,
-                                      maxHeight: 400,
-                                    ),
-                                    offset: const Offset(0, 56),
-                                    color: isDark
-                                        ? Colors.grey[850]
-                                        : Colors.white,
-                                    surfaceTintColor: Colors.transparent,
-                                    onSelected: (val) {
-                                      setState(() => _selectedTitle = val);
-                                    },
-                                    itemBuilder: (context) => formProvider
-                                        .titleOptions
-                                        .map(
-                                          (title) => PopupMenuItem<String>(
-                                            value: title['value'],
-                                            child: Text(
-                                              title['label']!,
-                                              style: GoogleFonts.manrope(
-                                                fontWeight: FontWeight.w500,
-                                                color: isDark
-                                                    ? Colors.white
-                                                    : Colors.black87,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 16,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(12),
-                                        color: isDark
-                                            ? const Color(0xFF2A2A2A)
-                                            : const Color(0xffF8FAFB),
-                                      ),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              _selectedTitle != null
-                                                  ? (formProvider.titleOptions
-                                                        .firstWhere(
-                                                          (title) =>
-                                                              title['value'] ==
-                                                              _selectedTitle,
-                                                          orElse: () => {
-                                                            'label':
-                                                                'Select title',
-                                                          },
-                                                        )['label']!)
-                                                  : 'Select title',
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                                color: _selectedTitle != null
-                                                    ? (isDark
-                                                          ? Colors.white70
-                                                          : const Color(
-                                                              0xff000000,
-                                                            ))
-                                                    : (isDark
-                                                          ? Colors.white54
-                                                          : Colors.grey[600]),
-                                                fontStyle:
-                                                    _selectedTitle == null
-                                                    ? FontStyle.italic
-                                                    : FontStyle.normal,
-                                              ),
-                                            ),
-                                          ),
-                                          Icon(
-                                            Icons.arrow_drop_down,
-                                            color: isDark
-                                                ? Colors.white70
-                                                : Colors.grey[700],
-                                            size: 24,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
                             ],
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Language',
-                              style: TextStyle(
-                                color: isDark
-                                    ? Colors.white70
-                                    : const Color(0xff7F7F7F),
-                                fontWeight: FontWeight.w400,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                return PopupMenuButton<String>(
-                                  initialValue: _selectedLanguage,
-                                  constraints: BoxConstraints(
-                                    minWidth: constraints.maxWidth,
-                                    maxWidth: constraints.maxWidth,
-                                    maxHeight: 400,
-                                  ),
-                                  offset: const Offset(0, 56),
-                                  color: isDark
-                                      ? Colors.grey[850]
-                                      : Colors.white,
-                                  surfaceTintColor: Colors.transparent,
-                                  onSelected: (val) {
-                                    setState(() => _selectedLanguage = val);
-                                  },
-                                  itemBuilder: (context) => formProvider
-                                      .languageOptions
-                                      .map(
-                                        (lang) => PopupMenuItem<String>(
-                                          value: lang['value'],
-                                          child: Text(
-                                            lang['label']!,
-                                            style: GoogleFonts.manrope(
-                                              fontWeight: FontWeight.w500,
-                                              color: isDark
-                                                  ? Colors.white
-                                                  : Colors.black87,
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 16,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
-                                      color: isDark
-                                          ? const Color(0xFF2A2A2A)
-                                          : const Color(0xffF8FAFB),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            _selectedLanguage != null
-                                                ? (formProvider.languageOptions
-                                                      .firstWhere(
-                                                        (lang) =>
-                                                            lang['value'] ==
-                                                            _selectedLanguage,
-                                                        orElse: () => {
-                                                          'label':
-                                                              'Select preferred language',
-                                                        },
-                                                      )['label']!)
-                                                : 'Select preferred language',
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              color: _selectedLanguage != null
-                                                  ? (isDark
-                                                        ? Colors.white70
-                                                        : const Color(
-                                                            0xff000000,
-                                                          ))
-                                                  : (isDark
-                                                        ? Colors.white54
-                                                        : Colors.grey[600]),
-                                              fontStyle:
-                                                  _selectedLanguage == null
-                                                  ? FontStyle.italic
-                                                  : FontStyle.normal,
-                                            ),
-                                          ),
-                                        ),
-                                        Icon(
-                                          Icons.arrow_drop_down,
-                                          color: isDark
-                                              ? Colors.white70
-                                              : Colors.grey[700],
-                                          size: 24,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
+                            const SizedBox(height: 16),
+                            MoboTextField(
+                              controller: _zipController,
+                              label: 'ZIP Code',
+                              hintText: 'Enter ZIP code',
+                              leadingIcon: HugeIcons.strokeRoundedLocation01,
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        simple.CustomTextField(
-                          controller: _commentController,
-                          labelText: 'Internal Notes',
-                          hintText: 'Enter any additional information',
-                          isDark: isDark,
-                          maxLines: 3,
-                          validator: (v) => null,
-                        ),
-                        const SizedBox(height: 24),
 
+                        MoboFormCard(
+                          title: 'Additional Information',
+                          children: [
+                            if (formProvider.titleOptions.isNotEmpty) ...[
+                              MoboInlineDropdown<Map<String, String>>(
+                                label: 'Title',
+                                hintText: 'Select title',
+                                leadingIcon: HugeIcons.strokeRoundedUserAccount,
+                                selectedLabel: _optionLabel(
+                                  formProvider.titleOptions,
+                                  (t) => t['value'] == _selectedTitle,
+                                  'label',
+                                ),
+                                items: formProvider.titleOptions,
+                                titleBuilder: (t) => t['label'] ?? '',
+                                isItemSelected: (t) =>
+                                    t['value'] == _selectedTitle,
+                                emptyText: 'No titles found',
+                                onItemTap: (t) =>
+                                    setState(() => _selectedTitle = t['value']),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                            if (formProvider.languageOptions.isNotEmpty) ...[
+                              MoboInlineDropdown<Map<String, String>>(
+                                label: 'Language',
+                                hintText: 'Select language',
+                                leadingIcon: HugeIcons.strokeRoundedTranslate,
+                                selectedLabel: _optionLabel(
+                                  formProvider.languageOptions,
+                                  (l) => l['value'] == _selectedLanguage,
+                                  'label',
+                                ),
+                                items: formProvider.languageOptions,
+                                titleBuilder: (l) => l['label'] ?? '',
+                                isItemSelected: (l) =>
+                                    l['value'] == _selectedLanguage,
+                                emptyText: 'No languages found',
+                                onItemTap: (l) => setState(
+                                  () => _selectedLanguage = l['value'],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                            MoboTextField(
+                              controller: _commentController,
+                              label: 'Internal Notes',
+                              hintText: 'Enter any additional information',
+                              leadingIcon: HugeIcons.strokeRoundedNote01,
+                              maxLines: 3,
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 8),
                         SafeArea(
                           child: Consumer<CustomerProvider>(
                             builder: (context, customerProvider, child) {
-                              return ElevatedButton(
-                                onPressed:
-                                    (customerProvider.isLoading ||
-                                        formProvider.isOcrLoading ||
-                                        _nameController.text.trim().isEmpty)
-                                    ? null
-                                    : _save,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primaryColor,
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  shadowColor: Colors.transparent,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 16,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child:
-                                    (customerProvider.isLoading ||
-                                        formProvider.isOcrLoading)
-                                    ? LoadingAnimationWidget.staggeredDotsWave(
-                                        color: Colors.white,
-                                        size: 24,
-                                      )
-                                    : Text(
-                                        widget.isEditing
-                                            ? 'Save Changes'
-                                            : 'Create Customer',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
+                              final isBusy =
+                                  customerProvider.isLoading ||
+                                  formProvider.isOcrLoading;
+                              return MoboSubmitButton(
+                                label: widget.isEditing
+                                    ? 'Save Changes'
+                                    : 'Create Customer',
+                                loadingLabel: widget.isEditing
+                                    ? 'Saving Changes'
+                                    : 'Creating Customer',
+                                isLoading: isBusy,
+                                isReady: _nameController.text.trim().isNotEmpty,
+                                onPressed: _save,
                               );
                             },
                           ),
@@ -1373,6 +982,16 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
         );
       },
     );
+  }
+
+  /// Label of the first option in [options] matching [test].
+  String? _optionLabel<T extends Map>(
+    List<T> options,
+    bool Function(T) test,
+    String field,
+  ) {
+    final match = options.where(test).toList();
+    return match.isEmpty ? null : match.first[field]?.toString();
   }
 
   Widget _buildPhotoPicker(

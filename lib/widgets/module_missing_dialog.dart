@@ -4,6 +4,36 @@ import 'package:hugeicons/hugeicons.dart';
 import '../theme/app_theme.dart';
 
 void showModuleMissingDialog(BuildContext context) {
+  _showBlockingLoginDialog(
+    context,
+    icon: HugeIcons.strokeRoundedAlertCircle,
+    iconColor: AppTheme.primaryColor,
+    title: 'Module Missing',
+    message:
+        'The required "Invoicing" module is not installed. Please contact your administrator to enable it.',
+  );
+}
+
+/// Shown when the credentials are valid but the user isn't granted billing
+/// access (e.g. missing the Billing/Invoicing user group in Odoo).
+void showAccessDeniedDialog(BuildContext context) {
+  _showBlockingLoginDialog(
+    context,
+    icon: HugeIcons.strokeRoundedShield01,
+    iconColor: StatusColors.red,
+    title: 'Access Denied',
+    message:
+        'Your account does not have permission to access Billing. Please contact your administrator to request access.',
+  );
+}
+
+void _showBlockingLoginDialog(
+  BuildContext context, {
+  required List<List<dynamic>> icon,
+  required Color iconColor,
+  required String title,
+  required String message,
+}) {
   showDialog(
     context: context,
     barrierDismissible: false,
@@ -18,14 +48,10 @@ void showModuleMissingDialog(BuildContext context) {
       actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
       title: Row(
         children: [
-          const HugeIcon(
-            icon: HugeIcons.strokeRoundedAlertCircle,
-            color: AppTheme.primaryColor,
-            size: 24,
-          ),
+          HugeIcon(icon: icon, color: iconColor, size: 24),
           const SizedBox(width: 12),
           Text(
-            'Module Missing',
+            title,
             style: GoogleFonts.manrope(
               fontWeight: FontWeight.bold,
               fontSize: 20,
@@ -37,7 +63,7 @@ void showModuleMissingDialog(BuildContext context) {
         ],
       ),
       content: Text(
-        'The required "Invoicing" module is not installed. Please contact your administrator to enable it.',
+        message,
         style: GoogleFonts.manrope(
           fontSize: 15,
           color: Theme.of(context).brightness == Brightness.dark

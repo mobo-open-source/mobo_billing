@@ -222,38 +222,15 @@ class OdooSessionManager {
             true;
       }
 
-      List<int> allowedCompanyIds = [];
-      if (majorVersion >= 13) {
-        final companiesRes = await callKwWithSession(
-          url: normalizedUrl,
-          sessionId: sessionId,
-          payload: {
-            "jsonrpc": "2.0",
-            "method": "call",
-            "params": {
-              "model": "res.users",
-              "method": "read",
-              "args": [
-                [userId],
-                ["company_ids"],
-              ],
-              "kwargs": {},
-            },
-            "id": 1,
-          },
-        );
-        if (companiesRes is List && companiesRes.isNotEmpty) {
-          allowedCompanyIds =
-              (companiesRes[0]['company_ids'] as List?)?.cast<int>() ?? [];
-        }
-      }
-
       if (selectedCompanyId == null) {
         selectedCompanyId = info['company_id'];
       }
-      if (allowedCompanyIds.isEmpty) {
-        allowedCompanyIds = [selectedCompanyId ?? 1];
-      }
+      // Default to just the company that's active on the server
+      // (res.users.company_id) instead of every company the user happens
+      // to be a member of — this matches what Odoo's own web session shows
+      // by default. CompanyProvider still lets the user broaden this to
+      // more companies from within the app.
+      final List<int> allowedCompanyIds = [selectedCompanyId ?? 1];
 
       final client = OdooClient(
         normalizedUrl,
@@ -511,12 +488,14 @@ class OdooSessionManager {
             );
 
             selectedCompanyId = userInfo['company_id'];
-            allowedCompanyIds = (userInfo['company_ids'] as List<int>?) ?? [];
-
-            if (selectedCompanyId != null &&
-                !allowedCompanyIds.contains(selectedCompanyId)) {
-              allowedCompanyIds.add(selectedCompanyId);
-            }
+            // Default to just the company that's active on the server
+            // (res.users.company_id) instead of every company the user
+            // happens to be a member of — this matches what Odoo's own web
+            // session shows by default. CompanyProvider still lets the user
+            // broaden this to more companies from within the app.
+            allowedCompanyIds = selectedCompanyId != null
+                ? [selectedCompanyId]
+                : [];
           } catch (e) {}
         }
 

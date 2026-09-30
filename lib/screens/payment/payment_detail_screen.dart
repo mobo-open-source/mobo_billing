@@ -8,7 +8,11 @@ import '../../providers/currency_provider.dart';
 import '../../providers/payment_provider.dart';
 import '../../services/payment_rpc_service.dart';
 import '../../widgets/pdf_widget.dart';
+import '../../services/connectivity_service.dart';
+import '../../services/data_cache.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../widgets/offline_data_banner.dart';
+import 'create_payment_screen.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../../providers/last_opened_provider.dart';
 import '../../widgets/shimmer_loading.dart';
@@ -30,6 +34,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
   late Animation<double> _fadeAnimation;
   Payment? _detailedPayment;
   bool _isLoading = false;
+
+  /// True when the record on screen came from the offline cache.
+  bool _isShowingCachedData = false;
 
   @override
   void initState() {
@@ -98,6 +105,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     } finally {
       if (mounted) {
         setState(() {
+          // Offline reads come from the cache, so the record still renders —
+          // the banner explains where it came from.
+          _isShowingCachedData = !ConnectivityService.instance.isConnected;
           _isLoading = false;
         });
       }
@@ -115,19 +125,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
   }
 
   Color _getStateColor(String? state) {
-    switch (state?.toLowerCase()) {
-      case 'posted':
-        return Colors.green;
-      case 'draft':
-        return Colors.orange;
-      case 'cancel':
-        return Colors.red;
-      case 'in_progress':
-      case 'in_process':
-        return Colors.blue;
-      default:
-        return Colors.blue;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getStateLabel(String? state) {
@@ -204,33 +202,41 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
       ),
       body: _isLoading
           ? const PaymentDetailShimmer()
-          : RefreshIndicator(
-              onRefresh: _loadPaymentDetails,
-              color: primaryColor,
-              child: FadeTransition(
-                opacity: _fadeAnimation,
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(20.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildTopSection(
-                        payment,
-                        name,
-                        customerName,
-                        amount,
-                        currencyCode,
-                        state,
-                        isDark,
-                        primaryColor,
+          : Column(
+              children: [
+                if (_isShowingCachedData)
+                  OfflineDataBanner(onRetry: _loadPaymentDetails),
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _loadPaymentDetails,
+                    color: primaryColor,
+                    child: FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(20.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildTopSection(
+                              payment,
+                              name,
+                              customerName,
+                              amount,
+                              currencyCode,
+                              state,
+                              isDark,
+                              primaryColor,
+                            ),
+                            const SizedBox(height: 24),
+                            _buildDetailsSection(payment, isDark),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 24),
-                      _buildDetailsSection(payment, isDark),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+              ],
             ),
     );
   }
@@ -536,6 +542,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     final isSent = false;
     final paymentMethodCode = '';
 
+    // Odoo only allows an account.payment to be modified while it is in draft;
+    // a posted payment must be reset to draft first.
+    final canEdit = state == 'draft';
     final canConfirm = state == 'draft';
     final canMarkAsSent =
         state == 'in_process' && !isSent && paymentMethodCode == 'manual';
@@ -548,6 +557,28 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     final canSendEmail = true;
 
     return [
+      if (canEdit)
+        PopupMenuItem<String>(
+          value: 'edit_payment',
+          child: Row(
+            children: [
+              Icon(
+                Icons.edit_outlined,
+                color: isDark ? Colors.grey[300] : Colors.grey[800],
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Edit',
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+        ),
       if (canConfirm)
         PopupMenuItem<String>(
           value: 'confirm_payment',
@@ -762,6 +793,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
 
   void _handleMenuSelection(String value, Payment payment) async {
     switch (value) {
+      case 'edit_payment':
+        await _editPayment(payment);
+        break;
       case 'confirm_payment':
         await _confirmPayment();
         break;
@@ -795,6 +829,41 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
       case 'send_email':
         await _sendReceiptByEmail();
         break;
+    }
+  }
+
+  /// Opens the payment in the form for editing.
+  ///
+  /// Odoo rejects a write to a posted `account.payment`, so this refuses
+  /// anything that is no longer a draft and points at Reset to Draft instead.
+  Future<void> _editPayment(Payment payment) async {
+    final current = _detailedPayment ?? payment;
+
+    if (current.state != 'draft') {
+      CustomSnackbar.showError(
+        context,
+        'Only draft payments can be edited. Reset this payment to draft first.',
+      );
+      return;
+    }
+
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => CreatePaymentScreen(paymentToEdit: current),
+      ),
+    );
+
+    if (!mounted) return;
+    if (updated == true) {
+      // The edited record is stale in the cache and the list.
+      DataCache.invalidatePrefix(DataCache.paymentPrefix);
+      await _loadPaymentDetails();
+      if (mounted) {
+        await Provider.of<PaymentProvider>(
+          context,
+          listen: false,
+        ).loadPayments();
+      }
     }
   }
 
@@ -1096,8 +1165,17 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
         if (mounted) Navigator.of(context, rootNavigator: true).pop();
 
         if (success) {
-          CustomSnackbar.showSuccess(context, 'Payment deleted successfully');
-          if (mounted) Navigator.of(context).pop();
+          // Pop before the toast: CustomSnackbar is a dialog route, so the
+          // reverse order makes this pop close the toast and leave the deleted
+          // payment on screen.
+          if (mounted) {
+            final navigator = Navigator.of(context);
+            navigator.pop(true);
+            CustomSnackbar.showSuccess(
+              navigator.context,
+              'Payment deleted successfully',
+            );
+          }
         }
       } catch (e) {
         if (mounted) Navigator.of(context, rootNavigator: true).pop();

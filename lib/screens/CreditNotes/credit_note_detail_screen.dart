@@ -10,6 +10,8 @@ import '../../models/customer.dart';
 import '../../providers/credit_note_provider.dart';
 import '../../providers/currency_provider.dart';
 import '../payment/payment_screen.dart';
+import '../../services/connectivity_service.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/pdf_widget.dart';
 import '../../services/invoice_service.dart';
 import '../../widgets/shimmer_loading.dart';
@@ -17,6 +19,7 @@ import '../../models/invoice.dart';
 import '../../models/invoice_line.dart';
 import '../../models/journal_item.dart';
 import '../../theme/app_theme.dart';
+import 'create_credit_note_screen.dart';
 
 class CreditNoteDetailScreen extends StatefulWidget {
   final Invoice creditNote;
@@ -32,6 +35,9 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
     with TickerProviderStateMixin {
   Invoice? _detailedCreditNote;
   bool _isLoading = false;
+
+  /// True when the record on screen came from the offline cache.
+  bool _isShowingCachedData = false;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late TabController _tabController;
@@ -94,11 +100,23 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
       _isLoading = true;
     });
 
+    // Offline reads are served from the cache, so the screen shows the record
+    // as it last looked instead of an error.
+    final isOffline = !ConnectivityService.instance.isConnected;
+
     try {
       final provider = Provider.of<CreditNoteProvider>(context, listen: false);
       final details = await provider.getCreditNoteDetails(
         widget.creditNote.id!,
       );
+
+      if (details == null && mounted) {
+        setState(() {
+          _isShowingCachedData = isOffline;
+          _isLoading = false;
+        });
+        return;
+      }
 
       if (details != null && mounted) {
         setState(() {
@@ -113,6 +131,7 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
             vsync: this,
           );
 
+          _isShowingCachedData = isOffline;
           _isLoading = false;
         });
         _animationController.forward();
@@ -122,9 +141,12 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
     } catch (e) {
       if (mounted) {
         setState(() {
+          _isShowingCachedData = isOffline;
           _isLoading = false;
         });
-        _showSnackBar('Error loading credit note: $e', isError: true);
+        if (!isOffline) {
+          _showSnackBar('Error loading credit note: $e', isError: true);
+        }
       }
     }
   }
@@ -169,6 +191,32 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
       CustomSnackbar.showError(context, message);
     } else {
       CustomSnackbar.showSuccess(context, message);
+    }
+  }
+
+  /// Opens the credit note in the create/edit form. Odoo only permits changes
+  /// to a move while it is in the `draft` state, so posted or cancelled credit
+  /// notes must be reset to draft first.
+  Future<void> _editCreditNote(Invoice creditNote) async {
+    if (creditNote.state != 'draft') {
+      _showSnackBar(
+        'Only draft credit notes can be edited. Reset it to draft first.',
+        isError: true,
+      );
+      return;
+    }
+
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => CreateCreditNoteScreen(
+          creditNoteToEdit: {'id': widget.creditNote.id},
+        ),
+      ),
+    );
+
+    if (updated == true && mounted) {
+      await _loadCreditNoteDetails();
+      if (mounted) _showSnackBar('Credit note updated successfully');
     }
   }
 
@@ -833,6 +881,18 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
         backgroundColor: backgroundColor,
         title: const Text('Credit Note Details'),
         actions: [
+          // Odoo only allows an account.move to be modified while it is still
+          // a draft, so the edit action follows the same rule.
+          if (creditNote.state == 'draft')
+            IconButton(
+              icon: HugeIcon(
+                icon: HugeIcons.strokeRoundedEdit02,
+                color: isDark ? Colors.white : Colors.black,
+                size: 20,
+              ),
+              tooltip: 'Edit Credit Note',
+              onPressed: () => _editCreditNote(creditNote),
+            ),
           PopupMenuButton<String>(
             icon: Icon(
               Icons.more_vert,
@@ -859,6 +919,8 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
           ? const InvoiceDetailShimmer()
           : Column(
               children: [
+                if (_isShowingCachedData)
+                  OfflineDataBanner(onRetry: _loadCreditNoteDetails),
                 Expanded(
                   child: RefreshIndicator(
                     color: primaryColor,
@@ -996,7 +1058,6 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-
               const SizedBox(height: 8),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1885,16 +1946,7 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
   }
 
   Color _getStateColor(String? state) {
-    switch (state) {
-      case 'posted':
-        return Colors.green;
-      case 'cancel':
-        return Colors.red;
-      case 'draft':
-        return Colors.blue;
-      default:
-        return Colors.grey;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getStateLabel(String? state) {

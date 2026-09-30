@@ -146,9 +146,9 @@ class Invoice {
       amountTotal: (json['amount_total'] ?? 0.0).toDouble(),
       amountResidual: (json['amount_residual'] ?? 0.0).toDouble(),
       currencySymbol: currencySymbol,
-      ref: json['ref']?.toString(),
-      invoiceOrigin: json['invoice_origin']?.toString(),
-      paymentReference: json['payment_reference']?.toString(),
+      ref: _cleanString(json['ref']),
+      invoiceOrigin: _cleanString(json['invoice_origin']),
+      paymentReference: _cleanString(json['payment_reference']),
       invoiceLineIds: json['invoice_line_ids'] != null
           ? List<int>.from(json['invoice_line_ids'])
           : [],
@@ -184,6 +184,13 @@ class Invoice {
                 .toList()
           : [],
     );
+  }
+
+  /// Odoo returns `false` for empty char fields; treat that as no value.
+  static String? _cleanString(dynamic value) {
+    if (value == null || value == false) return null;
+    final s = value.toString();
+    return s.isEmpty || s == 'false' ? null : s;
   }
 
   /// Converts the invoice instance to a JSON map compatible with Odoo or local storage.

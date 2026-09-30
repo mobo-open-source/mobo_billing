@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/payment.dart';
+import '../services/connectivity_service.dart';
+import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 
 /// Provider for managing payment list, status filtering, and payment lifecycle actions.
@@ -14,6 +16,9 @@ class PaymentProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
+
   int _currentOffset = 0;
   int _limit = 40;
   int _totalCount = 0;
@@ -22,6 +27,12 @@ class PaymentProvider with ChangeNotifier {
   String _currentStatusFilter = 'all';
 
   List<Payment> get payments => _payments;
+
+  /// Whether [payments] came from the cache instead of a live request.
+  bool get isShowingCachedData => _isShowingCachedData;
+
+  /// When the cached records on screen were fetched.
+  DateTime? get cacheUpdatedAt => _cacheUpdatedAt;
 
   bool get isLoading => _isLoading;
 
@@ -58,6 +69,9 @@ class PaymentProvider with ChangeNotifier {
     _currentStatusFilter = 'all';
     _groupSummary = {};
     _loadedGroups = {};
+    _isShowingCachedData = false;
+    _cacheUpdatedAt = null;
+    DataCache.invalidatePrefix(DataCache.paymentPrefix);
     notifyListeners();
   }
 
@@ -72,6 +86,11 @@ class PaymentProvider with ChangeNotifier {
 
     if (_currentSearchQuery != null) {
       _currentSearchQuery = null;
+    }
+
+    // Offline: serve what was loaded last instead of clearing the screen.
+    if (!ConnectivityService.instance.isConnected && _serveCachedPayments()) {
+      return;
     }
 
     _setLoading(true);
@@ -94,59 +113,59 @@ class PaymentProvider with ChangeNotifier {
           domain.addAll(customFilter);
         }
 
-        List<Map<String, dynamic>> results;
-        try {
-          results = await _apiService.searchRead(
-            'account.payment',
-            domain,
-            [
-              'name',
-              'partner_id',
-              'amount',
-              'date',
-              'payment_method_line_id',
-              'state',
-              'payment_reference',
-              'currency_id',
-              'journal_id',
-              'memo',
-              'partner_bank_id',
-              'is_sent',
-              'payment_method_code',
-              'company_id',
-              'create_date',
-              'write_date',
-            ],
-            offset,
-            limit,
-            'date desc, id desc',
-          );
-        } catch (e) {
-          results = await _apiService.searchRead(
-            'account.payment',
-            domain,
-            [
-              'name',
-              'partner_id',
-              'amount',
-              'date',
-              'state',
-
-              'currency_id',
-              'journal_id',
-            ],
-            offset,
-            limit,
-            'date desc, id desc',
-          );
+        Future<List<Map<String, dynamic>>> fetchPage() async {
+          try {
+            return await _apiService.searchRead(
+              'account.payment',
+              domain,
+              [
+                'name',
+                'partner_id',
+                'amount',
+                'date',
+                'payment_method_line_id',
+                'state',
+                'payment_reference',
+                'currency_id',
+                'journal_id',
+                'memo',
+                'partner_bank_id',
+                'is_sent',
+                'payment_method_code',
+                'company_id',
+                'create_date',
+                'write_date',
+              ],
+              offset,
+              limit,
+              'date desc, id desc',
+            );
+          } catch (e) {
+            return await _apiService.searchRead(
+              'account.payment',
+              domain,
+              ['name', 'partner_id', 'amount', 'date', 'state', 'currency_id', 'journal_id'],
+              offset,
+              limit,
+              'date desc, id desc',
+            );
+          }
         }
 
-        _payments = results.map((p) => Payment.fromJson(p)).toList();
+        // Count and page data are independent reads — run them concurrently
+        // instead of waiting on the count before even starting the page fetch.
+        final results = await Future.wait([
+          fetchPage(),
+          _apiService.getCount('account.payment', domain: domain),
+        ]);
 
-        _totalCount = await _apiService.getCount(
-          'account.payment',
-          domain: domain,
-        );
+        _payments = (results[0] as List<Map<String, dynamic>>)
+            .map((p) => Payment.fromJson(p))
+            .toList();
+        _totalCount = results[1] as int;
+
+        _cachePayments();
+        _isShowingCachedData = false;
 
         _setLoading(false);
         notifyListeners();
@@ -157,24 +176,44 @@ class PaymentProvider with ChangeNotifier {
         },
       );
     } on TimeoutException catch (e) {
+      _setLoading(false);
+
+      if (_payments.isEmpty && _serveCachedPayments()) return;
+
       _setError(
         'Request timed out. Please check your connection and try again.',
       );
-
-      if (_payments.isEmpty) {
-        _payments = [];
-        _totalCount = 0;
-      }
-      _setLoading(false);
     } catch (e) {
-      _setError(e.toString());
-
-      if (_payments.isEmpty) {
-        _payments = [];
-        _totalCount = 0;
-      }
       _setLoading(false);
+
+      if (_payments.isEmpty && _serveCachedPayments()) return;
+
+      _setError(e.toString());
     }
+  }
+
+  /// Stores the current page so it can be shown again offline.
+  void _cachePayments() {
+    final key = DataCache.listKey(DataCache.paymentPrefix);
+    DataCache.write(key, CachedList<Payment>(List.of(_payments), _totalCount));
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+  }
+
+  /// Publishes the cached page, if there is one. Returns whether it did.
+  bool _serveCachedPayments() {
+    final key = DataCache.listKey(DataCache.paymentPrefix);
+    final cached = DataCache.read<CachedList<Payment>>(key);
+    if (cached == null || cached.items.isEmpty) return false;
+
+    _payments = List.of(cached.items);
+    _totalCount = cached.totalCount;
+    _currentOffset = 0;
+    _isShowingCachedData = true;
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+    return true;
   }
 
   /// Searches for payments based on a query (name, partner, or reference).
@@ -183,9 +222,15 @@ class PaymentProvider with ChangeNotifier {
     int offset = 0,
     int limit = 40,
     String status = 'all',
+    List<dynamic>? customFilter,
   }) async {
     if (query.isEmpty) {
-      await loadPayments(offset: 0, limit: limit, status: status);
+      await loadPayments(
+        offset: 0,
+        limit: limit,
+        status: status,
+        customFilter: customFilter,
+      );
       return;
     }
 
@@ -208,62 +253,64 @@ class PaymentProvider with ChangeNotifier {
         domain.add(['state', '=', status]);
       }
 
+      if (customFilter != null && customFilter.isNotEmpty) {
+        domain.addAll(customFilter);
+      }
+
       _currentOffset = offset;
       _limit = limit;
 
-      List<Map<String, dynamic>> results;
-      try {
-        results = await _apiService.searchRead(
-          'account.payment',
-          domain,
-          [
-            'name',
-            'partner_id',
-            'amount',
-            'date',
-            'payment_method_line_id',
-            'state',
-            'payment_reference',
-            'currency_id',
-            'journal_id',
-            'memo',
-            'partner_bank_id',
-            'is_sent',
-            'payment_method_code',
-            'company_id',
-          ],
-          offset,
-          limit,
-        );
-      } catch (e) {
-        results = await _apiService.searchRead(
-          'account.payment',
-          domain,
-          [
-            'name',
-            'partner_id',
-            'amount',
-            'date',
-            'state',
-
-            'currency_id',
-            'journal_id',
-          ],
-          offset,
-          limit,
-        );
+      Future<List<Map<String, dynamic>>> fetchPage() async {
+        try {
+          return await _apiService.searchRead(
+            'account.payment',
+            domain,
+            [
+              'name',
+              'partner_id',
+              'amount',
+              'date',
+              'payment_method_line_id',
+              'state',
+              'payment_reference',
+              'currency_id',
+              'journal_id',
+              'memo',
+              'partner_bank_id',
+              'is_sent',
+              'payment_method_code',
+              'company_id',
+            ],
+            offset,
+            limit,
+          );
+        } catch (e) {
+          return await _apiService.searchRead(
+            'account.payment',
+            domain,
+            ['name', 'partner_id', 'amount', 'date', 'state', 'currency_id', 'journal_id'],
+            offset,
+            limit,
+          );
+        }
       }
 
-      _payments = results.map((p) => Payment.fromJson(p)).toList();
+      // Count and page data are independent reads — run them concurrently
+      // instead of waiting on the count before even starting the page fetch.
+      final results = await Future.wait([
+        fetchPage(),
+        _apiService.getCount('account.payment', domain: domain).timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            throw TimeoutException('Search timed out after 30 seconds');
+          },
+        ),
+      ]);
 
-      _totalCount = await _apiService
-          .getCount('account.payment', domain: domain)
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () {
-              throw TimeoutException('Search timed out after 30 seconds');
-            },
-          );
+      _payments = (results[0] as List<Map<String, dynamic>>)
+          .map((p) => Payment.fromJson(p))
+          .toList();
+      _totalCount = results[1] as int;
 
       _setLoading(false);
       notifyListeners();
@@ -279,7 +326,14 @@ class PaymentProvider with ChangeNotifier {
   }
 
   /// Fetches detailed raw information for a specific payment.
+  /// Loads one payment's detail, served from cache when offline or on failure.
   Future<Map<String, dynamic>?> getPaymentDetails(int paymentId) async {
+    final cacheKey = DataCache.detailKey(DataCache.paymentPrefix, paymentId);
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<Map<String, dynamic>>(cacheKey);
+    }
+
     try {
       List<Map<String, dynamic>> results;
       try {
@@ -335,11 +389,12 @@ class PaymentProvider with ChangeNotifier {
       }
 
       if (results.isNotEmpty) {
+        DataCache.write(cacheKey, results.first);
         return results.first;
       }
-      return null;
+      return DataCache.read<Map<String, dynamic>>(cacheKey);
     } catch (e) {
-      return null;
+      return DataCache.read<Map<String, dynamic>>(cacheKey);
     }
   }
 

@@ -1,60 +1,66 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+/// The single source of truth for the palette in §1 of the UI style guide.
+///
+/// Anything colour-, shadow- or radius-shaped belongs here, in [StatusColors],
+/// [AppShadows] or [AppRadius] — never as a raw `Colors.*` literal in a widget.
 class AppTheme {
+  // --- Brand -------------------------------------------------------------
   static const Color primaryColor = Color(0xFFC03355);
+  static const Color secondary = Color(0xFFFFFFFF);
+
   static const Color vivaMagentaLight = Color(0xFFC03355);
   static const Color vivaMagentaDark = Color(0xFFC03355);
   static const Color vivaMagentaAccent = Color(0xFFC03355);
 
-  static const Color white = Colors.white;
-  static const Color offWhite = Color(0xFFFAFAFA);
-  static const Color lightGrey = Color(0xFFF5F5F5);
-  static const Color mediumGrey = Color(0xFFE0E0E0);
-  static const Color darkGrey = Color(0xFF757575);
-  static const Color textDark = Color(0xFF212121);
+  // --- Surfaces ----------------------------------------------------------
+  static const Color white = Color(0xFFFFFFFF);
+
+  /// Scaffold background (light theme).
+  static const Color scaffoldBackground = Color(0xFFFAFAFA);
+  static const Color offWhite = scaffoldBackground;
+
+  /// Generic light background.
+  static const Color background = Color(0xFFF3F3F3);
+  static const Color lightGrey = background;
+
+  /// Scaffold background (dark theme).
+  static const Color darkScaffold = Color(0xFF181A20);
+
+  /// Card/sheet/dialog surface (dark theme).
+  static const Color darkSurface = Color(0xFF1E1E1E);
+
+  // --- Text & hairlines --------------------------------------------------
+  static const Color dark = Color(0xFF101010);
+  static const Color textPrimary = dark;
+  static const Color textSecondary = Color(0xFF666666);
+
+  static const Color textDark = textPrimary;
   static const Color textMedium = Color(0xFF424242);
-  static const Color textLight = Color(0xFF757575);
+  static const Color textLight = textSecondary;
 
-  static const Color success = Color(0xFF4CAF50);
-  static const Color warning = Color(0xFFFF9800);
-  static const Color error = Color(0xFFF44336);
-  static const Color info = Color(0xFF2196F3);
+  static const Color divider = Color(0xFFE0E0E0);
+  static const Color mediumGrey = divider;
+  static const Color darkGrey = Color(0xFF757575);
 
-  static const LinearGradient primaryGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [primaryColor, vivaMagentaLight],
-  );
+  /// Reference shadow colour constant — black @ ~10%.
+  static const Color shadow = Color(0x1A000000);
 
-  static const LinearGradient cardGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [white, offWhite],
-  );
+  /// Gold used by the star rating control. Named here rather than reaching for
+  /// `Colors.amber` in a widget (§1).
+  static const Color ratingStar = Color(0xFFFFC107);
 
-  static const LinearGradient navigationGradient = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [white, Color(0xFFF8F9FA)],
-  );
+  /// Convenience label helpers so widgets don't re-derive them.
+  static Color labelColor(bool isDark) => isDark ? Colors.white : dark;
+  static Color secondaryLabelColor(bool isDark) =>
+      isDark ? Colors.grey[400]! : Colors.grey[600]!;
 
-  static BoxDecoration get glassDecoration => BoxDecoration(
-    color: white.withOpacity(0.8),
-    borderRadius: BorderRadius.circular(20),
-    border: Border.all(color: white.withOpacity(0.2)),
-    boxShadow: [
-      BoxShadow(
-        color: primaryColor.withOpacity(0.1),
-        blurRadius: 20,
-        offset: const Offset(0, 10),
-      ),
-    ],
-  );
-
-  static const Color navBackground = Color(0xFFF8F9FA);
-  static const Color navShadow = Color(0x1F000000);
-  static const Color navBorder = Color(0xFFE9ECEF);
+  // --- Semantic ----------------------------------------------------------
+  static const Color success = StatusColors.green;
+  static const Color warning = StatusColors.orange;
+  static const Color error = StatusColors.red;
+  static const Color info = StatusColors.blue;
 
   static ThemeData get lightTheme {
     return ThemeData(
@@ -78,9 +84,12 @@ class AppTheme {
 
       cardTheme: CardThemeData(
         color: white,
-        elevation: 8,
-        shadowColor: primaryColor.withOpacity(0.15),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       ),
 
@@ -161,7 +170,7 @@ class AppTheme {
         selectedItemColor: primaryColor,
         unselectedItemColor: textLight,
         type: BottomNavigationBarType.fixed,
-        elevation: 12,
+        elevation: 0,
         selectedLabelStyle: TextStyle(
           fontWeight: FontWeight.w700,
           fontSize: 12,
@@ -284,6 +293,25 @@ class AppTheme {
           color: textLight,
         ),
       ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 4,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.control),
+        ),
+      ),
+
+      dialogTheme: DialogThemeData(
+        backgroundColor: white,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+        ),
+      ),
+
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
@@ -306,13 +334,12 @@ class AppTheme {
   }
 
   static ThemeData get darkTheme {
-    final Color darkBackground = const Color(0xFF121212);
-    final Color darkSurface = const Color(0xFF1E1E1E);
+    const Color darkBackground = darkScaffold;
     return lightTheme.copyWith(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: darkBackground,
       appBarTheme: AppBarTheme(
-        backgroundColor: Color(0xFF121212),
+        backgroundColor: darkBackground,
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: false,
@@ -334,6 +361,23 @@ class AppTheme {
         onSecondary: Colors.white,
         onSurface: Colors.white,
         onBackground: Colors.white,
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: const Color(0xFF2C2C2E),
+        surfaceTintColor: Colors.transparent,
+        elevation: 4,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.control),
+        ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: darkSurface,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+        ),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: darkSurface,
@@ -360,46 +404,187 @@ class AppTheme {
     );
   }
 
-  static MaterialColor _createMaterialColor(Color color) {
-    List strengths = <double>[.05];
-    final swatch = <int, Color>{};
-    final int r = color.red, g = color.green, b = color.blue;
-
-    for (int i = 1; i < 10; i++) {
-      strengths.add(0.1 * i);
-    }
-    for (var strength in strengths) {
-      final double ds = 0.5 - strength;
-      swatch[(strength * 1000).round()] = Color.fromRGBO(
-        r + ((ds < 0 ? r : (255 - r)) * ds).round(),
-        g + ((ds < 0 ? g : (255 - g)) * ds).round(),
-        b + ((ds < 0 ? b : (255 - b)) * ds).round(),
-        1,
-      );
-    }
-    return MaterialColor(color.value, swatch);
-  }
-
-  static BoxDecoration get cardDecoration => BoxDecoration(
-    color: white,
-    borderRadius: BorderRadius.circular(16),
-    boxShadow: [
-      BoxShadow(
-        color: primaryColor.withOpacity(0.1),
-        blurRadius: 8,
-        offset: const Offset(0, 2),
-      ),
-    ],
+  /// The canonical flat card from §8 — flat fill, hairline border, [AppShadows.cardShadow].
+  static BoxDecoration cardDecoration(bool isDark) => BoxDecoration(
+    color: isDark ? Colors.grey[850] : white,
+    borderRadius: BorderRadius.circular(AppRadius.md),
+    border: Border.all(
+      color: isDark ? Colors.grey[850]! : Colors.grey[200]!,
+      width: 0.5,
+    ),
+    boxShadow: AppShadows.card,
   );
 
-  static BoxDecoration get primaryGradientDecoration => const BoxDecoration(
-    gradient: primaryGradient,
-    borderRadius: BorderRadius.all(Radius.circular(16)),
+  /// Larger dashboard/section container — §8's "panel" variant.
+  static BoxDecoration panelDecoration(bool isDark) => BoxDecoration(
+    color: isDark ? Colors.grey[850] : white,
+    borderRadius: BorderRadius.circular(AppRadius.lg),
+    boxShadow: [AppShadows.panelShadow(isDark)],
   );
 
   static BoxDecoration get accentCardDecoration => BoxDecoration(
-    color: primaryColor.withOpacity(0.05),
-    borderRadius: BorderRadius.circular(16),
-    border: Border.all(color: primaryColor.withOpacity(0.2)),
+    color: primaryColor.withValues(alpha: 0.05),
+    borderRadius: BorderRadius.circular(AppRadius.lg),
+    border: Border.all(color: primaryColor.withValues(alpha: 0.2)),
   );
+}
+
+/// §4 — the radius scale. Default to [md] when unsure.
+class AppRadius {
+  const AppRadius._();
+
+  /// Small chip corner, tiny inner accents.
+  static const double xs = 4;
+
+  /// Compact/status dropdown, icon-button container.
+  static const double sm = 5;
+
+  /// Small tab/segment chip.
+  static const double chip = 6;
+
+  /// Dropdown/filter control, popup menus, inner input border.
+  static const double control = 8;
+
+  /// Segmented view-selector, quantity/numeric field variant.
+  static const double segment = 10;
+
+  /// Default — cards, list tiles, buttons, text fields, tag chips.
+  static const double md = 12;
+
+  /// Kanban column, bottom sheet (top corners), panel/section container.
+  static const double lg = 16;
+
+  /// Canonical status badge.
+  static const double badge = 18;
+
+  /// Pill buttons/chips, dialogs, pagination counter, active-filters pill.
+  static const double pill = 20;
+
+  /// Tall/full bottom-sheet variant (rare).
+  static const double sheet = 28;
+}
+
+/// §3 — depth comes from these explicit shadows, never from Material `elevation`.
+class AppShadows {
+  const AppShadows._();
+
+  /// Standard "flat card" shadow — list items, list-style cards, form cards.
+  static const BoxShadow cardShadow = BoxShadow(
+    color: Color(0x0D000000), // black @ 5%
+    offset: Offset(0, 6),
+    blurRadius: 16,
+    spreadRadius: 2,
+  );
+
+  /// "Panel" shadow — bigger surfaces like chart containers, dashboard sections.
+  static BoxShadow panelShadow(bool isDark) => BoxShadow(
+    color: isDark ? Colors.black26 : Colors.black.withValues(alpha: 0.08),
+    blurRadius: 12,
+    offset: const Offset(0, 4),
+  );
+
+  /// Soft shadow for pill-shaped search bars only.
+  static const BoxShadow searchShadow = BoxShadow(
+    color: Color(0x0A000000), // black @ 4%
+    offset: Offset(3, 11),
+    blurRadius: 8.5,
+    spreadRadius: -3,
+  );
+
+  static const List<BoxShadow> card = <BoxShadow>[cardShadow];
+  static const List<BoxShadow> search = <BoxShadow>[searchShadow];
+  static List<BoxShadow> panel(bool isDark) => <BoxShadow>[panelShadow(isDark)];
+}
+
+/// §1/§10 — the semantic status map, and the one badge that renders it.
+///
+/// Every status/stage indicator resolves its colour through [forState] rather
+/// than reaching for `Colors.green`/`Colors.orange` and drifting per screen.
+class StatusColors {
+  const StatusColors._();
+
+  /// approved, done, posted, won, paid, planned
+  static const Color green = Color(0xFF00A63E);
+
+  /// sent, qualified, in-progress/proposal
+  static const Color blue = Color(0xFF3B82F6);
+
+  /// draft
+  static const Color orange = Color(0xFFF97316);
+
+  /// cancelled, lost
+  static const Color red = Color(0xFFEF4444);
+
+  /// locked/done (secondary "complete" state)
+  static const Color teal = Color(0xFF14B8A6);
+
+  /// unknown/default fallback
+  static const Color grey = Color(0xFF6B7280);
+
+  // --- Tinted icon/background pairs (§16) --------------------------------
+  static const Color infoIcon = Color(0xFF60A5FA);
+  static const Color successIcon = Color(0xFF4ADE80);
+  static const Color warningIcon = Color(0xFFFBBF24);
+  static const Color errorIcon = Color(0xFFF87171);
+
+  static Color iconBackground(Color color) => color.withValues(alpha: 0.12);
+
+  static Color backgroundLight(Color color) => color.withValues(alpha: 0.12);
+  static Color backgroundDark(Color color) => color.withValues(alpha: 0.2);
+
+  /// Resolves an Odoo `state` / `payment_state` value to its semantic colour.
+  static Color forState(String? state) {
+    switch (state?.toLowerCase().trim()) {
+      case 'posted':
+      case 'paid':
+      case 'done':
+      case 'approved':
+        return green;
+      case 'draft':
+      case 'partial':
+      case 'partially_paid':
+        return orange;
+      case 'cancel':
+      case 'cancelled':
+      case 'not_paid':
+      case 'unpaid':
+        return red;
+      case 'sent':
+      case 'in_payment':
+      case 'in payment':
+      case 'in_progress':
+      case 'in_process':
+        return blue;
+      case 'locked':
+        return teal;
+      default:
+        return grey;
+    }
+  }
+
+  /// §10 — the canonical status badge. No border; tint comes from [color].
+  static Widget buildStatusBadge(
+    String label,
+    Color color, {
+    required bool isDark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.15)
+            : color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppRadius.badge),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: isDark ? Colors.white : color,
+          letterSpacing: 0.1,
+        ),
+      ),
+    );
+  }
 }
