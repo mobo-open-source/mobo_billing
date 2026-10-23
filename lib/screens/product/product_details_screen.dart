@@ -259,6 +259,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen>
     return Scaffold(
       backgroundColor: isDark ? Colors.grey[900] : Colors.grey[50],
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: const Text('Product Details'),
         backgroundColor: isDark ? Colors.grey[900] : Colors.grey[50],
         elevation: 0,

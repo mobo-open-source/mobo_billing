@@ -579,31 +579,22 @@ class CreditNoteProvider with ChangeNotifier {
           domain.addAll(customFilter);
         }
 
-        final result = await _apiService.callKw({
-          'model': 'account.move',
-          'method': 'read_group',
-          'args': [
-            domain,
-            [groupByField],
-            [groupByField],
-          ],
-          'kwargs': {},
-        });
+        final result = await _apiService.readGroup(
+          'account.move',
+          domain,
+          groupby: [groupByField],
+        );
 
         _groupSummary = {};
         _loadedGroups = {};
         int total = 0;
 
-        if (result is List) {
-          for (var item in result) {
-            if (item is Map) {
-              final key = _getGroupKeyFromReadGroup(item[groupByField]);
-              final count = item['${groupByField}_count'] as int? ?? 0;
-              if (count > 0) {
-                _groupSummary[key] = count;
-                total += count;
-              }
-            }
+        for (var item in result) {
+          final key = _getGroupKeyFromReadGroup(item[groupByField]);
+          final count = item['${groupByField}_count'] as int? ?? 0;
+          if (count > 0) {
+            _groupSummary[key] = count;
+            total += count;
           }
         }
         _totalCount = total;

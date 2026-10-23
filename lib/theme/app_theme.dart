@@ -47,6 +47,11 @@ class AppTheme {
   /// Reference shadow colour constant — black @ ~10%.
   static const Color shadow = Color(0x1A000000);
 
+  /// Text-field caret and selection handles. Dark mode swaps to white, since
+  /// a black caret disappears on the dark field fill.
+  static const Color cursor = Color(0xFF000000);
+  static const Color cursorDark = Color(0xFFFFFFFF);
+
   /// Gold used by the star rating control. Named here rather than reaching for
   /// `Colors.amber` in a widget (§1).
   static const Color ratingStar = Color(0xFFFFC107);
@@ -103,7 +108,9 @@ class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          textStyle: const TextStyle(
+          // Buttons swap in this style instead of inheriting the theme's
+          // font, so name Manrope here or labels fall back to Roboto.
+          textStyle: GoogleFonts.manrope(
             fontSize: 16,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.5,
@@ -119,7 +126,7 @@ class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          textStyle: const TextStyle(
+          textStyle: GoogleFonts.manrope(
             fontSize: 16,
             fontWeight: FontWeight.w500,
             letterSpacing: 0.5,
@@ -132,8 +139,18 @@ class AppTheme {
           foregroundColor: primaryColor,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          textStyle: GoogleFonts.manrope(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
         ),
+      ),
+
+      // Black caret and drag handles on every text field, rather than the
+      // brand colour Flutter derives from `colorScheme.primary`.
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: cursor,
+        selectionHandleColor: cursor,
       ),
 
       inputDecorationTheme: InputDecorationTheme(
@@ -197,7 +214,8 @@ class AppTheme {
 
       chipTheme: ChipThemeData(
         backgroundColor: primaryColor.withOpacity(0.1),
-        labelStyle: const TextStyle(color: primaryColor),
+        // Chips swap in this style rather than inheriting the theme font.
+        labelStyle: GoogleFonts.manrope(color: primaryColor),
         selectedColor: primaryColor,
         secondarySelectedColor: vivaMagentaLight,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -338,6 +356,10 @@ class AppTheme {
     return lightTheme.copyWith(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: darkBackground,
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: cursorDark,
+        selectionHandleColor: cursorDark,
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: darkBackground,
         foregroundColor: Colors.white,
@@ -537,6 +559,7 @@ class StatusColors {
     switch (state?.toLowerCase().trim()) {
       case 'posted':
       case 'paid':
+      case 'reconciled':
       case 'done':
       case 'approved':
         return green;
@@ -546,6 +569,8 @@ class StatusColors {
         return orange;
       case 'cancel':
       case 'cancelled':
+      case 'canceled':
+      case 'rejected':
       case 'not_paid':
       case 'unpaid':
         return red;

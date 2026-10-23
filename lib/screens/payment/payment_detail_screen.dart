@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../providers/currency_provider.dart';
 import '../../providers/payment_provider.dart';
 import '../../services/payment_rpc_service.dart';
+import '../../services/odoo_session_manager.dart';
 import '../../widgets/pdf_widget.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/data_cache.dart';
@@ -173,6 +174,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor: backgroundColor,
         title: const Text('Payment Details'),
         leading: IconButton(
@@ -542,18 +544,24 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     final isSent = false;
     final paymentMethodCode = '';
 
+    // A posted payment not yet matched with the bank is `in_process` on Odoo
+    // 18/19; Odoo 20 renamed the lifecycle to draft → paid → reconciled, so
+    // there that same state is `paid`.
+    final inProcess =
+        state ==
+        (OdooSessionManager.serverMajorVersion >= 20 ? 'paid' : 'in_process');
+
     // Odoo only allows an account.payment to be modified while it is in draft;
     // a posted payment must be reset to draft first.
     final canEdit = state == 'draft';
     final canConfirm = state == 'draft';
-    final canMarkAsSent =
-        state == 'in_process' && !isSent && paymentMethodCode == 'manual';
+    final canMarkAsSent = inProcess && !isSent && paymentMethodCode == 'manual';
     final canUnmarkAsSent =
-        state == 'in_process' && isSent && paymentMethodCode == 'manual';
+        inProcess && isSent && paymentMethodCode == 'manual';
     final canResetToDraft = state != 'draft';
-    final canValidate = state == 'in_process';
-    final canReject = state == 'in_process' && isSent;
-    final canCancel = state == 'draft' || (state == 'in_process' && isSent);
+    final canValidate = inProcess;
+    final canReject = inProcess && isSent;
+    final canCancel = state == 'draft' || (inProcess && isSent);
     final canSendEmail = true;
 
     return [
@@ -859,10 +867,8 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
       DataCache.invalidatePrefix(DataCache.paymentPrefix);
       await _loadPaymentDetails();
       if (mounted) {
-        await Provider.of<PaymentProvider>(
-          context,
-          listen: false,
-        ).loadPayments();
+        // Same page, search and filters the list was showing.
+        await Provider.of<PaymentProvider>(context, listen: false).refresh();
       }
     }
   }
@@ -1186,29 +1192,34 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
 
   Future<void> _printPaymentReceipt() async {
     bool isDialogOpen = true;
+
+    void closeDialog() {
+      if (isDialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isDialogOpen = false;
+      }
+    }
+
     _showLoadingDialog(context, 'Generating PDF', 'Please wait...');
     try {
       final payment = _detailedPayment ?? widget.payment;
-      await PDFGenerator.generatePaymentPdf(
+      // Opens the system print dialog (same as Print Invoice). The share sheet
+      // this used to open throws on iOS without a source rectangle.
+      await PDFGenerator.printPaymentPdf(
         context,
         payment,
-        onPdfGenerated: () {
-          if (isDialogOpen && mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-            isDialogOpen = false;
-          }
-        },
+        onPdfGenerated: closeDialog,
       );
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
-      }
     } catch (e) {
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
+      if (mounted) {
+        CustomSnackbar.showError(
+          context,
+          e.toString().replaceFirst('Exception: ', ''),
+        );
       }
-      CustomSnackbar.showError(context, 'Failed to generate PDF: $e');
+    } finally {
+      // Runs on every path — success, failure, or a dismissed print sheet.
+      closeDialog();
     }
   }
 

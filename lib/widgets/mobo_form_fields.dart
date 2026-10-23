@@ -66,11 +66,19 @@ class MoboTextField extends StatelessWidget {
   final String label;
   final String? hintText;
   final List<List<dynamic>>? leadingIcon;
+
+  /// Shown in place of [leadingIcon] — e.g. a currency symbol before an
+  /// amount.
+  final Widget? leading;
   final bool isRequired;
   final int? maxLines;
   final TextInputType? keyboardType;
   final List<TextInputFormatter>? inputFormatters;
   final String? Function(String?)? validator;
+
+  /// When [validator] runs. Defaults to only on form submit; pass
+  /// [AutovalidateMode.onUserInteraction] to flag bad input while typing.
+  final AutovalidateMode? autovalidateMode;
   final ValueChanged<String>? onChanged;
   final bool enabled;
   final bool readOnly;
@@ -82,11 +90,13 @@ class MoboTextField extends StatelessWidget {
     required this.label,
     this.hintText,
     this.leadingIcon,
+    this.leading,
     this.isRequired = false,
     this.maxLines = 1,
     this.keyboardType,
     this.inputFormatters,
     this.validator,
+    this.autovalidateMode,
     this.onChanged,
     this.enabled = true,
     this.readOnly = false,
@@ -99,6 +109,54 @@ class MoboTextField extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
+    final icon =
+        leading ??
+        (leadingIcon == null
+            ? null
+            : HugeIcon(
+                icon: leadingIcon!,
+                color: AppFormTheme.iconColor(isDark),
+                size: AppFormTheme.iconSize,
+              ));
+
+    // `InputDecorator` centres `prefixIcon` vertically, which leaves the icon
+    // floating mid-box on a multiline field. There it is pinned beside the
+    // first line instead, with the text indented to where a prefix would
+    // have put it.
+    final pinIconToFirstLine = icon != null && maxLines != 1;
+
+    var decoration = AppFormTheme.inputDecoration(
+      isDark: isDark,
+      hintText: hintText,
+      prefixIcon: pinIconToFirstLine ? null : icon,
+      suffixIcon: suffixIcon,
+    );
+    if (pinIconToFirstLine) {
+      decoration = decoration.copyWith(
+        contentPadding: const EdgeInsets.fromLTRB(
+          AppFormTheme.fieldGutter * 2 + AppFormTheme.iconSize,
+          14,
+          AppFormTheme.fieldGutter,
+          14,
+        ),
+      );
+    }
+
+    final field = TextFormField(
+      controller: controller,
+      maxLines: maxLines,
+      keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
+      validator: validator,
+      autovalidateMode: autovalidateMode,
+      onChanged: onChanged,
+      enabled: enabled,
+      readOnly: readOnly,
+      onTap: onTap,
+      style: AppFormTheme.fieldValueStyle(isDark),
+      decoration: decoration,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -108,30 +166,21 @@ class MoboTextField extends StatelessWidget {
           style: AppFormTheme.fieldLabelStyle(isDark),
         ),
         const SizedBox(height: 10),
-        TextFormField(
-          controller: controller,
-          maxLines: maxLines,
-          keyboardType: keyboardType,
-          inputFormatters: inputFormatters,
-          validator: validator,
-          onChanged: onChanged,
-          enabled: enabled,
-          readOnly: readOnly,
-          onTap: onTap,
-          style: AppFormTheme.fieldValueStyle(isDark),
-          decoration: AppFormTheme.inputDecoration(
-            isDark: isDark,
-            hintText: hintText,
-            prefixIcon: leadingIcon == null
-                ? null
-                : HugeIcon(
-                    icon: leadingIcon!,
-                    color: AppFormTheme.iconColor(isDark),
-                    size: AppFormTheme.iconSize,
-                  ),
-            suffixIcon: suffixIcon,
-          ),
-        ),
+        if (pinIconToFirstLine)
+          Stack(
+            children: [
+              field,
+              // The 14px top padding, nudged up 1px so the 22px icon and the
+              // ~20px first line share a centre line.
+              Positioned(
+                left: AppFormTheme.fieldGutter,
+                top: 13,
+                child: IgnorePointer(child: icon),
+              ),
+            ],
+          )
+        else
+          field,
       ],
     );
   }
@@ -349,18 +398,28 @@ class MoboInlineDropdown<T> extends StatefulWidget {
   State<MoboInlineDropdown<T>> createState() => _MoboInlineDropdownState<T>();
 }
 
-class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
+class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>>
+    with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
   Timer? _debounce;
 
   bool _isOpen = false;
   bool _isLoading = false;
   List<T> _results = const [];
 
+  /// The last search threw — shown as a retry row, not as "no results".
+  bool _searchFailed = false;
+
+  /// Bumped per search, so a slow response can't overwrite a newer one.
+  int _searchGeneration = 0;
+  bool _revealScheduled = false;
+
   @override
   void initState() {
     super.initState();
     _controller.text = widget.selectedLabel ?? '';
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
@@ -375,9 +434,17 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
+  }
+
+  /// The keyboard is sliding in (or out) — keep the open panel in view.
+  @override
+  void didChangeMetrics() {
+    if (_isOpen) _revealPanel(animate: false);
   }
 
   void _open() {
@@ -386,9 +453,62 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
       _isOpen = true;
       _controller.clear();
     });
+    _showKeyboard();
     _search('');
+    _revealPanel();
   }
 
+  /// Scrolls the enclosing form so the open panel is on screen.
+  ///
+  /// A field tapped low on the page is otherwise left sitting just above the
+  /// keyboard — the text field only scrolls its own caret into view — with
+  /// the panel opened out of sight beneath it, so the list looks like it
+  /// never loaded.
+  void _revealPanel({bool animate = true}) {
+    if (_revealScheduled) return;
+    _revealScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _revealScheduled = false;
+      if (!mounted || !_isOpen) return;
+      final box = context.findRenderObject() as RenderBox?;
+      final position = Scrollable.maybeOf(context)?.position;
+      if (box == null ||
+          !box.hasSize ||
+          position == null ||
+          !position.hasViewportDimension) {
+        return;
+      }
+      // Bring the field and panel fully on screen when they fit; on a
+      // viewport too short for both, pin the field to the top so the panel
+      // gets the rest.
+      final fits = box.size.height <= position.viewportDimension;
+      Scrollable.ensureVisible(
+        context,
+        alignmentPolicy: fits
+            ? ScrollPositionAlignmentPolicy.keepVisibleAtEnd
+            : ScrollPositionAlignmentPolicy.explicit,
+        duration: animate ? const Duration(milliseconds: 250) : Duration.zero,
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  /// Opening from the trailing arrow bypasses the text field's own tap
+  /// handling, so focus it here — the panel is a search box and should come
+  /// up typeable. A field that kept focus after the keyboard was dismissed
+  /// only needs the keyboard shown again.
+  void _showKeyboard() {
+    if (_focusNode.hasFocus) {
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    } else {
+      _focusNode.requestFocus();
+    }
+  }
+
+  /// Closes the panel and drops focus with it. A touch outside doesn't
+  /// unfocus a text field on mobile, so the keyboard would otherwise stay up
+  /// over a closed field that ignores typing, and the next tap would land as
+  /// a repeat tap on a focused field instead of a fresh open.
   void _close() {
     if (!_isOpen) return;
     _debounce?.cancel();
@@ -396,6 +516,7 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
       _isOpen = false;
       _controller.text = widget.selectedLabel ?? '';
     });
+    _focusNode.unfocus();
   }
 
   void _onChanged(String query) {
@@ -428,19 +549,26 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    final generation = ++_searchGeneration;
+    setState(() {
+      _isLoading = true;
+      _searchFailed = false;
+    });
     try {
       final results = await search(query);
-      if (!mounted) return;
+      if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _results = results;
         _isLoading = false;
       });
+      // The panel just grew from the loading row to the full list.
+      _revealPanel();
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _results = const [];
         _isLoading = false;
+        _searchFailed = true;
       });
     }
   }
@@ -466,8 +594,12 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
               const SizedBox(height: 10),
               TextFormField(
                 controller: _controller,
+                focusNode: _focusNode,
                 enabled: widget.enabled,
                 onTap: _open,
+                // By default a quick second tap counts as a double-tap and
+                // skips onTap, leaving the panel shut.
+                onTapAlwaysCalled: true,
                 onChanged: _onChanged,
                 style: AppFormTheme.fieldValueStyle(isDark),
                 decoration: AppFormTheme.inputDecoration(
@@ -488,6 +620,7 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
                           onTap: () {
                             _close();
                             _controller.clear();
+                            _focusNode.unfocus();
                             widget.onClear!();
                           },
                           child: Padding(
@@ -517,22 +650,21 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
                 ),
               ),
               if (_isOpen)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8, right: 8),
-                  child: Container(
-                    height: 200,
-                    decoration: BoxDecoration(
-                      color: AppFormTheme.surface(isDark),
-                      borderRadius: const BorderRadius.only(
-                        bottomLeft: Radius.circular(AppRadius.md),
-                        bottomRight: Radius.circular(AppRadius.md),
-                      ),
-                      border: Border.all(
-                        color: AppFormTheme.cardBorder(isDark),
-                      ),
+                // Sized to its rows up to a cap, so a one-option list is a
+                // one-row panel rather than a mostly empty box.
+                Container(
+                  margin: const EdgeInsets.only(top: 6),
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: AppFormTheme.surface(isDark),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(
+                      color: isDark ? Colors.grey[700]! : Colors.grey[200]!,
                     ),
-                    child: _buildPanelBody(isDark),
+                    boxShadow: AppShadows.card,
                   ),
+                  child: _buildPanelBody(isDark),
                 ),
               if (field.hasError)
                 Padding(
@@ -551,23 +683,58 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>> {
 
   Widget _buildPanelBody(bool isDark) {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+      return const SizedBox(
+        height: 72,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    if (_searchFailed) {
+      return SizedBox(
+        height: 72,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              "Couldn't load results",
+              style: TextStyle(
+                fontSize: 14,
+                color: AppFormTheme.secondaryLabelColor(isDark),
+              ),
+            ),
+            TextButton(
+              onPressed: () => _search(_controller.text),
+              child: const Text(
+                'Retry',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.primaryColor,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     if (_results.isEmpty) {
-      return Center(
-        child: Text(
-          widget.emptyText,
-          style: TextStyle(
-            fontSize: 14,
-            color: AppFormTheme.secondaryLabelColor(isDark),
+      return SizedBox(
+        height: 72,
+        child: Center(
+          child: Text(
+            widget.emptyText,
+            style: TextStyle(
+              fontSize: 14,
+              color: AppFormTheme.secondaryLabelColor(isDark),
+            ),
           ),
         ),
       );
     }
 
     return ListView.separated(
-      padding: EdgeInsets.zero,
+      shrinkWrap: true,
+      padding: const EdgeInsets.symmetric(vertical: 4),
       itemCount: _results.length,
       separatorBuilder: (context, index) => const SizedBox(height: 5),
       itemBuilder: (context, index) {

@@ -27,6 +27,11 @@ class InvoiceProvider with ChangeNotifier {
   bool _isShowingCachedData = false;
   DateTime? _cacheUpdatedAt;
 
+  /// The dashboard's own cache flags — kept apart from the invoice list's so a
+  /// live dashboard load clears its banner without touching the list's.
+  bool _isShowingCachedDashboard = false;
+  DateTime? _dashboardCacheUpdatedAt;
+
   int _currentOffset = 0;
   int _limit = 40;
   int _totalCount = 0;
@@ -66,6 +71,12 @@ class InvoiceProvider with ChangeNotifier {
 
   /// When the cached records on screen were fetched.
   DateTime? get cacheUpdatedAt => _cacheUpdatedAt;
+
+  /// Whether the dashboard figures are the last snapshot, not a live fetch.
+  bool get isShowingCachedDashboard => _isShowingCachedDashboard;
+
+  /// When the dashboard snapshot on screen was fetched.
+  DateTime? get dashboardCacheUpdatedAt => _dashboardCacheUpdatedAt;
 
   List<Invoice> get recentInvoices => _recentInvoices;
 
@@ -190,6 +201,9 @@ class InvoiceProvider with ChangeNotifier {
       _error = null;
 
       _dashboardLoaded = true;
+      _isDashboardLoading = false;
+      _isShowingCachedDashboard = false;
+      _dashboardCacheUpdatedAt = null;
       _cacheDashboard();
       _setLoading(false);
       notifyListeners();
@@ -284,13 +298,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_total'],
-                [],
-              ])
+                aggregates: {'amount_total': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_total'];
             _todaysSales = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -308,13 +322,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_total'],
-                [],
-              ])
+                aggregates: {'amount_total': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_total'];
             _totalRevenue = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -333,13 +347,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_residual'],
-                [],
-              ])
+                aggregates: {'amount_residual': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_residual'];
             _pendingRevenue = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -359,13 +373,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_residual'],
-                [],
-              ])
+                aggregates: {'amount_residual': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_residual'];
             _overdueAmount = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -424,6 +438,8 @@ class InvoiceProvider with ChangeNotifier {
     _hasCustomFilters = false;
     _isShowingCachedData = false;
     _cacheUpdatedAt = null;
+    _isShowingCachedDashboard = false;
+    _dashboardCacheUpdatedAt = null;
     DataCache.invalidatePrefix(DataCache.invoicePrefix);
     DataCache.invalidatePrefix(DataCache.dashboardPrefix);
     _totalInvoices = 0;
@@ -606,8 +622,8 @@ class InvoiceProvider with ChangeNotifier {
 
     _dashboardLoaded = true;
     _isDashboardLoading = false;
-    _isShowingCachedData = true;
-    _cacheUpdatedAt = DataCache.updatedAt(key);
+    _isShowingCachedDashboard = true;
+    _dashboardCacheUpdatedAt = DataCache.updatedAt(key);
     _error = null;
     _isServerUnreachable = false;
     notifyListeners();
@@ -765,6 +781,26 @@ class InvoiceProvider with ChangeNotifier {
     } catch (e) {
       if (kDebugMode) {}
       return DataCache.read<Invoice>(key);
+    }
+  }
+
+  /// Fetches the current header fields (name, state, partner, totals) of the
+  /// given invoices / credit notes, so summaries kept on the device — the
+  /// dashboard's recently-opened list — can be brought up to date. Returns an
+  /// empty list when offline or on failure.
+  Future<List<Map<String, dynamic>>> fetchMoveSummaries(List<int> ids) async {
+    if (ids.isEmpty || !ConnectivityService.instance.isConnected) return [];
+    try {
+      return await _apiService
+          .getInvoices(
+            domain: [
+              ['id', 'in', ids],
+            ],
+            limit: ids.length,
+          )
+          .timeout(const Duration(seconds: 20));
+    } catch (e) {
+      return [];
     }
   }
 
@@ -1036,9 +1072,14 @@ class InvoiceProvider with ChangeNotifier {
       return;
     }
 
+    // Same bookkeeping as [loadInvoices]: remember the domain that was
+    // applied, so paging through the results (which passes none) keeps it.
     if (clearCustomFilter) {
       _currentCustomFilterDomain = null;
       _hasCustomFilters = false;
+    } else if (customFilter != null && customFilter.isNotEmpty) {
+      _currentCustomFilterDomain = customFilter;
+      _hasCustomFilters = true;
     }
 
     _currentSearchQuery = query;
@@ -1052,8 +1093,9 @@ class InvoiceProvider with ChangeNotifier {
 
       domain.addAll(_statusDomainFor(filter));
 
-      if (customFilter != null && customFilter.isNotEmpty) {
-        domain.addAll(customFilter);
+      final appliedFilter = _currentCustomFilterDomain;
+      if (appliedFilter != null && appliedFilter.isNotEmpty) {
+        domain.addAll(appliedFilter);
       }
 
       // The OR group goes last so it binds to the two name/partner leaves.
@@ -1397,6 +1439,8 @@ class InvoiceProvider with ChangeNotifier {
           _currentSearchQuery!,
           offset: _currentOffset + _limit,
           limit: _limit,
+          filter: filter,
+          customFilter: customFilter,
         );
       } else {
         await loadInvoices(
@@ -1419,6 +1463,8 @@ class InvoiceProvider with ChangeNotifier {
           _currentSearchQuery!,
           offset: _currentOffset - _limit,
           limit: _limit,
+          filter: filter,
+          customFilter: customFilter,
         );
       } else {
         await loadInvoices(
@@ -1598,8 +1644,14 @@ class InvoiceProvider with ChangeNotifier {
   Future<List<Map<String, dynamic>>> _fetchRecentPayments() async {
     try {
       try {
+        // Confirmed payments on every version: `posted` on Odoo 17,
+        // `in_process`/`paid` on 18–19, `paid`/`reconciled` on 20.
         List<dynamic> domain = [
-          ['state', '=', 'posted'],
+          [
+            'state',
+            'not in',
+            ['draft', 'cancel', 'canceled', 'rejected'],
+          ],
           ['payment_type', '=', 'inbound'],
         ];
 
@@ -1679,32 +1731,23 @@ class InvoiceProvider with ChangeNotifier {
 
       domain.add(['move_type', '=', 'out_invoice']);
 
-      final result = await _apiService.callKw({
-        'model': 'account.move',
-        'method': 'read_group',
-        'args': [domain],
-        'kwargs': {
-          'fields': ['id'],
-          'groupby': [groupByField],
-          'lazy': false,
-        },
-      });
+      final result = await _apiService.readGroup(
+        'account.move',
+        domain,
+        groupby: [groupByField],
+      );
 
-      if (result is List) {
-        _groupSummary.clear();
-        _loadedGroups.clear();
-        int total = 0;
+      _groupSummary.clear();
+      _loadedGroups.clear();
+      int total = 0;
 
-        for (final group in result) {
-          if (group is Map) {
-            final groupKey = _getGroupKeyFromReadGroup(group, groupByField);
-            final count = group['__count'] ?? 0;
-            _groupSummary[groupKey] = count as int;
-            total += count as int;
-          }
-        }
-        _totalCount = total;
+      for (final group in result) {
+        final groupKey = _getGroupKeyFromReadGroup(group, groupByField);
+        final count = group['__count'] as int;
+        _groupSummary[groupKey] = count;
+        total += count;
       }
+      _totalCount = total;
     } catch (e) {
       _setError(e.toString());
 

@@ -255,6 +255,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: const Text('Settings'),
         backgroundColor: cardColor,
         elevation: 0,

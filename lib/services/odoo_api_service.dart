@@ -1,4 +1,5 @@
 import 'dart:convert' as convert;
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,7 +51,10 @@ class OdooApiService {
     } catch (e) {
       final msg = e.toString().toLowerCase();
 
+      // Odoo 20 reworded the `list_db = False` denial ("Database management
+      // functions blocked, ...") — its exception type is the stable part.
       if (msg.contains('access denied') ||
+          msg.contains('odoo.exceptions.accessdenied') ||
           msg.contains('forbidden') ||
           msg.contains('403')) {
         throw Exception('ACCESS_DENIED_DB_LIST');
@@ -126,6 +130,7 @@ class OdooApiService {
       final msg = e.toString().toLowerCase();
 
       if (msg.contains('access denied') ||
+          msg.contains('odoo.exceptions.accessdenied') ||
           msg.contains('forbidden') ||
           msg.contains('403')) {
         throw Exception('ACCESS_DENIED_DB_LIST');
@@ -163,8 +168,19 @@ class OdooApiService {
     }
   }
 
+  /// Server + database the per-server caches below were learned on.
+  String? _cacheOwner;
+
   /// Updates the local service state with new session details.
   void updateSession(OdooSessionModel session) {
+    // What one server taught us (unknown fields, read_group signature) is
+    // wrong for another version — start fresh when the account moves.
+    final owner = '${session.serverUrl}|${session.database}';
+    if (owner != _cacheOwner) {
+      _unknownFields.clear();
+      _modernReadGroupByServer.clear();
+      _cacheOwner = owner;
+    }
     _uid = session.userId;
     _password = session.password;
     _sessionId = session.sessionId;
@@ -184,6 +200,13 @@ class OdooApiService {
       throw Exception('Not authenticated. Please login first.');
     }
 
+    final session = await OdooSessionManager.getCurrentSession();
+    final unknownKey = '${session?.serverUrl}|${session?.database}|$model';
+    for (final field in _unknownFields[unknownKey] ?? const <String>{}) {
+      final stripped = withoutField(method, args, kwargs, field);
+      if (stripped != null) (args, kwargs) = stripped;
+    }
+
     try {
       return await OdooSessionManager.callKwWithCompany({
         'model': model,
@@ -196,87 +219,21 @@ class OdooApiService {
         throw Exception('two factor authentication required');
       }
 
+      // A field this request names doesn't exist on this server's version of
+      // the model (e.g. `res.partner.mobile` on Odoo 19+): drop it and retry,
+      // and remember it so later requests skip it up front.
       String errorStr = e.toString();
-
-      if (e is OdooException) {
-        errorStr += " ${e.message}";
-      }
-
-      if (errorStr.contains("Invalid field")) {
-        final errorStr = e.toString();
-        final match = RegExp(r"Invalid field '([^']+)'").firstMatch(errorStr);
-        if (match != null) {
-          final invalidField = match.group(1);
-          if (invalidField == null) rethrow;
-
-          if (kwargs != null &&
-              kwargs.containsKey('fields') &&
-              kwargs['fields'] is List) {
-            final fields = List<dynamic>.from(kwargs['fields']);
-            if (fields.contains(invalidField)) {
-              fields.remove(invalidField);
-              final updatedKwargs = Map<String, dynamic>.from(kwargs);
-              updatedKwargs['fields'] = fields;
-              return await call(model, method, args, updatedKwargs);
-            }
+      if (e is OdooException) errorStr += ' ${e.message}';
+      final invalidField = unknownFieldFromError(errorStr);
+      if (invalidField != null) {
+        final stripped = withoutField(method, args, kwargs, invalidField);
+        if (stripped != null) {
+          // Only learn it if the account didn't switch mid-request — the
+          // error may have come from the other server.
+          if (await _sameServer(model, unknownKey)) {
+            (_unknownFields[unknownKey] ??= {}).add(invalidField);
           }
-
-          if (method == 'read' && args.length >= 2 && args[1] is List) {
-            final fields = List<dynamic>.from(args[1]);
-            if (fields.contains(invalidField)) {
-              fields.remove(invalidField);
-              final newArgs = List.from(args);
-              newArgs[1] = fields;
-              return await call(model, method, newArgs, kwargs);
-            }
-          }
-
-          if (method == 'write' && args.length >= 2 && args[1] is Map) {
-            final values = Map<String, dynamic>.from(args[1]);
-            if (values.containsKey(invalidField)) {
-              values.remove(invalidField);
-              final newArgs = List.from(args);
-              newArgs[1] = values;
-              return await call(model, method, newArgs, kwargs);
-            }
-          }
-
-          if (method == 'create' && args.length >= 1 && args[0] is Map) {
-            final values = Map<String, dynamic>.from(args[0]);
-            if (values.containsKey(invalidField)) {
-              values.remove(invalidField);
-              final newArgs = List.from(args);
-              newArgs[0] = values;
-              return await call(model, method, newArgs, kwargs);
-            }
-          }
-
-          if (kwargs != null &&
-              kwargs.containsKey('order') &&
-              kwargs['order'] is String) {
-            final order = kwargs['order'] as String;
-            if (order.contains(invalidField!)) {
-              final parts = order.split(',').map((e) => e.trim()).toList();
-              parts.removeWhere(
-                (p) =>
-                    p.startsWith(invalidField!) ||
-                    p.contains(' $invalidField') ||
-                    p.contains('$invalidField '),
-              );
-              final updatedKwargs = Map<String, dynamic>.from(kwargs);
-              updatedKwargs['order'] = parts.join(', ');
-              return await call(model, method, args, updatedKwargs);
-            }
-          }
-
-          if (args.isNotEmpty && args[0] is List) {
-            final domain = args[0] as List;
-            if (_containsFieldInDomain(domain, invalidField!)) {
-              final newArgs = List.from(args);
-              newArgs[0] = _cleanDomain(domain, invalidField!);
-              return await call(model, method, newArgs, kwargs);
-            }
-          }
+          return await call(model, method, stripped.$1, stripped.$2);
         }
       }
 
@@ -285,6 +242,129 @@ class OdooApiService {
       }
       rethrow;
     }
+  }
+
+  /// Fields rejected as unknown, per `'<server>|<database>|<model>'`.
+  final Map<String, Set<String>> _unknownFields = {};
+
+  /// Whether the current session is still the server [key] was built for.
+  Future<bool> _sameServer(String model, String key) async {
+    final now = await OdooSessionManager.getCurrentSession();
+    return '${now?.serverUrl}|${now?.database}|$model' == key;
+  }
+
+  /// Extracts the unknown field named by an Odoo error message, across the
+  /// formats Odoo 17–20 use:
+  /// * `Invalid field 'mobile' on 'res.partner'` (read, create, order, and
+  ///   write on most models)
+  /// * `Invalid field res.partner.mobile in leaf ('mobile', 'ilike', 'x')`
+  ///   (domains; Odoo 20 says `in condition`) — the leaf's own field path is
+  ///   returned, since that is what appears in the request's domain
+  /// * `'mobile'` — a bare `KeyError`, which Odoo 20 raises for an unknown
+  ///   field in `write` on mail-thread models such as `res.partner`
+  @visibleForTesting
+  static String? unknownFieldFromError(String error) {
+    final leaf = RegExp(
+      r"Invalid field \S+ in (?:leaf|condition) \(\s*'([^']+)'",
+    ).firstMatch(error);
+    if (leaf != null) return leaf.group(1);
+
+    final quoted = RegExp(r"Invalid field '([^']+)'").firstMatch(error);
+    if (quoted != null) return quoted.group(1);
+
+    final keyError = RegExp(
+      r"^(?:Exception: )?(?:KeyError: )?'([A-Za-z_]\w*)'$",
+    ).firstMatch(error.trim());
+    return keyError?.group(1);
+  }
+
+  /// Returns [args]/[kwargs] with every use of [field] removed for [method]:
+  /// from the requested field list, the values of a `create`/`write`, the
+  /// `order` clause, or the domain (where the condition is replaced by a
+  /// constant one, so `'|'`/`'&'` operators keep their operands). Returns
+  /// `null` when [field] isn't used, or when removing it would leave an
+  /// empty field list — which Odoo reads as "every field".
+  @visibleForTesting
+  static (List, Map<String, dynamic>?)? withoutField(
+    String method,
+    List args,
+    Map<String, dynamic>? kwargs,
+    String field,
+  ) {
+    var newArgs = args;
+    var newKwargs = kwargs;
+    var changed = false;
+
+    List? withoutListed(dynamic fields) {
+      if (fields is! List || !fields.contains(field)) return null;
+      final remaining = fields.where((f) => f != field).toList();
+      return remaining.isEmpty ? null : remaining;
+    }
+
+    final kwFields = withoutListed(kwargs?['fields']);
+    if (kwFields != null) {
+      newKwargs = {...newKwargs!, 'fields': kwFields};
+      changed = true;
+    }
+
+    if (method == 'read' && args.length >= 2) {
+      final argFields = withoutListed(args[1]);
+      if (argFields != null) {
+        newArgs = [...newArgs]..[1] = argFields;
+        changed = true;
+      }
+    }
+
+    if (method == 'write' && args.length >= 2 && args[1] is Map) {
+      final values = args[1] as Map;
+      if (values.containsKey(field)) {
+        newArgs = [...newArgs]..[1] = (Map.of(values)..remove(field));
+        changed = true;
+      }
+    }
+
+    if (method == 'create' && args.isNotEmpty) {
+      final values = args[0];
+      if (values is Map && values.containsKey(field)) {
+        newArgs = [...newArgs]..[0] = (Map.of(values)..remove(field));
+        changed = true;
+      } else if (values is List &&
+          values.any((v) => v is Map && v.containsKey(field))) {
+        newArgs = [...newArgs]
+          ..[0] = [
+            for (final v in values) v is Map ? (Map.of(v)..remove(field)) : v,
+          ];
+        changed = true;
+      }
+    }
+
+    final order = kwargs?['order'];
+    if (order is String) {
+      final terms = order.split(',').map((t) => t.trim()).toList();
+      final kept = terms.where((t) => t.split(RegExp(r'\s+'))[0] != field);
+      if (kept.length != terms.length) {
+        newKwargs = {...newKwargs!, 'order': kept.join(', ')};
+        changed = true;
+      }
+    }
+
+    if (method != 'create' && method != 'write' && args.isNotEmpty) {
+      final domain = args[0];
+      if (domain is List && _containsFieldInDomain(domain, field)) {
+        newArgs = [...newArgs]..[0] = _neutralizeDomainField(domain, field);
+        changed = true;
+      }
+    }
+    final kwDomain = kwargs?['domain'];
+    if (kwDomain is List && _containsFieldInDomain(kwDomain, field)) {
+      newKwargs = {
+        ...newKwargs!,
+        'domain': _neutralizeDomainField(kwDomain, field),
+      };
+      changed = true;
+    }
+
+    return changed ? (newArgs, newKwargs) : null;
   }
 
   /// Executes a keyword-based Odoo RPC call (callKw) with company context.
@@ -714,6 +794,146 @@ class OdooApiService {
     return result as int;
   }
 
+  /// Per server URL: whether `read_group` takes the Odoo 20+ signature.
+  final Map<String, bool> _modernReadGroupByServer = {};
+
+  /// Version-aware `read_group`.
+  ///
+  /// Odoo 20 changed `read_group` to `(domain, groupby, aggregates, having,
+  /// offset, limit, order)` with `field:agg` aggregate specs, returning
+  /// tuples; Odoo 19 and older use `(domain, fields, groupby, offset, limit,
+  /// orderby, lazy)`. On Odoo 20 this calls `formatted_read_group` (same
+  /// signature, map rows) instead. Rows are returned in the legacy shape on
+  /// every version: groupby values
+  /// under the field name (many2one as `[id, name]`), aggregates under the
+  /// bare field name, and the record count under both `__count` and
+  /// `<first groupby>_count`.
+  ///
+  /// [aggregates] maps field name to aggregate function, e.g.
+  /// `{'amount_total': 'sum'}`. [orderby] uses legacy terms
+  /// (`'amount_total desc'`) and is translated for Odoo 20.
+  Future<List<Map<String, dynamic>>> readGroup(
+    String model,
+    List domain, {
+    List<String> groupby = const [],
+    Map<String, String> aggregates = const {},
+    int? limit,
+    String? orderby,
+  }) async {
+    final session = await OdooSessionManager.getCurrentSession();
+    final serverKey = session?.serverUrl ?? '';
+    final modern =
+        _modernReadGroupByServer[serverKey] ??
+        OdooSessionManager.parseMajorVersion(session?.serverVersion ?? '') >=
+            20;
+
+    Future<dynamic> run(bool useModern) => useModern
+        ? _readGroupModern(model, domain, groupby, aggregates, limit, orderby)
+        : _readGroupLegacy(model, domain, groupby, aggregates, limit, orderby);
+
+    // Remember the signature only if the account didn't switch while the
+    // call was in flight; otherwise the answer came from the other server.
+    Future<void> remember(bool value) async {
+      final now = await OdooSessionManager.getCurrentSession();
+      if ((now?.serverUrl ?? '') == serverKey) {
+        _modernReadGroupByServer[serverKey] = value;
+      }
+    }
+
+    dynamic result;
+    try {
+      result = await run(modern);
+      await remember(modern);
+    } catch (e) {
+      // Version string missing or ambiguous (e.g. `saas~19.x`): the other
+      // signature is the right one if this one was rejected outright.
+      if (!_isReadGroupSignatureError(e)) rethrow;
+      result = await run(!modern);
+      await remember(!modern);
+    }
+    return _normalizeReadGroupRows(result, groupby, aggregates);
+  }
+
+  Future<dynamic> _readGroupLegacy(
+    String model,
+    List domain,
+    List<String> groupby,
+    Map<String, String> aggregates,
+    int? limit,
+    String? orderby,
+  ) {
+    final fields = aggregates.isNotEmpty ? aggregates.keys.toList() : groupby;
+    final kwargs = <String, dynamic>{'lazy': false};
+    if (limit != null) kwargs['limit'] = limit;
+    if (orderby != null) kwargs['orderby'] = orderby;
+    return call(model, 'read_group', [domain, fields, groupby], kwargs);
+  }
+
+  Future<dynamic> _readGroupModern(
+    String model,
+    List domain,
+    List<String> groupby,
+    Map<String, String> aggregates,
+    int? limit,
+    String? orderby,
+  ) {
+    final kwargs = <String, dynamic>{
+      'groupby': groupby,
+      'aggregates': _modernAggregateSpecs(aggregates),
+    };
+    if (limit != null) kwargs['limit'] = limit;
+    if (orderby != null) {
+      kwargs['order'] = orderby
+          .split(',')
+          .map((term) {
+            final parts = term.trim().split(RegExp(r'\s+'));
+            final agg = aggregates[parts.first];
+            if (agg != null) parts[0] = '${parts.first}:$agg';
+            return parts.join(' ');
+          })
+          .join(', ');
+    }
+    // Not `read_group` itself: on Odoo 20 that returns bare tuples with a
+    // many2one group as its id alone, while `formatted_read_group` returns
+    // the same rows as maps with many2ones as `[id, display_name]`.
+    return call(model, 'formatted_read_group', [domain], kwargs);
+  }
+
+  List<String> _modernAggregateSpecs(Map<String, String> aggregates) => [
+    '__count',
+    for (final e in aggregates.entries) '${e.key}:${e.value}',
+  ];
+
+  List<Map<String, dynamic>> _normalizeReadGroupRows(
+    dynamic result,
+    List<String> groupby,
+    Map<String, String> aggregates,
+  ) {
+    if (result is! List) return [];
+
+    return result.whereType<Map>().map<Map<String, dynamic>>((raw) {
+      final row = Map<String, dynamic>.from(raw);
+      for (final e in aggregates.entries) {
+        row[e.key] ??= row['${e.key}:${e.value}'];
+      }
+
+      final count =
+          row['__count'] ??
+          (groupby.isNotEmpty ? row['${groupby.first}_count'] : null) ??
+          0;
+      row['__count'] = count;
+      if (groupby.isNotEmpty) row['${groupby.first}_count'] = count;
+      return row;
+    }).toList();
+  }
+
+  static bool _isReadGroupSignatureError(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('unexpected keyword argument') ||
+        msg.contains('required positional argument') ||
+        msg.contains('invalid aggregate');
+  }
+
   /// Checks whether the logged-in user has read access to every core model
   /// the app's main tabs depend on: `account.move` for Invoices/Credit
   /// Notes/Reports, `account.payment` for Payments, and `res.partner` for
@@ -730,25 +950,38 @@ class OdooApiService {
     return results.every((allowed) => allowed);
   }
 
+  /// Odoo 18+ replaced `check_access_rights(operation, raise_exception=False)`
+  /// with `has_access(operation)`, which never raises for a plain denial — it
+  /// just returns a bool. Odoo 20 dropped `check_access_rights` entirely, so
+  /// on Odoo 20 the old method throws an "unknown method" error for every
+  /// model regardless of the user's actual rights; `has_access` is tried
+  /// first and `check_access_rights` is only a fallback for pre-18 servers.
+  ///
+  /// `has_access` is a record method, so its first RPC argument is the record
+  /// ids: an empty list checks the model-level access rights alone.
   Future<bool> _checkModelReadAccess(String model) async {
     try {
-      final result = await call(
-        model,
-        'check_access_rights',
-        ['read'],
-        {'raise_exception': false},
-      );
+      final result = await call(model, 'has_access', [[], 'read']);
       if (result is bool) return result;
       return true;
     } catch (e) {
-      final msg = e.toString().toLowerCase();
-      if (msg.contains('access') &&
-          (msg.contains('denied') ||
-              msg.contains('rights') ||
-              msg.contains('error'))) {
-        return false;
+      debugPrint('[_checkModelReadAccess] has_access failed for $model: $e');
+      try {
+        final result = await call(
+          model,
+          'check_access_rights',
+          ['read'],
+          {'raise_exception': false},
+        );
+        if (result is bool) return result;
+        return true;
+      } catch (fallbackError) {
+        debugPrint(
+          '[_checkModelReadAccess] check_access_rights fallback also failed '
+          'for $model: $fallbackError',
+        );
+        return true;
       }
-      return true;
     }
   }
 
@@ -766,11 +999,56 @@ class OdooApiService {
 
       return isInstalled;
     } catch (e) {
+      debugPrint('[isModuleInstalled] ir.module.module check failed: $e');
       try {
         await call('account.move', 'search_count', [[]], {'limit': 1});
 
         return true;
       } catch (fallbackError) {
+        debugPrint(
+          '[isModuleInstalled] account.move fallback also failed: $fallbackError',
+        );
+        return false;
+      }
+    }
+  }
+
+  /// [isModuleInstalled] against [session]'s server rather than the current
+  /// session — for a session just authenticated but not yet made current.
+  Future<bool> isModuleInstalledFor(
+    OdooSessionModel session,
+    String moduleName,
+  ) async {
+    Future<dynamic> searchCount(String model, List domain, [Map? kwargs]) =>
+        OdooSessionManager.callKwWithSession(
+          url: session.serverUrl,
+          sessionId: session.sessionId,
+          payload: {
+            'jsonrpc': '2.0',
+            'method': 'call',
+            'params': {
+              'model': model,
+              'method': 'search_count',
+              'args': [domain],
+              'kwargs': kwargs ?? {},
+            },
+            'id': 1,
+          },
+        );
+
+    try {
+      final count = await searchCount('ir.module.module', [
+        ['name', '=', moduleName],
+        ['state', '=', 'installed'],
+      ]);
+      return count is int && count > 0;
+    } catch (e) {
+      // Same fallback as isModuleInstalled: a non-admin may not read
+      // ir.module.module, but can count moves if accounting is there.
+      try {
+        await searchCount('account.move', [], {'limit': 1});
+        return true;
+      } catch (_) {
         return false;
       }
     }
@@ -1149,9 +1427,18 @@ class OdooApiService {
           'account_id',
           'quantity',
           'price_unit',
+          'display_type',
         ]);
 
-        for (final line in lines) {
+        // invoice_line_ids also holds section / subsection / note lines,
+        // which never carry an account or quantity (Odoo requires them not
+        // to) — only product lines are checked.
+        final productLines = lines.where((line) {
+          final type = line['display_type'];
+          return type == null || type == false || type == 'product';
+        });
+
+        for (final line in productLines) {
           if (line['name'] == null || line['name'].toString().trim().isEmpty) {
             throw Exception('All invoice lines must have a description.');
           }
@@ -1617,9 +1904,12 @@ class OdooApiService {
     );
   }
 
+  /// Pass [withImages] `false` when the caller doesn't show thumbnails — the
+  /// base64 `image_128` per product makes up most of the payload.
   Future<List<Map<String, dynamic>>> searchProducts(
     String query, {
     int limit = 100,
+    bool withImages = true,
   }) async {
     return await searchRead(
       'product.product',
@@ -1639,7 +1929,7 @@ class OdooApiService {
         'uom_id',
         'taxes_id',
         'barcode',
-        'image_128',
+        if (withImages) 'image_128',
         'type',
         'qty_available',
       ],
@@ -2084,34 +2374,45 @@ class OdooApiService {
   static const String _userAgent =
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
-  static bool _containsFieldInDomain(List domain, String field) {
-    for (var item in domain) {
-      if (item is List) {
-        if (item.isNotEmpty && item[0].toString() == field) return true;
-        if (_containsFieldInDomain(item, field)) return true;
-      }
-    }
-    return false;
-  }
+  static bool _isConditionOn(dynamic item, String field) =>
+      item is List &&
+      item.length == 3 &&
+      (item[0] == field || '${item[0]}'.startsWith('$field.'));
 
-  static List _cleanDomain(List domain, String invalidField) {
-    final List cleaned = [];
-    for (int i = 0; i < domain.length; i++) {
-      final item = domain[i];
-      if (item is List) {
-        if (item.isNotEmpty && item[0].toString() == invalidField) {
-          if (cleaned.isNotEmpty &&
-              (cleaned.last == '&' || cleaned.last == '|')) {
-            cleaned.removeLast();
-          }
-          continue;
-        } else {
-          cleaned.add(_cleanDomain(item, invalidField));
-        }
-      } else {
-        cleaned.add(item);
-      }
+  static bool _containsFieldInDomain(List domain, String field) =>
+      domain.any((item) => _isConditionOn(item, field));
+
+  /// Replaces each condition on [field] with Odoo's constant TRUE leaf
+  /// `(1, '=', 1)` or FALSE leaf `(0, '=', 1)` — whichever the condition would
+  /// evaluate to for a record with no value, as a field that doesn't exist
+  /// never has one. Unlike deleting the condition, this keeps prefix
+  /// operators (`'|'`, `'&'`, `'!'`) paired with the right number of operands.
+  static List _neutralizeDomainField(List domain, String field) => [
+    for (final item in domain)
+      if (_isConditionOn(item, field))
+        [_matchesEmptyValue(item[1], item[2]) ? 1 : 0, '=', 1]
+      else
+        item,
+  ];
+
+  static bool _matchesEmptyValue(dynamic operator, dynamic value) {
+    final empty = value == false || value == null;
+    switch ('$operator') {
+      case '=':
+        return empty;
+      case '!=':
+        return !empty;
+      case 'not in':
+        return value is List && !value.contains(false);
+      case 'in':
+        return value is List && value.contains(false);
+      case 'not like':
+      case 'not ilike':
+      case 'not =like':
+      case 'not =ilike':
+        return true;
+      default:
+        return false;
     }
-    return cleaned;
   }
 }

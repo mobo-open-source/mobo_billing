@@ -258,6 +258,7 @@ class _FullImageScreenState extends State<FullImageScreen> {
     return Scaffold(
       backgroundColor: isDark ? Colors.grey[900] : Colors.grey[50],
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,

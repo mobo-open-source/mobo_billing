@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// Utility class for showing themed date and time pickers.
 class DatePickerUtils {
@@ -15,11 +16,22 @@ class DatePickerUtils {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = Theme.of(context).primaryColor;
 
+    // showDatePicker asserts firstDate <= initialDate <= lastDate. Callers
+    // bound one date by another (an end date can't precede the start), so a
+    // stale value — e.g. an end date left before a newly picked start — would
+    // break the picker; open it on the nearest allowed day instead.
+    final first = DateUtils.dateOnly(firstDate ?? DateTime(2020));
+    var last = DateUtils.dateOnly(lastDate ?? DateTime(2030));
+    if (last.isBefore(first)) last = first;
+    var initial = DateUtils.dateOnly(initialDate ?? DateTime.now());
+    if (initial.isBefore(first)) initial = first;
+    if (initial.isAfter(last)) initial = last;
+
     return await showDatePicker(
       context: context,
-      initialDate: initialDate ?? DateTime.now(),
-      firstDate: firstDate ?? DateTime(2020),
-      lastDate: lastDate ?? DateTime(2030),
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
       helpText: helpText,
       cancelText: cancelText,
       confirmText: confirmText,
@@ -38,7 +50,7 @@ class DatePickerUtils {
             textButtonTheme: TextButtonThemeData(
               style: TextButton.styleFrom(
                 foregroundColor: primaryColor,
-                textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                textStyle: GoogleFonts.manrope(fontWeight: FontWeight.w600),
               ),
             ),
             datePickerTheme: DatePickerThemeData(
@@ -131,7 +143,7 @@ class DatePickerUtils {
             textButtonTheme: TextButtonThemeData(
               style: TextButton.styleFrom(
                 foregroundColor: primaryColor,
-                textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                textStyle: GoogleFonts.manrope(fontWeight: FontWeight.w600),
               ),
             ),
             timePickerTheme: TimePickerThemeData(

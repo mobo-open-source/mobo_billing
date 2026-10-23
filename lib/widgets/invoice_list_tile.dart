@@ -16,30 +16,36 @@ class InvoiceListTile extends StatelessWidget {
     required this.onTap,
   });
 
+  /// What Odoo's Status column shows for a posted invoice: Paid / In Payment /
+  /// Partial once money has moved, and plain "posted" otherwise (an unpaid
+  /// invoice is still just "Posted", which is also what the Posted filter
+  /// returns).
+  String get _postedStatus {
+    final paymentState = invoice.paymentState;
+    const moved = {'paid', 'in_payment', 'partial'};
+    return moved.contains(paymentState) ? paymentState! : 'posted';
+  }
+
   Color getStateColor() {
     final status = invoice.state;
-    final paymentState = invoice.paymentState ?? 'not_paid';
 
     // A posted invoice is coloured by how much of it has been paid.
-    if (status == 'posted') return StatusColors.forState(paymentState);
+    if (status == 'posted') return StatusColors.forState(_postedStatus);
     if (status == 'cancel') return StatusColors.grey;
     return StatusColors.forState(status);
   }
 
   String getStateValue() {
     final status = invoice.state;
-    final paymentState = invoice.paymentState ?? 'not_paid';
 
     if (status == 'posted') {
-      switch (paymentState) {
+      switch (_postedStatus) {
         case 'paid':
           return 'Paid';
         case 'in_payment':
           return 'In Payment';
         case 'partial':
           return 'Partial';
-        case 'not_paid':
-          return 'Not Paid';
         default:
           return 'Posted';
       }

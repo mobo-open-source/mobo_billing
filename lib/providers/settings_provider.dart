@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import '../services/odoo_api_service.dart';
 import '../services/odoo_session_manager.dart';
+import '../utils/odoo_binary_utils.dart';
 
 /// Provider for managing application-wide settings, user preferences, and local storage.
 class SettingsProvider extends ChangeNotifier {
@@ -137,7 +138,9 @@ class SettingsProvider extends ChangeNotifier {
       final tzTs = prefs.getInt('tz_updated_at');
       if (cachedUser != null && cachedUser.isNotEmpty) {
         try {
-          _userProfile = Map<String, dynamic>.from(jsonDecode(cachedUser));
+          _userProfile = Map<String, dynamic>.from(
+            normalizeOdooBinaries(jsonDecode(cachedUser)),
+          );
         } catch (_) {
           _userProfile = null;
         }

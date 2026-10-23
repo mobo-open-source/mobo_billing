@@ -134,6 +134,10 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
           _isShowingCachedData = isOffline;
           _isLoading = false;
         });
+        // The recently-opened entry was saved from the record as it was
+        // opened; relabel it now that the number/state is known (e.g. after
+        // posting a draft).
+        context.read<LastOpenedProvider>().refreshDocuments([details.toJson()]);
         _animationController.forward();
         await _fetchCustomerDetails();
         await _fetchPayments();
@@ -659,36 +663,41 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
 
   Future<void> _printCreditNote() async {
     bool isDialogOpen = true;
+
+    void closeDialog() {
+      if (isDialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isDialogOpen = false;
+      }
+    }
+
     _showLoadingDialog(
       context,
       'Generating PDF',
       'Please wait while we generate your credit note PDF...',
     );
+
     try {
       final creditNote = _detailedCreditNote ?? widget.creditNote;
-      await PDFGenerator.generateInvoicePdf(
+      // Same path as "Print Invoice": opens the system print dialog (which
+      // also offers Save as PDF) and needs no storage permission. Generation
+      // is bounded by PDFGenerator's overall deadline.
+      await PDFGenerator.printInvoicePdf(
         context,
         creditNote,
-        onPdfGenerated: () {
-          if (isDialogOpen && mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-            isDialogOpen = false;
-          }
-        },
+        onPdfGenerated: closeDialog,
+        documentLabel: 'Credit Note',
       );
-
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
-      }
     } catch (e) {
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
-      }
       if (mounted) {
-        CustomSnackbar.showError(context, 'Failed to generate PDF: $e');
+        CustomSnackbar.showError(
+          context,
+          e.toString().replaceFirst('Exception: ', ''),
+        );
       }
+    } finally {
+      // Runs on every path — success, failure, or a dismissed print sheet.
+      closeDialog();
     }
   }
 
@@ -878,6 +887,7 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor: backgroundColor,
         title: const Text('Credit Note Details'),
         actions: [

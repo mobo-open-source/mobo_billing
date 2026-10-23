@@ -12,6 +12,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../utils/date_picker_utils.dart';
 import '../../utils/data_loss_warning_mixin.dart';
+import '../../utils/form_snapshot.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../../services/odoo_error_handler.dart';
 import '../../widgets/confetti_dialog.dart';
@@ -19,6 +20,7 @@ import '../../services/connectivity_service.dart';
 import '../../services/data_cache.dart';
 import '../../services/session_service.dart';
 import '../../widgets/mobo_form_fields.dart';
+import '../../widgets/currency_select_field.dart';
 import '../../theme/form_styles.dart';
 import '../../widgets/connection_status_widget.dart';
 import '../../widgets/offline_data_banner.dart';
@@ -89,8 +91,26 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
         _memoController.text.isNotEmpty;
   }
 
-  /// Set once the user changes something on a payment being edited.
-  bool _hasEdits = false;
+  /// How the payment being edited looked once loaded. Save Payment stays
+  /// disabled until the form differs from it.
+  final _editSnapshot = FormSnapshot();
+
+  /// The values [_createPayment] writes, in a form [_editSnapshot] can
+  /// compare.
+  Map<String, dynamic> get _editableValues => {
+    'payment_type': _paymentType,
+    'partner_id': _selectedCustomer?.id,
+    'amount': double.tryParse(_amountController.text) ?? 0.0,
+    'date': DateFormat('yyyy-MM-dd').format(_paymentDate),
+    'journal_id': _selectedJournalId,
+    'payment_method_line_id': _selectedPaymentMethodId,
+    'partner_bank_id': _selectedPartnerBankId,
+    'currency_id': _selectedCurrencyId,
+    'memo': _memoController.text,
+  };
+
+  /// Whether the payment being edited differs from what was loaded.
+  bool get _hasEdits => _editSnapshot.hasChanges(_editableValues);
 
   @override
   void initState() {
@@ -101,14 +121,8 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       _amountController.text = widget.amount.toString();
     }
 
-    _amountController.addListener(() {
-      if (_isEditing) _hasEdits = true;
-      setState(() {});
-    });
-    _memoController.addListener(() {
-      if (_isEditing) _hasEdits = true;
-      setState(() {});
-    });
+    _amountController.addListener(() => setState(() {}));
+    _memoController.addListener(() => setState(() {}));
   }
 
   @override
@@ -165,6 +179,8 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
         _selectedJournalId = _journals.first['id'] as int;
         await _loadMethodsForJournal(_selectedJournalId!);
       }
+
+      if (_isEditing) _editSnapshot.capture(_editableValues);
     } catch (e) {
       setState(() => _errorMessage = e.toString());
     } finally {
@@ -308,9 +324,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       _customerSearchController.text = _selectedCustomer?.name ?? '';
     }
 
-    // Prefilling is not a user edit.
-    _hasEdits = false;
-
     if (mounted) setState(() {});
   }
 
@@ -375,7 +388,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
     setState(() {
       _selectedCustomer = customer;
       _customerSearchController.text = customer.name;
-      _hasEdits = true;
     });
   }
 
@@ -383,7 +395,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
     setState(() {
       _selectedCustomer = null;
       _customerSearchController.clear();
-      _hasEdits = true;
     });
   }
 
@@ -519,7 +530,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
         }
 
         if (mounted) {
-          _hasEdits = false;
           final navigator = Navigator.of(context);
           navigator.pop(true);
           CustomSnackbar.showSuccess(
@@ -652,6 +662,7 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       child: Scaffold(
         backgroundColor: backgroundColor,
         appBar: AppBar(
+          forceMaterialTransparency: true,
           backgroundColor: backgroundColor,
           foregroundColor: isDark ? Colors.white : theme.primaryColor,
           elevation: 0,
@@ -791,13 +802,27 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              flex: 2,
+              flex: 3,
               child: MoboTextField(
                 controller: _amountController,
                 label: 'Amount',
                 hintText: '0.00',
                 isRequired: true,
-                leadingIcon: HugeIcons.strokeRoundedDollarCircle,
+                // The selected currency's own symbol, not a fixed dollar.
+                leading: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minWidth: AppFormTheme.iconSize,
+                  ),
+                  child: Text(
+                    _selectedCurrencySymbol,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppFormTheme.iconColor(isDark),
+                    ),
+                  ),
+                ),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -814,7 +839,7 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
               ),
             ),
             const SizedBox(width: 12),
-            Expanded(flex: 1, child: _buildCurrencyDropdown(isDark)),
+            Expanded(flex: 2, child: _buildCurrencyDropdown(isDark)),
           ],
         ),
         const SizedBox(height: 16),
@@ -875,29 +900,22 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
     return match.isEmpty ? null : match.first['name']?.toString();
   }
 
-  Widget _buildCurrencyDropdown(bool isDark) {
-    final selected = _currencies
-        .where((c) => c['id'] == _selectedCurrencyId)
-        .toList();
+  Map<String, dynamic>? get _selectedCurrency =>
+      _currencies.where((c) => c['id'] == _selectedCurrencyId).firstOrNull;
 
-    return MoboInlineDropdown<Map<String, dynamic>>(
-      label: 'Currency',
-      hintText: 'Select',
-      selectedLabel: selected.isEmpty
-          ? null
-          : (selected.first['symbol']?.toString().isNotEmpty == true
-                ? '${selected.first['name'] ?? ''} (${selected.first['symbol']})'
-                : selected.first['name']?.toString()),
-      items: _currencies,
-      titleBuilder: (c) => c['symbol']?.toString().isNotEmpty == true
-          ? '${c['name'] ?? ''} (${c['symbol']})'
-          : '${c['name'] ?? ''}',
-      isItemSelected: (c) => c['id'] == _selectedCurrencyId,
-      emptyText: 'No currencies found',
-      onItemTap: (c) => setState(() {
-        _selectedCurrencyId = c['id'] as int?;
-        _hasEdits = true;
-      }),
+  /// Symbol of the chosen currency, falling back to the company's.
+  String get _selectedCurrencySymbol {
+    final symbol = _selectedCurrency?['symbol'];
+    return symbol is String && symbol.isNotEmpty
+        ? symbol
+        : context.read<CurrencyProvider>().symbol;
+  }
+
+  Widget _buildCurrencyDropdown(bool isDark) {
+    return CurrencySelectField(
+      currencies: _currencies,
+      selectedId: _selectedCurrencyId,
+      onSelected: (id) => setState(() => _selectedCurrencyId = id),
     );
   }
 
@@ -918,7 +936,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
         final id = j['id'] as int?;
         setState(() {
           _selectedJournalId = id;
-          _hasEdits = true;
         });
         if (id != null) _loadMethodsForJournal(id);
       },
@@ -938,7 +955,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       emptyText: 'No payment methods found',
       onItemTap: (m) => setState(() {
         _selectedPaymentMethodId = m['id'] as int?;
-        _hasEdits = true;
       }),
     );
   }
@@ -955,7 +971,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       emptyText: 'No bank accounts found',
       onItemTap: (b) => setState(() {
         _selectedPartnerBankId = b['id'] as int?;
-        _hasEdits = true;
       }),
     );
   }
@@ -974,7 +989,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
     if (date != null && mounted) {
       setState(() {
         _paymentDate = date;
-        _hasEdits = true;
       });
     }
   }
@@ -984,8 +998,9 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
       label: _isEditing ? 'Save Payment' : 'Create Payment',
       loadingLabel: _isEditing ? 'Saving Payment' : 'Creating Payment',
       isLoading: _isLoading,
-      isReady: _isEditing ? true : hasUnsavedData,
-      onPressed: _createPayment,
+      // An edit that changes nothing has nothing to submit.
+      isReady: _isEditing ? _hasEdits : hasUnsavedData,
+      onPressed: (_isEditing && !_hasEdits) ? null : _createPayment,
     );
   }
 }

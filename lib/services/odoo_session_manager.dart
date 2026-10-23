@@ -6,6 +6,7 @@ import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import '../models/odoo_session.dart';
+import '../utils/odoo_binary_utils.dart';
 import 'self_signed.dart';
 export '../models/odoo_session.dart';
 
@@ -150,8 +151,16 @@ class OdooSessionManager {
         normalizedUrl = normalizedUrl.substring(0, normalizedUrl.length - 5);
       }
 
-      final Map<String, dynamic> info =
+      Map<String, dynamic> info =
           sessionInfo ?? await getSessionInfo(normalizedUrl, sessionId);
+
+      // A caller-built `sessionInfo` may lack the server version; guessing
+      // one sends the wrong call shapes to the server, so ask it instead.
+      if (info['server_version'] == null) {
+        try {
+          info = {...info, ...await getSessionInfo(normalizedUrl, sessionId)};
+        } catch (_) {}
+      }
 
       if (info['uid'] == null || info['uid'] is bool) {
         throw Exception('Failed to get valid session info');
@@ -183,44 +192,16 @@ class OdooSessionManager {
       final company = _parseCompany(userData[0]['company_id']);
       int? selectedCompanyId = company?['id'];
 
-      bool isSystem = false;
-      if (majorVersion >= 18) {
-        isSystem =
-            await callKwWithSession(
+      // session_info reports it directly on every supported version; only
+      // fall back to has_group (whose call shape changed in 18) without it.
+      final bool isSystem = info['is_system'] is bool
+          ? info['is_system'] as bool
+          : await _hasSystemGroup(
               url: normalizedUrl,
               sessionId: sessionId,
-              payload: {
-                "jsonrpc": "2.0",
-                "method": "call",
-                "params": {
-                  "model": "res.users",
-                  "method": "has_group",
-                  "args": [userId, "base.group_system"],
-                  "kwargs": {},
-                },
-                "id": 1,
-              },
-            ) ==
-            true;
-      } else {
-        isSystem =
-            await callKwWithSession(
-              url: normalizedUrl,
-              sessionId: sessionId,
-              payload: {
-                "jsonrpc": "2.0",
-                "method": "call",
-                "params": {
-                  "model": "res.users",
-                  "method": "has_group",
-                  "args": ["base.group_system"],
-                  "kwargs": {},
-                },
-                "id": 1,
-              },
-            ) ==
-            true;
-      }
+              userId: userId,
+              majorVersion: majorVersion,
+            );
 
       if (selectedCompanyId == null) {
         selectedCompanyId = info['company_id'];
@@ -281,6 +262,44 @@ class OdooSessionManager {
     }
   }
 
+  /// Whether [userId] is in base.group_system. `res.users.has_group` is an
+  /// `@api.model` method taking just the group on Odoo 17 but a record method
+  /// from 18 on, so try the shape the version calls for, then the other.
+  static Future<bool> _hasSystemGroup({
+    required String url,
+    required String sessionId,
+    required int userId,
+    required int majorVersion,
+  }) async {
+    final recordForm = [userId, 'base.group_system'];
+    final modelForm = ['base.group_system'];
+    final attempts = majorVersion >= 18
+        ? [recordForm, modelForm]
+        : [modelForm, recordForm];
+
+    for (final args in attempts) {
+      try {
+        final result = await callKwWithSession(
+          url: url,
+          sessionId: sessionId,
+          payload: {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+              "model": "res.users",
+              "method": "has_group",
+              "args": args,
+              "kwargs": {},
+            },
+            "id": 1,
+          },
+        );
+        return result == true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
   /// Fetches basic session information (UID, company, context) from Odoo.
   static Future<Map<String, dynamic>> getSessionInfo(
     String url,
@@ -314,6 +333,43 @@ class OdooSessionManager {
     return Map<String, dynamic>.from(data['result']);
   }
 
+  /// Whether the Odoo database behind [sessionId] has expired.
+  ///
+  /// Odoo Enterprise (17–20) reports its subscription end in `session_info`
+  /// and only blocks the web client — the server keeps accepting logins and
+  /// RPC calls from an expired database — so the app has to enforce it.
+  static Future<bool> isDatabaseExpired(String url, String sessionId) async {
+    return isSessionInfoExpired(await getSessionInfo(url, sessionId));
+  }
+
+  /// Reads the expiry out of a `session_info` result. `expiration_date` is a
+  /// UTC `YYYY-MM-DD HH:MM:SS` string; it is missing or empty on Community
+  /// databases, which never expire. Matches the web client's own rule: the
+  /// database is blocked once the rounded number of days left reaches zero.
+  @visibleForTesting
+  static bool isSessionInfoExpired(Map<String, dynamic> info, {DateTime? now}) {
+    final raw = info['expiration_date'];
+    if (raw is! String || raw.trim().isEmpty) return false;
+
+    final parsed = DateTime.tryParse(raw.trim());
+    if (parsed == null) return false;
+    final expiresAt = parsed.isUtc
+        ? parsed
+        : DateTime.utc(
+            parsed.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+          );
+
+    final daysLeft =
+        expiresAt.difference(now ?? DateTime.now().toUtc()).inSeconds /
+        Duration.secondsPerDay;
+    return daysLeft.round() <= 0;
+  }
+
   /// Executes a low-level keyword-based RPC call using a specific session ID.
   static Future<dynamic> callKwWithSession({
     required String url,
@@ -336,19 +392,20 @@ class OdooSessionManager {
 
     if (data['error'] != null)
       throw Exception(data['error']['message'] ?? 'RPC Error');
-    return data['result'];
+    return normalizeOdooBinaries(data['result']);
   }
 
-  /// Parses the major version number from an Odoo version string.
+  /// Parses the major version number from an Odoo version string
+  /// (`'17.0'`, `'20.0+e'`, `'saas~18.3'`), or 0 when there is none.
   static int parseMajorVersion(String version) {
-    try {
-      final parts = version.split('.');
-      if (parts.isNotEmpty) {
-        return int.parse(parts[0]);
-      }
-    } catch (e) {}
-    return 0;
+    final match = RegExp(r'(\d+)').firstMatch(version);
+    return match == null ? 0 : int.parse(match.group(1)!);
   }
+
+  /// Major version of the server behind the current session, or 0 when
+  /// unknown (no session yet, or the server did not report a version).
+  static int get serverMajorVersion =>
+      parseMajorVersion(_cachedSession?.serverVersion ?? '');
 
   static Map<String, dynamic>? _parseCompany(dynamic value) {
     if (value == null) return null;
@@ -487,7 +544,9 @@ class OdooSessionManager {
               odooSession.userId,
             );
 
-            selectedCompanyId = userInfo['company_id'];
+            selectedCompanyId =
+                userInfo['company_id'] ??
+                (odooSession.companyId > 0 ? odooSession.companyId : null);
             // Default to just the company that's active on the server
             // (res.users.company_id) instead of every company the user
             // happens to be a member of — this matches what Odoo's own web
@@ -546,7 +605,9 @@ class OdooSessionManager {
     int userId,
   ) async {
     try {
-      final result = await safeCallKwWithoutCompany({
+      // Through the client just authenticated: during an account switch the
+      // "current" session is still the previous account, on another server.
+      final result = await client.callKw({
         'model': 'res.users',
         'method': 'read',
         'args': [
@@ -797,7 +858,7 @@ class OdooSessionManager {
               retryData['error']['message']?.toString() ?? 'RPC Error',
             );
           }
-          return retryData['result'];
+          return normalizeOdooBinaries(retryData['result']);
         } catch (_) {
           try {
             final refreshed = await refreshSession();
@@ -814,7 +875,7 @@ class OdooSessionManager {
                   retryData['error']['message']?.toString() ?? 'RPC Error',
                 );
               }
-              return retryData['result'];
+              return normalizeOdooBinaries(retryData['result']);
             }
           } catch (_) {}
         }
@@ -826,7 +887,7 @@ class OdooSessionManager {
       }
       throw Exception(detailedMessage);
     }
-    return data['result'];
+    return normalizeOdooBinaries(data['result']);
   }
 
   /// Executes a keyword-based RPC call without adding company context.
@@ -878,14 +939,16 @@ class OdooSessionManager {
           if (refreshed) {
             response = await _post();
             final retryData = jsonDecode(response.body);
-            if (retryData['error'] == null) return retryData['result'];
+            if (retryData['error'] == null) {
+              return normalizeOdooBinaries(retryData['result']);
+            }
           }
         } catch (_) {}
       }
 
       throw Exception(message);
     }
-    return data['result'];
+    return normalizeOdooBinaries(data['result']);
   }
 
   /// Executes a keyword-based RPC call without company context, with built-in retry logic.
@@ -945,7 +1008,7 @@ class OdooSessionManager {
                 retryData['error']['message']?.toString() ?? 'RPC Error',
               );
             }
-            return retryData['result'];
+            return normalizeOdooBinaries(retryData['result']);
           } catch (_) {
             try {
               final refreshed = await refreshSession();
@@ -962,14 +1025,14 @@ class OdooSessionManager {
                     retryData['error']['message']?.toString() ?? 'RPC Error',
                   );
                 }
-                return retryData['result'];
+                return normalizeOdooBinaries(retryData['result']);
               }
             } catch (_) {}
           }
         }
         throw Exception(message);
       }
-      return data['result'];
+      return normalizeOdooBinaries(data['result']);
     });
   }
 

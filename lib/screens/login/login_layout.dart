@@ -163,7 +163,7 @@ class LoginLayout extends StatelessWidget {
       children: [
         Text(
           title,
-          style: GoogleFonts.montserrat(
+          style: GoogleFonts.manrope(
             fontWeight: FontWeight.w600,
             color: Colors.white,
             fontSize: 22,
@@ -223,6 +223,10 @@ class LoginTextField extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextFormField(
       cursorColor: Colors.black,
+      // The login theme's errorStyle is white (for the message on the dark
+      // background), and Flutter paints the cursor in that colour while the
+      // field shows an error — invisible on the white fill. Keep it black.
+      cursorErrorColor: Colors.black,
       style: GoogleFonts.manrope(
         fontSize: 14,
         fontWeight: FontWeight.w400,
@@ -537,8 +541,7 @@ class LoginErrorDisplay extends StatelessWidget {
                     Expanded(
                       child: Text(
                         error!,
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
+                        style: GoogleFonts.manrope(
                           color: Colors.white,
                           fontSize: 12,
                           fontWeight: FontWeight.w400,
@@ -649,6 +652,8 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
   Widget build(BuildContext context) {
     return TextFormField(
       cursorColor: Colors.black,
+      // Stay black in error state too — see LoginTextField.
+      cursorErrorColor: Colors.black,
       style: GoogleFonts.manrope(
         fontSize: 14,
         fontWeight: FontWeight.w400,

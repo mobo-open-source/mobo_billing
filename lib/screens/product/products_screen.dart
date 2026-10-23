@@ -8,6 +8,7 @@ import '../../models/product.dart';
 import '../../providers/product_provider.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/filter_chip_button.dart';
 import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../widgets/product_list_tile.dart';
@@ -57,11 +58,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
     super.dispose();
   }
 
+  /// Loads (or, after a create/edit/archive, reloads) the list for whatever
+  /// is in the search box — reloading unfiltered would leave the box showing
+  /// a query the list no longer matches.
   Future<void> _loadData() async {
     final provider = Provider.of<ProductProvider>(context, listen: false);
-    await provider.loadProducts();
+    await _runSearch(_searchController.text);
     await provider.fetchGroupByOptions();
     if (mounted) setState(() => _isFirstLoad = false);
+  }
+
+  Future<void> _runSearch(String query) {
+    _searchDebounce?.cancel();
+    final provider = Provider.of<ProductProvider>(context, listen: false);
+    // Groups are re-read for the new query; open tiles would otherwise spin
+    // on data that was just cleared.
+    if (provider.isGrouped && _expandedGroups.isNotEmpty) {
+      setState(() => _expandedGroups.clear());
+    }
+    return provider.searchProducts(query);
   }
 
   void _onSearchChanged(String query) {
@@ -69,12 +84,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 350), () {
       if (!mounted) return;
-      final provider = Provider.of<ProductProvider>(context, listen: false);
-      if (query.isEmpty) {
-        provider.loadProducts();
-      } else {
-        provider.searchProducts(query);
-      }
+      _runSearch(query);
     });
   }
 
@@ -87,6 +97,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor:
             Theme.of(context).appBarTheme.backgroundColor ??
             Theme.of(context).colorScheme.surface,
@@ -248,10 +259,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
         hasActiveFilters: _hasActiveFilters(provider),
         onFilterTap: _showFilterBottomSheet,
         onChanged: _onSearchChanged,
-        onClear: () {
-          _searchDebounce?.cancel();
-          Provider.of<ProductProvider>(context, listen: false).loadProducts();
-        },
+        // Lets the keyboard's search key re-run the same text (onChanged
+        // only fires when the text changes).
+        onSubmitted: _runSearch,
+        onClear: () => _runSearch(''),
       ),
     );
   }
@@ -797,11 +808,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         unselectedLabelColor: isDark
                             ? Colors.grey[400]
                             : Colors.grey[600],
-                        labelStyle: const TextStyle(
+                        labelStyle: GoogleFonts.manrope(
                           fontWeight: FontWeight.w600,
                           fontSize: 14,
                         ),
-                        unselectedLabelStyle: const TextStyle(
+                        unselectedLabelStyle: GoogleFonts.manrope(
                           fontWeight: FontWeight.w500,
                           fontSize: 14,
                         ),
@@ -1008,112 +1019,27 @@ class _ProductsScreenState extends State<ProductsScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          // One product type at a time.
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              ChoiceChip(
-                label: Text(
-                  'Services',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showServicesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showServicesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
+              for (final (key, label) in const [
+                ('showServicesOnly', 'Services'),
+                ('showConsumablesOnly', 'Consumables'),
+                ('showStorableOnly', 'Storable'),
+              ])
+                FilterChipButton(
+                  label: label,
+                  selected: tempState[key] == true,
+                  onTap: () => setDialogState(() {
+                    final val = tempState[key] != true;
+                    tempState['showServicesOnly'] = false;
+                    tempState['showConsumablesOnly'] = false;
+                    tempState['showStorableOnly'] = false;
+                    tempState[key] = val;
+                  }),
                 ),
-                selected: tempState['showServicesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showServicesOnly'] = val;
-                    if (val) {
-                      tempState['showConsumablesOnly'] = false;
-                      tempState['showStorableOnly'] = false;
-                    }
-                  });
-                },
-              ),
-              ChoiceChip(
-                label: Text(
-                  'Consumables',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showConsumablesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showConsumablesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showConsumablesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showConsumablesOnly'] = val;
-                    if (val) {
-                      tempState['showServicesOnly'] = false;
-                      tempState['showStorableOnly'] = false;
-                    }
-                  });
-                },
-              ),
-              ChoiceChip(
-                label: Text(
-                  'Storable',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showStorableOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showStorableOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showStorableOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showStorableOnly'] = val;
-                    if (val) {
-                      tempState['showServicesOnly'] = false;
-                      tempState['showConsumablesOnly'] = false;
-                    }
-                  });
-                },
-              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -1127,35 +1053,16 @@ class _ProductsScreenState extends State<ProductsScreen> {
           ),
           const SizedBox(height: 8),
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              ChoiceChip(
-                label: Text(
-                  'Available Only',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showAvailableOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showAvailableOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
+              FilterChipButton(
+                label: 'Available Only',
                 selected: tempState['showAvailableOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
+                onTap: () => setDialogState(
+                  () => tempState['showAvailableOnly'] =
+                      tempState['showAvailableOnly'] != true,
                 ),
-                onSelected: (val) =>
-                    setDialogState(() => tempState['showAvailableOnly'] = val),
               ),
             ],
           ),
@@ -1187,80 +1094,33 @@ class _ProductsScreenState extends State<ProductsScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          RadioListTile<String?>(
-            title: Text(
-              'None',
-              style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontWeight: FontWeight.w500,
+          // Single choice: "None" shows a plain list.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilterChipButton(
+                label: 'None',
+                selected: tempState['selectedGroupBy'] == null,
+                onTap: () => setDialogState(
+                  () => tempState['selectedGroupBy'] = null,
+                ),
               ),
-            ),
-            subtitle: Text(
-              'Display as a simple list',
-              style: TextStyle(
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 12,
-              ),
-            ),
-            value: null,
-            groupValue: tempState['selectedGroupBy'],
-            onChanged: (value) {
-              setDialogState(() {
-                tempState['selectedGroupBy'] = value;
-              });
-            },
-            activeColor: theme.primaryColor,
-            contentPadding: EdgeInsets.zero,
+              for (final entry in provider.groupByOptions.entries)
+                FilterChipButton(
+                  label: entry.value,
+                  selected: tempState['selectedGroupBy'] == entry.key,
+                  onTap: () => setDialogState(
+                    () => tempState['selectedGroupBy'] = entry.key,
+                  ),
+                ),
+            ],
           ),
-          const Divider(),
-          if (provider.groupByOptions.isEmpty) ...[
+          if (provider.groupByOptions.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16.0),
               child: Center(child: Text("Loading options...")),
             ),
-          ] else ...[
-            ...provider.groupByOptions.entries.map((entry) {
-              String description = '';
-              switch (entry.key) {
-                case 'categ_id':
-                  description = 'Group by product category';
-                  break;
-                case 'type':
-                  description = 'Group by product type';
-                  break;
-                case 'uom_id':
-                  description = 'Group by unit of measure';
-                  break;
-                default:
-                  description = 'Group by ${entry.value.toLowerCase()}';
-              }
-              return RadioListTile<String>(
-                title: Text(
-                  entry.value,
-                  style: TextStyle(
-                    color: isDark ? Colors.white : Colors.black87,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                subtitle: Text(
-                  description,
-                  style: TextStyle(
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    fontSize: 12,
-                  ),
-                ),
-                value: entry.key,
-                groupValue: tempState['selectedGroupBy'],
-                onChanged: (value) {
-                  setDialogState(() {
-                    tempState['selectedGroupBy'] = value;
-                  });
-                },
-                activeColor: theme.primaryColor,
-                contentPadding: EdgeInsets.zero,
-              );
-            }).toList(),
-          ],
           const SizedBox(height: 24),
         ],
       ),

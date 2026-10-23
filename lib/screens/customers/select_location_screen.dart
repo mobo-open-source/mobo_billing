@@ -255,6 +255,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
     return Scaffold(
       backgroundColor: colorScheme.surface,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor: colorScheme.surface,
         foregroundColor: colorScheme.onSurface,
         elevation: 0,

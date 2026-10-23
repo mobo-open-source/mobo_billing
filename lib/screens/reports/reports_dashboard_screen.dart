@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../providers/currency_provider.dart';
+import '../../providers/navigation_provider.dart';
+import '../../utils/refresh_on_tab_select.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/odoo_api_service.dart';
 import '../../services/session_service.dart';
@@ -21,8 +23,15 @@ class ReportsDashboardScreen extends StatefulWidget {
   State<ReportsDashboardScreen> createState() => _ReportsDashboardScreenState();
 }
 
-class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
+class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
+    with RefreshOnTabSelect {
   final OdooApiService _apiService = OdooApiService();
+
+  @override
+  int get tabIndex => NavigationProvider.reportsTab;
+
+  @override
+  Future<void> onTabSelected() => _loadAllData();
   bool _isLoading = true;
   String _error = '';
 
@@ -183,13 +192,13 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    final data = await _apiService.call('account.move', 'read_group', [
+    final data = await _apiService.readGroup(
+      'account.move',
       domain,
-      ['amount_total', 'amount_residual'],
-      [],
-    ]);
+      aggregates: {'amount_total': 'sum', 'amount_residual': 'sum'},
+    );
 
-    if (data is List && data.isNotEmpty) {
+    if (data.isNotEmpty) {
       final total = _safeDouble(data[0]['amount_total']);
       final residual = _safeDouble(data[0]['amount_residual']);
 
@@ -208,6 +217,13 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
     }
   }
 
+  // `read_group`'s date-granularity groupby syntax (`'invoice_date:day'`) is
+  // handled by whatever internal aggregate-parsing codepath each Odoo
+  // version's `read_group` compatibility wrapper happens to use — on Odoo 20
+  // it mistakes the granularity suffix ('day'/'month') for an aggregate
+  // function name and raises "Invalid aggregate method". Bucketing the raw
+  // rows client-side sidesteps that server-side wrapper entirely, so it
+  // keeps working regardless of how a given server implements groupby.
   Future<void> _fetchTrendData() async {
     final domain = [
       ['move_type', '=', 'out_invoice'],
@@ -216,33 +232,44 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    String groupBy = 'invoice_date:day';
-    if (_selectedRange == 'This Year' || _selectedRange == 'Last 90 Days') {
-      groupBy = 'invoice_date:month';
+    final bool groupByMonth =
+        _selectedRange == 'This Year' || _selectedRange == 'Last 90 Days';
+
+    final rows = await _apiService.call('account.move', 'search_read', [
+      domain,
+    ], {
+      'fields': ['invoice_date', 'amount_total'],
+    });
+
+    final Map<String, double> buckets = {};
+    if (rows is List) {
+      for (final row in rows) {
+        final rawDate = row['invoice_date'];
+        if (rawDate is! String || rawDate.isEmpty) continue;
+        DateTime date;
+        try {
+          date = DateTime.parse(rawDate);
+        } catch (_) {
+          continue;
+        }
+        final key = groupByMonth
+            ? DateFormat('yyyy-MM').format(date)
+            : DateFormat('yyyy-MM-dd').format(date);
+        buckets[key] = (buckets[key] ?? 0) + _safeDouble(row['amount_total']);
+      }
     }
 
-    final data = await _apiService.call('account.move', 'read_group', [
-      domain,
-      ['amount_total'],
-      [groupBy],
-    ]);
+    final sortedKeys = buckets.keys.toList()..sort();
 
     List<FlSpot> spots = [];
     List<String> labels = [];
     double maxVal = 0;
 
-    if (data is List) {
-      data.sort((a, b) => (a[groupBy] ?? '').compareTo(b[groupBy] ?? ''));
-
-      for (int i = 0; i < data.length; i++) {
-        final amount = _safeDouble(data[i]['amount_total']);
-        if (amount > maxVal) maxVal = amount;
-        spots.add(FlSpot(i.toDouble(), amount));
-
-        String rawLabel = data[i][groupBy] ?? '';
-
-        labels.add(_formatChartLabel(rawLabel, groupBy));
-      }
+    for (int i = 0; i < sortedKeys.length; i++) {
+      final amount = buckets[sortedKeys[i]]!;
+      if (amount > maxVal) maxVal = amount;
+      spots.add(FlSpot(i.toDouble(), amount));
+      labels.add(_formatBucketLabel(sortedKeys[i], groupByMonth));
     }
 
     _trendData = spots;
@@ -250,37 +277,14 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
     _trendLabels = labels;
   }
 
-  String _formatChartLabel(String label, String groupBy) {
+  String _formatBucketLabel(String key, bool isMonth) {
     try {
-      final parts = label.split(' ');
-
-      if (groupBy.contains('month')) {
-        if (parts.isNotEmpty) {
-          String month = parts[0];
-          if (month.length > 3) month = month.substring(0, 3);
-          return month;
-        }
-      } else {
-        try {
-          DateTime date = DateTime.parse(label);
-          return DateFormat('dd MMM').format(date);
-        } catch (_) {
-          if (parts.length >= 2) {
-            String day = parts[0];
-            String month = parts[1];
-
-            if (day.contains('-')) {
-              DateTime date = DateTime.parse(day);
-              return DateFormat('dd MMM').format(date);
-            }
-            if (month.length > 3) month = month.substring(0, 3);
-            return '$day $month';
-          }
-        }
+      if (isMonth) {
+        return DateFormat('MMM').format(DateFormat('yyyy-MM').parse(key));
       }
-      return label;
-    } catch (e) {
-      return label;
+      return DateFormat('dd MMM').format(DateTime.parse(key));
+    } catch (_) {
+      return key;
     }
   }
 
@@ -292,25 +296,25 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    final data = await _apiService.call('account.move', 'read_group', [
+    final data = await _apiService.readGroup(
+      'account.move',
       domain,
-      ['amount_total'],
-      ['payment_state'],
-    ]);
+      groupby: ['payment_state'],
+      aggregates: {'amount_total': 'sum'},
+    );
 
     Map<String, double> distribution = {};
-    if (data is List) {
-      for (var item in data) {
-        String status = item['payment_state'] ?? 'Unknown';
+    for (var item in data) {
+      final rawStatus = item['payment_state'];
+      String status = rawStatus is String ? rawStatus : 'Unknown';
 
-        if (status == 'not_paid') status = 'Unpaid';
-        if (status == 'paid') status = 'Paid';
-        if (status == 'partial') status = 'Partial';
-        if (status == 'reversed') status = 'Reversed';
-        if (status == 'in_payment') status = 'In Payment';
+      if (status == 'not_paid') status = 'Unpaid';
+      if (status == 'paid') status = 'Paid';
+      if (status == 'partial') status = 'Partial';
+      if (status == 'reversed') status = 'Reversed';
+      if (status == 'in_payment') status = 'In Payment';
 
-        distribution[status] = _safeDouble(item['amount_total']);
-      }
+      distribution[status] = _safeDouble(item['amount_total']);
     }
     _statusDistribution = distribution;
   }
@@ -323,27 +327,23 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    final data = await _apiService.call(
+    final data = await _apiService.readGroup(
       'account.move',
-      'read_group',
-      [
-        domain,
-        ['amount_total'],
-        ['partner_id'],
-      ],
-      {'limit': 5, 'orderby': 'amount_total desc'},
+      domain,
+      groupby: ['partner_id'],
+      aggregates: {'amount_total': 'sum'},
+      limit: 5,
+      orderby: 'amount_total desc',
     );
 
     List<Map<String, dynamic>> customers = [];
-    if (data is List) {
-      for (var item in data) {
-        if (item['partner_id'] != null) {
-          final partnerName = (item['partner_id'] is List)
-              ? item['partner_id'][1]
-              : 'Unknown';
-          final amount = _safeDouble(item['amount_total']);
-          customers.add({'name': partnerName, 'amount': amount});
-        }
+    for (var item in data) {
+      if (item['partner_id'] != null) {
+        final partnerName = (item['partner_id'] is List)
+            ? item['partner_id'][1]
+            : 'Unknown';
+        final amount = _safeDouble(item['amount_total']);
+        customers.add({'name': partnerName, 'amount': amount});
       }
     }
 

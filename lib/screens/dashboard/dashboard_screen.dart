@@ -34,6 +34,9 @@ import '../../widgets/shimmer_loading.dart';
 import '../../providers/currency_provider.dart';
 import '../CreditNotes/credit_notes_screen.dart';
 import 'package:mobo_billing/screens/payment/payment_detail_screen.dart';
+import 'package:mobo_billing/providers/navigation_provider.dart';
+import 'package:mobo_billing/utils/refresh_on_tab_select.dart';
+import 'package:mobo_billing/utils/app_route_observer.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -43,8 +46,15 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, RefreshOnTabSelect, RouteAware {
   late TabController _tabController;
+  PageRoute<dynamic>? _route;
+
+  @override
+  int get tabIndex => NavigationProvider.dashboardTab;
+
+  @override
+  Future<void> onTabSelected() => _loadData();
 
   @override
   void initState() {
@@ -57,7 +67,29 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute && route != _route) {
+      if (_route != null) appRouteObserver.unsubscribe(this);
+      _route = route;
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  /// A page opened over the dashboard (invoice, payment, create form…) was
+  /// closed — reload so edits made there show up instead of the old figures.
+  @override
+  void didPopNext() {
+    if (context.read<NavigationProvider>().currentIndex ==
+        NavigationProvider.dashboardTab) {
+      _loadData();
+    }
+  }
+
+  @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _tabController.dispose();
     super.dispose();
   }
@@ -74,6 +106,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       await Future.wait([
         invoiceProvider.loadDashboardData(),
         if (profileProvider.profile == null) profileProvider.loadProfile(),
+        _refreshRecentlyOpened(),
       ]).timeout(
         const Duration(seconds: 30),
         onTimeout: () {
@@ -93,6 +126,18 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
       }
     }
+  }
+
+  /// Re-reads the invoices / credit notes in the recently-opened list so their
+  /// titles follow the server (a draft opened earlier may have been posted).
+  Future<void> _refreshRecentlyOpened() async {
+    final lastOpenedProvider = context.read<LastOpenedProvider>();
+    final invoiceProvider = context.read<InvoiceProvider>();
+    await lastOpenedProvider.ensureLoaded();
+    final records = await invoiceProvider.fetchMoveSummaries(
+      lastOpenedProvider.documentIds,
+    );
+    await lastOpenedProvider.refreshDocuments(records);
   }
 
   @override
@@ -171,9 +216,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                     children: [
                       _buildHeader(context, profileProvider, isDark),
                       if (!connectivityService.isConnected ||
-                          provider.isShowingCachedData)
+                          provider.isShowingCachedDashboard)
                         OfflineDataBanner(
-                          lastUpdated: provider.cacheUpdatedAt,
+                          lastUpdated: provider.dashboardCacheUpdatedAt,
                           onRetry: _loadData,
                           message: connectivityService.isConnected
                               ? "Couldn't refresh the dashboard"
@@ -621,7 +666,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _getValidTitle(invoice.name),
+                        invoice.displayName,
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           color: isDark ? Colors.white : Colors.black87,
@@ -632,7 +677,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                         children: [
                           Expanded(
                             child: Text(
-                              '$partnerName • $date',
+                              [
+                                partnerName,
+                                date,
+                              ].where((part) => part.isNotEmpty).join(' • '),
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isDark

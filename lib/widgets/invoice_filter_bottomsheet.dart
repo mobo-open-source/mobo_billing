@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
-import 'package:hugeicons/hugeicons.dart';
-import 'package:intl/intl.dart';
-import '../utils/date_picker_utils.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'custom_snackbar.dart';
+import 'date_range_filter_fields.dart';
+import 'filter_chip_button.dart';
 
 class InvoiceFilterBottomSheet extends StatefulWidget {
   final Set<String> activeFilters;
   final DateTime? startDate;
   final DateTime? endDate;
   final String? selectedGroupBy;
+
+  /// Status options (key → label); defaults to the invoice statuses.
+  final Map<String, String>? statusFilters;
+
+  /// Group-by options (field → label); defaults to the invoice fields.
+  final Map<String, String>? groupByOptions;
+
   final Function(
     Set<String> filters,
     DateTime? startDate,
@@ -23,6 +31,8 @@ class InvoiceFilterBottomSheet extends StatefulWidget {
     required this.endDate,
     required this.selectedGroupBy,
     required this.onApply,
+    this.statusFilters,
+    this.groupByOptions,
   }) : super(key: key);
 
   @override
@@ -56,6 +66,12 @@ class _InvoiceFilterBottomSheetState extends State<InvoiceFilterBottomSheet>
     'partner_id': 'Partner',
     'team_id': 'Sales Team',
   };
+
+  Map<String, String> get _statuses =>
+      widget.statusFilters ?? _invoiceStatusFilters;
+
+  Map<String, String> get _groupBys =>
+      widget.groupByOptions ?? _invoiceGroupByOptions;
 
   @override
   void initState() {
@@ -139,11 +155,11 @@ class _InvoiceFilterBottomSheetState extends State<InvoiceFilterBottomSheet>
                 unselectedLabelColor: isDark
                     ? Colors.grey[400]
                     : Colors.grey[600],
-                labelStyle: const TextStyle(
+                labelStyle: GoogleFonts.manrope(
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
                 ),
-                unselectedLabelStyle: const TextStyle(
+                unselectedLabelStyle: GoogleFonts.manrope(
                   fontWeight: FontWeight.w500,
                   fontSize: 14,
                 ),
@@ -227,51 +243,20 @@ class _InvoiceFilterBottomSheetState extends State<InvoiceFilterBottomSheet>
                         ),
                         const SizedBox(height: 12),
                         Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: _invoiceStatusFilters.entries.map((entry) {
-                            final isSelected = _activeFilters.contains(
-                              entry.key,
-                            );
-                            return ChoiceChip(
-                              label: Text(
-                                entry.value,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: isSelected
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                  color: isSelected
-                                      ? Colors.white
-                                      : (isDark
-                                            ? Colors.white
-                                            : Colors.black87),
-                                ),
-                              ),
-                              selected: isSelected,
-                              selectedColor: theme.primaryColor,
-                              backgroundColor: isDark
-                                  ? Colors.white.withOpacity(.08)
-                                  : theme.primaryColor.withOpacity(0.08),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: BorderSide(
-                                  color: isDark
-                                      ? Colors.grey[600]!
-                                      : Colors.grey[300]!,
-                                ),
-                              ),
-                              onSelected: (val) {
-                                setState(() {
-                                  if (val) {
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final entry in _statuses.entries)
+                              FilterChipButton(
+                                label: entry.value,
+                                selected: _activeFilters.contains(entry.key),
+                                onTap: () => setState(() {
+                                  if (!_activeFilters.remove(entry.key)) {
                                     _activeFilters.add(entry.key);
-                                  } else {
-                                    _activeFilters.remove(entry.key);
                                   }
-                                });
-                              },
-                            );
-                          }).toList(),
+                                }),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 24),
                         Text(
@@ -282,162 +267,13 @@ class _InvoiceFilterBottomSheetState extends State<InvoiceFilterBottomSheet>
                           ),
                         ),
                         const SizedBox(height: 12),
-                        InkWell(
-                          onTap: () async {
-                            final date =
-                                await DatePickerUtils.showStandardDatePicker(
-                                  context: context,
-                                  initialDate: _startDate ?? DateTime.now(),
-                                  firstDate: DateTime(2020),
-                                  lastDate: DateTime.now().add(
-                                    const Duration(days: 365),
-                                  ),
-                                );
-                            if (date != null) {
-                              setState(() {
-                                _startDate = date;
-                              });
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? Colors.grey[850]
-                                  : Colors.grey[50],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isDark
-                                    ? Colors.grey[700]!
-                                    : Colors.grey[300]!,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                HugeIcon(
-                                  icon: HugeIcons.strokeRoundedCalendar03,
-                                  size: 16,
-                                  color: isDark
-                                      ? Colors.grey[400]
-                                      : Colors.grey[600],
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _startDate != null
-                                        ? 'From: ${DateFormat('MMM dd, yyyy').format(_startDate!)}'
-                                        : 'Select start date',
-                                    style: TextStyle(
-                                      color: _startDate != null
-                                          ? (isDark
-                                                ? Colors.white
-                                                : Colors.grey[800])
-                                          : (isDark
-                                                ? Colors.grey[400]
-                                                : Colors.grey[600]),
-                                    ),
-                                  ),
-                                ),
-                                if (_startDate != null)
-                                  IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _startDate = null;
-                                      });
-                                    },
-                                    icon: Icon(
-                                      Icons.clear,
-                                      size: 16,
-                                      color: isDark
-                                          ? Colors.grey[400]
-                                          : Colors.grey[600],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        InkWell(
-                          onTap: () async {
-                            final date =
-                                await DatePickerUtils.showStandardDatePicker(
-                                  context: context,
-                                  initialDate: _endDate ?? DateTime.now(),
-                                  firstDate: _startDate ?? DateTime(2020),
-                                  lastDate: DateTime.now().add(
-                                    const Duration(days: 365),
-                                  ),
-                                );
-                            if (date != null) {
-                              setState(() {
-                                _endDate = date;
-                              });
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? Colors.grey[850]
-                                  : Colors.grey[50],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isDark
-                                    ? Colors.grey[700]!
-                                    : Colors.grey[300]!,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                HugeIcon(
-                                  icon: HugeIcons.strokeRoundedCalendar03,
-                                  size: 16,
-                                  color: isDark
-                                      ? Colors.grey[400]
-                                      : Colors.grey[600],
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _endDate != null
-                                        ? 'To: ${DateFormat('MMM dd, yyyy').format(_endDate!)}'
-                                        : 'Select end date',
-                                    style: TextStyle(
-                                      color: _endDate != null
-                                          ? (isDark
-                                                ? Colors.white
-                                                : Colors.grey[800])
-                                          : (isDark
-                                                ? Colors.grey[400]
-                                                : Colors.grey[600]),
-                                    ),
-                                  ),
-                                ),
-                                if (_endDate != null)
-                                  IconButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _endDate = null;
-                                      });
-                                    },
-                                    icon: Icon(
-                                      Icons.clear,
-                                      size: 16,
-                                      color: isDark
-                                          ? Colors.grey[400]
-                                          : Colors.grey[600],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
+                        DateRangeFilterFields(
+                          startDate: _startDate,
+                          endDate: _endDate,
+                          onStartChanged: (date) =>
+                              setState(() => _startDate = date),
+                          onEndChanged: (date) =>
+                              setState(() => _endDate = date),
                         ),
                       ],
                     ),
@@ -457,85 +293,27 @@ class _InvoiceFilterBottomSheetState extends State<InvoiceFilterBottomSheet>
                           ),
                         ),
                         const SizedBox(height: 12),
-                        RadioListTile<String?>(
-                          title: Text(
-                            'None',
-                            style: TextStyle(
-                              color: isDark ? Colors.white : Colors.black87,
-                              fontWeight: FontWeight.w500,
+                        // Single choice: "None" shows a plain list.
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilterChipButton(
+                              label: 'None',
+                              selected: _selectedGroupBy == null,
+                              onTap: () =>
+                                  setState(() => _selectedGroupBy = null),
                             ),
-                          ),
-                          subtitle: Text(
-                            'Display as a simple list',
-                            style: TextStyle(
-                              color: isDark
-                                  ? Colors.grey[400]
-                                  : Colors.grey[600],
-                              fontSize: 12,
-                            ),
-                          ),
-                          value: null,
-                          groupValue: _selectedGroupBy,
-                          onChanged: (value) {
-                            setState(() {
-                              _selectedGroupBy = value;
-                            });
-                          },
-                          activeColor: theme.primaryColor,
-                          contentPadding: EdgeInsets.zero,
+                            for (final entry in _groupBys.entries)
+                              FilterChipButton(
+                                label: entry.value,
+                                selected: _selectedGroupBy == entry.key,
+                                onTap: () => setState(
+                                  () => _selectedGroupBy = entry.key,
+                                ),
+                              ),
+                          ],
                         ),
-                        const Divider(),
-                        ..._invoiceGroupByOptions.entries.map((entry) {
-                          String description = '';
-                          switch (entry.key) {
-                            case 'state':
-                              description =
-                                  'Group by invoice status (Draft, Posted, etc.)';
-                              break;
-                            case 'invoice_user_id':
-                              description = 'Group by assigned salesperson';
-                              break;
-                            case 'partner_id':
-                              description = 'Group by partner/customer';
-                              break;
-                            case 'team_id':
-                              description = 'Group by sales team';
-                              break;
-                            case 'company_id':
-                              description = 'Group by company';
-                              break;
-                            default:
-                              description =
-                                  'Group by ${entry.value.toLowerCase()}';
-                          }
-                          return RadioListTile<String>(
-                            title: Text(
-                              entry.value,
-                              style: TextStyle(
-                                color: isDark ? Colors.white : Colors.black87,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            subtitle: Text(
-                              description,
-                              style: TextStyle(
-                                color: isDark
-                                    ? Colors.grey[400]
-                                    : Colors.grey[600],
-                                fontSize: 12,
-                              ),
-                            ),
-                            value: entry.key,
-                            groupValue: _selectedGroupBy,
-                            onChanged: (value) {
-                              setState(() {
-                                _selectedGroupBy = value;
-                              });
-                            },
-                            activeColor: theme.primaryColor,
-                            contentPadding: EdgeInsets.zero,
-                          );
-                        }).toList(),
                         const SizedBox(height: 24),
                       ],
                     ),
@@ -585,15 +363,16 @@ class _InvoiceFilterBottomSheetState extends State<InvoiceFilterBottomSheet>
                     flex: 2,
                     child: ElevatedButton(
                       onPressed: () {
-                        if (_startDate != null &&
-                            _endDate != null &&
-                            _startDate!.isAfter(_endDate!)) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Start date cannot be after end date',
-                              ),
-                            ),
+                        // The range error is also shown inline under the
+                        // dates; this dialog sits above the sheet, where a
+                        // plain SnackBar would be hidden behind it.
+                        if (!DateRangeFilterFields.isValid(
+                          _startDate,
+                          _endDate,
+                        )) {
+                          CustomSnackbar.showError(
+                            context,
+                            DateRangeFilterFields.rangeError,
                           );
                           return;
                         }

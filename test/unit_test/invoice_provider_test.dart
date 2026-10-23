@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:mobo_billing/providers/invoice_provider.dart';
 import 'package:mobo_billing/models/odoo_session.dart';
+import 'package:mobo_billing/services/data_cache.dart';
 import '../mocks/mock_services.dart';
 
 void main() {
@@ -10,6 +11,9 @@ void main() {
   late InvoiceProvider provider;
 
   setUp(() {
+    // The cache is static: without this, the dashboard snapshot one test
+    // stores is served to the next in place of its error.
+    DataCache.clear();
     mockApiService = MockOdooApiService();
     mockSessionService = MockSessionService();
 
@@ -69,10 +73,10 @@ void main() {
         ).thenAnswer((_) async => 10);
 
         when(
-          () => mockApiService.call(
+          () => mockApiService.readGroup(
             any(),
-            any(that: equals('read_group')),
             any(),
+            aggregates: any(named: 'aggregates'),
           ),
         ).thenAnswer(
           (_) async => [

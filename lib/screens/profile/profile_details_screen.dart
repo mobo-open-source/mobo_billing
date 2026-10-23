@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:provider/provider.dart';
 import 'package:mobo_billing/theme/app_theme.dart';
+import 'package:mobo_billing/utils/odoo_binary_utils.dart';
 import 'package:mobo_billing/services/session_service.dart';
 import 'package:mobo_billing/widgets/custom_text_field.dart';
 import 'package:mobo_billing/widgets/custom_dropdown.dart';
@@ -26,6 +27,7 @@ import '../../widgets/custom_snackbar.dart';
 import '../../widgets/full_image_screen.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/empty_state_widget.dart';
+import '../../utils/form_validators.dart';
 
 class ProfileDetailsScreen extends StatefulWidget {
   const ProfileDetailsScreen({super.key});
@@ -81,7 +83,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       final key = _getEffectiveCacheKey(_cacheKeyUserBase);
       final cached = prefs.getString(key);
       if (cached != null && cached.isNotEmpty && mounted) {
-        final decoded = jsonDecode(cached);
+        final decoded = normalizeOdooBinaries(jsonDecode(cached));
         if (decoded is! Map<String, dynamic>) return;
         final data = decoded;
         setState(() {
@@ -589,6 +591,11 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       return;
     }
 
+    // Drop the keyboard first. Otherwise the loading dialog takes focus, and
+    // closing it hands focus back to the field just edited — the keyboard
+    // flashed up again before edit mode removed that field.
+    FocusManager.instance.primaryFocus?.unfocus();
+
     setState(() => _isSaving = true);
     _showLoadingDialog(context, 'Saving Changes');
 
@@ -631,23 +638,25 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
         context.read<ProfileProvider>().loadProfile();
       }
 
-      if (mounted) {
-        setState(() => _isSaving = false);
-        _isShowingLoadingDialog = false;
-        Navigator.of(context).pop();
-      }
+      if (!mounted) return;
 
-      setState(() => _isEditMode = false);
+      // Leave edit mode in the same step that closes the dialog, so no
+      // editable field is left to take focus back.
+      setState(() {
+        _isSaving = false;
+        _isEditMode = false;
+      });
+      _isShowingLoadingDialog = false;
+      Navigator.of(context).pop();
+
       _showSuccessSnackBar('Profile updated successfully');
       _saveSuccess = true;
 
-      if (mounted) {
-        final settingsProvider = Provider.of<SettingsProvider>(
-          context,
-          listen: false,
-        );
-        settingsProvider.fetchUserProfile().catchError((e) {});
-      }
+      final settingsProvider = Provider.of<SettingsProvider>(
+        context,
+        listen: false,
+      );
+      settingsProvider.fetchUserProfile().catchError((e) {});
     } catch (e) {
       _showErrorSnackBar('Failed to save changes: $e');
 
@@ -660,6 +669,11 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
   }
 
   Future<void> _handleBack() async {
+    // Close the keyboard up front: otherwise dismissing the discard dialog
+    // hands focus back to the edited field and the keyboard flashes up just
+    // as the screen closes.
+    FocusManager.instance.primaryFocus?.unfocus();
+
     if (_isEditMode && _hasUnsavedChanges()) {
       final shouldPop = await _showUnsavedChangesDialog();
       if (shouldPop && mounted) {
@@ -906,11 +920,10 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                     width: 1,
                   ),
                 ),
+                // Vertical padding lives in the field's contentPadding, not
+                // here, so the whole box height is a tap target for the input.
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
                     children: [
                       HugeIcon(
@@ -958,10 +971,11 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                               letterSpacing: 0.0,
                             ),
                             isDense: true,
-                            contentPadding: EdgeInsets.zero,
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 14,
+                            ),
                             errorStyle: const TextStyle(height: 0, fontSize: 0),
                           ),
-                          cursorColor: isDark ? Colors.white70 : Colors.black87,
                         ),
                       ),
                     ],
@@ -998,6 +1012,10 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
 
   String? Function(String?)? _getValidatorForField(String labelText) {
     switch (labelText.toLowerCase()) {
+      case 'full name':
+        return requiredField('Name');
+      case 'email':
+        return validateEmail;
       case 'website':
         return (value) {
           if (value == null || value.trim().isEmpty) return null;
@@ -2027,18 +2045,22 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     final settings = Provider.of<SettingsProvider>(context);
     final bool isEditingDisabled = settings.offlineMode || !_hasInternet;
 
-    return WillPopScope(
-      onWillPop: () async {
-        await _handleBack();
-        return false;
+    // Every back — app bar arrow, button or gesture — goes through
+    // _handleBack, which asks before discarding edits and pops with
+    // _saveSuccess (the profile screen refreshes on `true`). The deprecated
+    // WillPopScope used here before doesn't work with the predictive back
+    // this app enables in AndroidManifest.xml.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleBack();
       },
       child: Scaffold(
         appBar: AppBar(
+          forceMaterialTransparency: true,
           title: const Text('Profile Details'),
           leading: IconButton(
-            onPressed: () async {
-              await _handleBack();
-            },
+            onPressed: _handleBack,
             icon: HugeIcon(
               icon: HugeIcons.strokeRoundedArrowLeft01,
               color: isDark ? Colors.white : Colors.black,

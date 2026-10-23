@@ -157,13 +157,18 @@ class OdooSettingsProvider extends ChangeNotifier {
             .map((journal) => OdooJournal.fromJson(journal))
             .toList();
 
-        final configData = await _apiService.searchRead(
-          'res.config.settings',
-          [],
-          ['default_invoice_policy'],
-          0,
-          1,
-        );
+        // `default_invoice_policy` only exists while Sales is installed, and
+        // not at all on Odoo 20 — fall back to the default policy then.
+        List<Map<String, dynamic>> configData = [];
+        try {
+          configData = await _apiService.searchRead(
+            'res.config.settings',
+            [],
+            ['default_invoice_policy'],
+            0,
+            1,
+          );
+        } catch (_) {}
 
         final config = configData.isNotEmpty ? configData.first : {};
 

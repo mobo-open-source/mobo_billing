@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:mobo_billing/screens/settings/settings_screen.dart';
 import 'package:mobo_billing/theme/app_theme.dart';
+import 'package:mobo_billing/utils/odoo_binary_utils.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:mobo_billing/services/session_service.dart';
@@ -84,7 +85,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final currentSession = sessionService.currentSession;
 
       if (cached != null && cached.isNotEmpty && mounted) {
-        final decoded = jsonDecode(cached);
+        final decoded = normalizeOdooBinaries(jsonDecode(cached));
         if (decoded is! Map<String, dynamic>) return;
         final data = decoded;
         final cachedUserId = data['id']?.toString();
@@ -1883,6 +1884,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: const Text('Configuration'),
         leading: IconButton(
           onPressed: () async {

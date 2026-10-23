@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../providers/customer_provider.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/filter_chip_button.dart';
 import '../../widgets/mobo_search_field.dart';
 import '../../widgets/customer_list_tile.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
@@ -20,7 +22,7 @@ import 'customer_form_screen.dart';
 import '../../models/customer.dart';
 import '../../widgets/custom_snackbar.dart';
 import 'package:intl/intl.dart';
-import '../../utils/date_picker_utils.dart';
+import '../../widgets/date_range_filter_fields.dart';
 
 class CustomersScreen extends StatefulWidget {
   final bool autoFocusSearch;
@@ -87,6 +89,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor:
             Theme.of(context).appBarTheme.backgroundColor ??
             Theme.of(context).colorScheme.surface,
@@ -895,11 +898,11 @@ class _CustomersScreenState extends State<CustomersScreen> {
                         unselectedLabelColor: isDark
                             ? Colors.grey[400]
                             : Colors.grey[600],
-                        labelStyle: const TextStyle(
+                        labelStyle: GoogleFonts.manrope(
                           fontWeight: FontWeight.w600,
                           fontSize: 14,
                         ),
-                        unselectedLabelStyle: const TextStyle(
+                        unselectedLabelStyle: GoogleFonts.manrope(
                           fontWeight: FontWeight.w500,
                           fontSize: 14,
                         ),
@@ -1129,62 +1132,23 @@ class _CustomersScreenState extends State<CustomersScreen> {
           ),
           const SizedBox(height: 8),
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              ChoiceChip(
-                label: Text(
-                  'Active Only',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showActiveOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showActiveOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
+              FilterChipButton(
+                label: 'Active Only',
                 selected: tempState['showActiveOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
+                onTap: () => setDialogState(
+                  () => tempState['showActiveOnly'] =
+                      tempState['showActiveOnly'] != true,
                 ),
-                onSelected: (val) =>
-                    setDialogState(() => tempState['showActiveOnly'] = val),
               ),
-              ChoiceChip(
-                label: Text(
-                  'Credit Breaches',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showCreditBreachesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showCreditBreachesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
+              FilterChipButton(
+                label: 'Credit Breaches',
                 selected: tempState['showCreditBreachesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) => setDialogState(
-                  () => tempState['showCreditBreachesOnly'] = val,
+                onTap: () => setDialogState(
+                  () => tempState['showCreditBreachesOnly'] =
+                      tempState['showCreditBreachesOnly'] != true,
                 ),
               ),
             ],
@@ -1199,71 +1163,28 @@ class _CustomersScreenState extends State<CustomersScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          // Companies and Individuals exclude each other.
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              ChoiceChip(
-                label: Text(
-                  'Companies',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showCompaniesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showCompaniesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
+              FilterChipButton(
+                label: 'Companies',
                 selected: tempState['showCompaniesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showCompaniesOnly'] = val;
-                    if (val) tempState['showIndividualsOnly'] = false;
-                  });
-                },
+                onTap: () => setDialogState(() {
+                  final val = tempState['showCompaniesOnly'] != true;
+                  tempState['showCompaniesOnly'] = val;
+                  if (val) tempState['showIndividualsOnly'] = false;
+                }),
               ),
-              ChoiceChip(
-                label: Text(
-                  'Individuals',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showIndividualsOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showIndividualsOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
+              FilterChipButton(
+                label: 'Individuals',
                 selected: tempState['showIndividualsOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showIndividualsOnly'] = val;
-                    if (val) tempState['showCompaniesOnly'] = false;
-                  });
-                },
+                onTap: () => setDialogState(() {
+                  final val = tempState['showIndividualsOnly'] != true;
+                  tempState['showIndividualsOnly'] = val;
+                  if (val) tempState['showCompaniesOnly'] = false;
+                }),
               ),
             ],
           ),
@@ -1278,117 +1199,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
           ),
           const SizedBox(height: 12),
 
-          InkWell(
-            onTap: () async {
-              final date = await DatePickerUtils.showStandardDatePicker(
-                context: context,
-                initialDate: tempState['startDate'] ?? DateTime.now(),
-                firstDate: DateTime(2020),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
-              );
-              if (date != null) {
-                setDialogState(() => tempState['startDate'] = date);
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.grey[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                ),
-              ),
-              child: Row(
-                children: [
-                  HugeIcon(
-                    icon: HugeIcons.strokeRoundedCalendar03,
-                    size: 16,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      tempState['startDate'] != null
-                          ? 'From: ${DateFormat('MMM dd, yyyy').format(tempState['startDate'])}'
-                          : 'Select start date',
-                      style: TextStyle(
-                        color: tempState['startDate'] != null
-                            ? (isDark ? Colors.white : Colors.grey[800])
-                            : (isDark ? Colors.grey[400] : Colors.grey[600]),
-                      ),
-                    ),
-                  ),
-                  if (tempState['startDate'] != null)
-                    IconButton(
-                      onPressed: () =>
-                          setDialogState(() => tempState['startDate'] = null),
-                      icon: Icon(
-                        Icons.clear,
-                        size: 16,
-                        color: isDark ? Colors.grey[400] : Colors.grey[600],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          InkWell(
-            onTap: () async {
-              final date = await DatePickerUtils.showStandardDatePicker(
-                context: context,
-                initialDate: tempState['endDate'] ?? DateTime.now(),
-                firstDate: tempState['startDate'] ?? DateTime(2020),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
-              );
-              if (date != null) {
-                setDialogState(() => tempState['endDate'] = date);
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.grey[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                ),
-              ),
-              child: Row(
-                children: [
-                  HugeIcon(
-                    icon: HugeIcons.strokeRoundedCalendar03,
-                    size: 16,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      tempState['endDate'] != null
-                          ? 'To: ${DateFormat('MMM dd, yyyy').format(tempState['endDate'])}'
-                          : 'Select end date',
-                      style: TextStyle(
-                        color: tempState['endDate'] != null
-                            ? (isDark ? Colors.white : Colors.grey[800])
-                            : (isDark ? Colors.grey[400] : Colors.grey[600]),
-                      ),
-                    ),
-                  ),
-                  if (tempState['endDate'] != null)
-                    IconButton(
-                      onPressed: () =>
-                          setDialogState(() => tempState['endDate'] = null),
-                      icon: Icon(
-                        Icons.clear,
-                        size: 16,
-                        color: isDark ? Colors.grey[400] : Colors.grey[600],
-                      ),
-                    ),
-                ],
-              ),
-            ),
+          DateRangeFilterFields(
+            startDate: tempState['startDate'],
+            endDate: tempState['endDate'],
+            onStartChanged: (date) =>
+                setDialogState(() => tempState['startDate'] = date),
+            onEndChanged: (date) =>
+                setDialogState(() => tempState['endDate'] = date),
           ),
           const SizedBox(height: 20),
         ],
@@ -1418,83 +1235,32 @@ class _CustomersScreenState extends State<CustomersScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          RadioListTile<String?>(
-            title: Text(
-              'None',
-              style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontWeight: FontWeight.w500,
+          // Single choice: "None" shows a plain list.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilterChipButton(
+                label: 'None',
+                selected: tempState['selectedGroupBy'] == null,
+                onTap: () =>
+                    setDialogState(() => tempState['selectedGroupBy'] = null),
               ),
-            ),
-            subtitle: Text(
-              'Display as a simple list',
-              style: TextStyle(
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 12,
-              ),
-            ),
-            value: null,
-            groupValue: tempState['selectedGroupBy'],
-            onChanged: (value) {
-              setDialogState(() {
-                tempState['selectedGroupBy'] = value;
-              });
-            },
-            activeColor: theme.primaryColor,
-            contentPadding: EdgeInsets.zero,
+              for (final entry in provider.groupByOptions.entries)
+                FilterChipButton(
+                  label: entry.value,
+                  selected: tempState['selectedGroupBy'] == entry.key,
+                  onTap: () => setDialogState(
+                    () => tempState['selectedGroupBy'] = entry.key,
+                  ),
+                ),
+            ],
           ),
-          const Divider(),
-          if (provider.groupByOptions.isEmpty) ...[
+          if (provider.groupByOptions.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16.0),
               child: Center(child: Text("Loading options...")),
             ),
-          ] else ...[
-            ...provider.groupByOptions.entries.map((entry) {
-              String description = '';
-              switch (entry.key) {
-                case 'user_id':
-                  description = 'Group by assigned salesperson';
-                  break;
-                case 'country_id':
-                  description = 'Group by country';
-                  break;
-                case 'state_id':
-                  description = 'Group by state';
-                  break;
-                case 'company_id':
-                  description = 'Group by company';
-                  break;
-                default:
-                  description = 'Group by ${entry.value.toLowerCase()}';
-              }
-              return RadioListTile<String>(
-                title: Text(
-                  entry.value,
-                  style: TextStyle(
-                    color: isDark ? Colors.white : Colors.black87,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                subtitle: Text(
-                  description,
-                  style: TextStyle(
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    fontSize: 12,
-                  ),
-                ),
-                value: entry.key,
-                groupValue: tempState['selectedGroupBy'],
-                onChanged: (value) {
-                  setDialogState(() {
-                    tempState['selectedGroupBy'] = value;
-                  });
-                },
-                activeColor: theme.primaryColor,
-                contentPadding: EdgeInsets.zero,
-              );
-            }).toList(),
-          ],
           const SizedBox(height: 24),
         ],
       ),
@@ -1521,6 +1287,14 @@ class _CustomersScreenState extends State<CustomersScreen> {
     Map<String, dynamic> tempState,
     CustomerProvider provider,
   ) {
+    if (!DateRangeFilterFields.isValid(
+      tempState['startDate'],
+      tempState['endDate'],
+    )) {
+      CustomSnackbar.showError(context, DateRangeFilterFields.rangeError);
+      return;
+    }
+
     provider.setFilterState(
       showActiveOnly: tempState['showActiveOnly'],
       showCompaniesOnly: tempState['showCompaniesOnly'],

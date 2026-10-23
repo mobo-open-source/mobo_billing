@@ -440,6 +440,20 @@ class SwitchAccountWidget extends StatelessWidget {
               context,
               listen: false,
             );
+
+            // The reused session is already current, so — as for a missing
+            // module below — sign out rather than leave it in place.
+            if (await authProvider.isDatabaseExpired()) {
+              await authProvider.logout();
+              if (context.mounted) {
+                if (Navigator.of(context).canPop()) {
+                  Navigator.pop(context);
+                }
+                showDatabaseExpiredDialog(context);
+              }
+              return;
+            }
+
             final isBillingInstalled = await authProvider
                 .checkRequiredModules();
 
@@ -493,7 +507,22 @@ class SwitchAccountWidget extends StatelessWidget {
       }
 
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      final isBillingInstalled = await authProvider.checkRequiredModules();
+
+      // The new session isn't current yet, so the active account stays
+      // signed in; just don't switch to the expired one.
+      if (await authProvider.isDatabaseExpired(session: newSession)) {
+        if (context.mounted) {
+          if (Navigator.of(context).canPop()) {
+            Navigator.pop(context);
+          }
+          showDatabaseExpiredDialog(context);
+        }
+        return;
+      }
+
+      final isBillingInstalled = await authProvider.checkRequiredModules(
+        session: newSession,
+      );
 
       if (!isBillingInstalled) {
         await authProvider.logout();

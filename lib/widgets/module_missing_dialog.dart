@@ -1,7 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
+import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
+
+/// Shows the blocking dialog for a failed [AuthProvider.checkAppAccess].
+void showAppAccessDialog(BuildContext context, AppAccessResult result) {
+  switch (result) {
+    case AppAccessResult.databaseExpired:
+      showDatabaseExpiredDialog(context);
+    case AppAccessResult.accessDenied:
+      showAccessDeniedDialog(context);
+    case AppAccessResult.moduleMissing:
+      showModuleMissingDialog(context);
+    case AppAccessResult.ok:
+      break;
+  }
+}
+
+/// Shown when the Odoo database's subscription has expired. Odoo still
+/// accepts the login, so the app blocks it here.
+void showDatabaseExpiredDialog(BuildContext context) {
+  _showBlockingLoginDialog(
+    context,
+    icon: HugeIcons.strokeRoundedDatabaseLocked,
+    iconColor: StatusColors.red,
+    title: 'Database Expired',
+    message:
+        'This Odoo database has expired and can no longer be accessed. Please renew the subscription or contact your administrator.',
+  );
+}
 
 void showModuleMissingDialog(BuildContext context) {
   _showBlockingLoginDialog(

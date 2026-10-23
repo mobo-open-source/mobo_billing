@@ -19,6 +19,8 @@ import '../../widgets/empty_state_widget.dart';
 import '../../widgets/filter_badges.dart';
 import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../providers/navigation_provider.dart';
+import '../../utils/refresh_on_tab_select.dart';
 
 import 'invoice_detail_screen.dart';
 import 'create_invoice_screen.dart';
@@ -32,7 +34,8 @@ class InvoiceListScreenNew extends StatefulWidget {
   State<InvoiceListScreenNew> createState() => _InvoiceListScreenNewState();
 }
 
-class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
+class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
+    with RefreshOnTabSelect {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   String? _currentFilter;
@@ -65,6 +68,51 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     _scrollController.dispose();
     _searchDebounce?.cancel();
     super.dispose();
+  }
+
+  @override
+  int get tabIndex => NavigationProvider.invoicesTab;
+
+  /// Reloads what is on screen — same page, search, filters and group-by.
+  @override
+  Future<void> onTabSelected() async {
+    if (_isFirstLoad) return;
+    final provider = Provider.of<InvoiceProvider>(context, listen: false);
+    final domain = _buildFilterDomain();
+    final query = _searchController.text.trim();
+
+    if (_selectedGroupBy != null) {
+      await provider.fetchGroupSummary(
+        groupByField: _selectedGroupBy!,
+        customFilter: domain.isNotEmpty ? domain : null,
+        filter: _currentFilter,
+      );
+      final openGroups = _expandedGroups.entries
+          .where((e) => e.value && provider.groupSummary.containsKey(e.key))
+          .map((e) => e.key);
+      await Future.wait(openGroups.map((k) => _loadGroupInvoices(provider, k)));
+    } else if (query.isNotEmpty) {
+      await provider.searchInvoices(
+        query,
+        offset: provider.currentOffset,
+        limit: 40,
+        filter: _currentFilter,
+        customFilter: domain.isNotEmpty ? domain : null,
+        clearCustomFilter: domain.isEmpty,
+      );
+    } else {
+      await provider.loadInvoices(
+        filter: _currentFilter,
+        offset: provider.currentOffset,
+        limit: 40,
+        customFilter: domain.isNotEmpty ? domain : null,
+        clearCustomFilter: domain.isEmpty,
+      );
+    }
+
+    if (provider.error != null && mounted) {
+      _showErrorSnackBar(provider.error!);
+    }
   }
 
   String _getScreenTitle() {
@@ -377,51 +425,58 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
   List<dynamic> _buildFilterDomain() {
     List<dynamic> domain = [];
     if (_activeFilters.isNotEmpty) {
-      List<dynamic> statusConditions = [];
+      // One entry per selected status, each a complete prefix expression as a
+      // flat token list. The `|` count has to follow these, not the number of
+      // chips, or a chip with no condition would leave an operator without an
+      // operand.
+      final List<List<dynamic>> statusTerms = [];
+      void leaf(String field, String value) => statusTerms.add([
+        [field, '=', value],
+      ]);
+
       for (String filter in _activeFilters) {
         switch (filter) {
           case 'draft':
-            statusConditions.add(['state', '=', 'draft']);
+            leaf('state', 'draft');
             break;
           case 'posted':
-            statusConditions.add('&');
-            statusConditions.add(['state', '=', 'posted']);
-            statusConditions.add(['payment_state', '=', 'not_paid']);
+            // Odoo's own "Posted" filter: every posted invoice, whatever its
+            // payment state (paid and in-payment ones are still posted).
+            leaf('state', 'posted');
             break;
           case 'paid':
-            statusConditions.add(['payment_state', '=', 'paid']);
+            leaf('payment_state', 'paid');
             break;
           case 'partial':
-            statusConditions.add(['payment_state', '=', 'partial']);
+            leaf('payment_state', 'partial');
             break;
           case 'not_paid':
-            statusConditions.add('&');
-            statusConditions.add(['state', '=', 'posted']);
-            statusConditions.add(['payment_state', '=', 'not_paid']);
+            statusTerms.add([
+              '&',
+              ['state', '=', 'posted'],
+              ['payment_state', '=', 'not_paid'],
+            ]);
             break;
           case 'in_payment':
-            statusConditions.add(['payment_state', '=', 'in_payment']);
+            leaf('payment_state', 'in_payment');
             break;
           case 'reversed':
-            statusConditions.add(['payment_state', '=', 'reversed']);
+            leaf('payment_state', 'reversed');
             break;
           case 'blocked':
-            statusConditions.add(['payment_state', '=', 'blocked']);
+            leaf('payment_state', 'blocked');
             break;
           case 'cancelled':
-            statusConditions.add(['state', '=', 'cancel']);
+            leaf('state', 'cancel');
             break;
         }
       }
 
-      if (statusConditions.isNotEmpty) {
-        int n = _activeFilters.length;
-        if (n > 1) {
-          for (int i = 0; i < n - 1; i++) {
-            domain.add('|');
-          }
-        }
-        domain.addAll(statusConditions);
+      for (int i = 0; i < statusTerms.length - 1; i++) {
+        domain.add('|');
+      }
+      for (final term in statusTerms) {
+        domain.addAll(term);
       }
     }
 
@@ -526,7 +581,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          groupKey,
+                          _groupTitle(groupKey),
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -825,6 +880,22 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
         _selectedGroupBy != null;
   }
 
+  /// Group tiles keyed by `state` arrive as Odoo's raw value ("posted",
+  /// "cancel"); show them the way Odoo's own group headers do.
+  String _groupTitle(String groupKey) {
+    if (_selectedGroupBy != 'state') return groupKey;
+    switch (groupKey) {
+      case 'draft':
+        return 'Draft';
+      case 'posted':
+        return 'Posted';
+      case 'cancel':
+        return 'Cancelled';
+      default:
+        return groupKey;
+    }
+  }
+
   String _getGroupByLabel(String key) {
     switch (key) {
       case 'state':
@@ -909,8 +980,11 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     final query = _searchController.text.trim();
 
     if (_selectedGroupBy != null) {
+      // read_group replaces every loaded group, so collapse the open tiles
+      // rather than leave them spinning on data that is no longer there.
+      setState(() => _expandedGroups.clear());
       final filterDomain = _buildFilterDomain();
-      provider.fetchGroupSummary(
+      await provider.fetchGroupSummary(
         groupByField: _selectedGroupBy!,
         customFilter: filterDomain.isNotEmpty ? filterDomain : null,
         filter: _currentFilter,

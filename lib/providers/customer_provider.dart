@@ -244,8 +244,17 @@ class CustomerProvider extends ChangeNotifier {
 
     domain.add(['customer_rank', '>', 0]);
 
+    // Odoo appends `active = True` to any domain that doesn't mention
+    // `active` (unless the context sets active_test: false, which read_group
+    // calls here can't pass) — so "include archived" must say so explicitly.
     if (_showActiveOnly) {
       domain.add(['active', '=', true]);
+    } else {
+      domain.add([
+        'active',
+        'in',
+        [true, false],
+      ]);
     }
 
     if (_showCompaniesOnly) {
@@ -340,40 +349,25 @@ class CustomerProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      final domain = _buildDomain(_currentSearchQuery);
+      final domain = await _buildDomain(_currentSearchQuery);
 
       final result = await _apiService
-          .call(
-            'res.partner',
-            'read_group',
-            [domain],
-            {
-              'groupby': [_selectedGroupBy],
-              'lazy': false,
-            },
-          )
+          .readGroup('res.partner', domain, groupby: [_selectedGroupBy!])
           .timeout(
             const Duration(seconds: 30),
             onTimeout: () =>
                 throw TimeoutException('Loading group summary timed out'),
           );
 
-      if (result is List) {
-        _groupSummary.clear();
-        int total = 0;
-        for (final group in result) {
-          if (group is Map) {
-            final groupKey = _getGroupKeyFromReadGroup(
-              group,
-              _selectedGroupBy!,
-            );
-            final count = group['__count'] ?? 0;
-            _groupSummary[groupKey] = count;
-            total += count as int;
-          }
-        }
-        _totalCount = total;
+      _groupSummary.clear();
+      int total = 0;
+      for (final group in result) {
+        final groupKey = _getGroupKeyFromReadGroup(group, _selectedGroupBy!);
+        final count = group['__count'] as int;
+        _groupSummary[groupKey] = count;
+        total += count;
       }
+      _totalCount = total;
     } catch (e) {
       if (_groupSummary.isEmpty) {
         _groupSummary.clear();
@@ -524,6 +518,8 @@ class CustomerProvider extends ChangeNotifier {
                 'name',
                 'email',
                 'phone',
+                // Gone on Odoo 19+; the API drops it there and retries.
+                'mobile',
                 'vat',
                 'street',
                 'street2',
@@ -534,6 +530,7 @@ class CustomerProvider extends ChangeNotifier {
                 'function',
                 'credit_limit',
                 'industry_id',
+                'company_name',
                 'parent_id',
                 'lang',
                 'tz',

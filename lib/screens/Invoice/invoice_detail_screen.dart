@@ -120,6 +120,10 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
           _isShowingCachedData = isOffline;
           _isLoading = false;
         });
+        // The recently-opened entry was saved from the record as it was
+        // opened; relabel it now that the number/state is known (e.g. after
+        // posting a draft).
+        context.read<LastOpenedProvider>().refreshDocuments([details.toJson()]);
         _animationController.forward();
         await _fetchCustomerDetails();
         await _fetchPayments();
@@ -211,6 +215,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
         Scaffold(
           backgroundColor: backgroundColor,
           appBar: AppBar(
+            forceMaterialTransparency: true,
             backgroundColor: backgroundColor,
             title: const Text('Invoice Details'),
             leading: IconButton(
@@ -1809,7 +1814,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                     backgroundColor: AppTheme.primaryColor,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
+                      horizontal: 12,
                       vertical: 12,
                     ),
                     shape: RoundedRectangleBorder(
@@ -1817,9 +1822,14 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                     ),
                     elevation: isDark ? 0 : 3,
                   ),
-                  child: const Text(
-                    'Cancel Invoice',
-                    style: TextStyle(fontWeight: FontWeight.w600),
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'Cancel Invoice',
+                      maxLines: 1,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
               ),
@@ -2164,46 +2174,57 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
           Row(
             children: [
               Expanded(
-                child: TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  style: TextButton.styleFrom(
-                    foregroundColor: isDark
-                        ? Colors.grey[400]
-                        : Colors.grey[700],
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primaryColor,
+                      side: const BorderSide(
+                        color: AppTheme.primaryColor,
+                        width: 1.5,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    child: const Text(
+                      'Cancel',
+                      maxLines: 1,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w600),
                     ),
-                  ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(fontWeight: FontWeight.w500),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Expanded(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                      shadowColor: Colors.transparent,
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    // Scale the label down on narrow screens instead of
+                    // letting it wrap onto a second, left-hugging line.
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'Reset to Draft',
+                        maxLines: 1,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                    elevation: 0,
-                    shadowColor: Colors.transparent,
-                  ),
-                  child: const Text(
-                    'Reset to Draft',
-                    style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ),

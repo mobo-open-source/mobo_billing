@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/form_styles.dart';
@@ -92,6 +93,16 @@ class _MoboSearchFieldState extends State<MoboSearchField> {
   static const double _fieldRadius = 10;
   static const double _buttonRadius = 10;
 
+  /// A field still focused after the keyboard was dismissed (Back) ignores
+  /// `requestFocus`, so bring the keyboard back explicitly in that case.
+  void _focusInput() {
+    if (_focusNode.hasFocus) {
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    } else {
+      _focusNode.requestFocus();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -143,7 +154,7 @@ class _MoboSearchFieldState extends State<MoboSearchField> {
             // The Row only fills the field's width, not its tap target — so
             // focus the input when the gaps and the icon are tapped too.
             behavior: HitTestBehavior.opaque,
-            onTap: widget.enabled ? _focusNode.requestFocus : null,
+            onTap: widget.enabled ? _focusInput : null,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -159,7 +170,6 @@ class _MoboSearchFieldState extends State<MoboSearchField> {
                     onChanged: widget.onChanged,
                     onSubmitted: widget.onSubmitted,
                     textInputAction: TextInputAction.search,
-                    cursorColor: AppTheme.primaryColor,
 
                     // No `height: 1.0` on either style: forcing the line box
                     // down to exactly the font size clips descenders and

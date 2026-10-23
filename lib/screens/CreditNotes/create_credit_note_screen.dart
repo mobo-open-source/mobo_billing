@@ -10,6 +10,7 @@ import '../../providers/credit_note_provider.dart';
 import '../../services/odoo_api_service.dart';
 import '../../services/review_service.dart';
 import '../../widgets/mobo_form_fields.dart';
+import '../../widgets/line_item_inputs.dart';
 import '../../models/contact.dart';
 import '../../models/product.dart';
 import '../../theme/app_theme.dart';
@@ -19,6 +20,7 @@ import '../../services/odoo_error_handler.dart';
 import '../../widgets/confetti_dialog.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../../utils/data_loss_warning_mixin.dart';
+import '../../utils/form_snapshot.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/data_cache.dart';
 import '../../services/session_service.dart';
@@ -67,6 +69,39 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
   bool get _isEditing => widget.creditNoteToEdit != null;
 
   int? get _editingCreditNoteId => widget.creditNoteToEdit?['id'] as int?;
+
+  /// How the credit note being edited looked once loaded. The Update button
+  /// stays disabled until the form differs from it.
+  final _editSnapshot = FormSnapshot();
+
+  /// The values [_saveCreditNote] writes, in a form [_editSnapshot] can
+  /// compare.
+  Map<String, dynamic> get _editableValues => {
+    'partner_id': _selectedCustomer?.id,
+    'partner_shipping_id': _selectedShippingAddressId,
+    'invoice_date': DateFormat('yyyy-MM-dd').format(_invoiceDate),
+    'invoice_date_due': DateFormat('yyyy-MM-dd').format(_dueDate),
+    'currency_id': _selectedCurrencyId,
+    'journal_id': _selectedJournalId,
+    'reason': _reasonController.text.trim(),
+    'lines': [
+      for (final line in _creditNoteLines)
+        {
+          'id': line['id'],
+          'product_id': line['product_id'],
+          'name': line['name'],
+          'product_name': line['product_name'],
+          'quantity': line['quantity'],
+          'price_unit': line['price_unit'],
+          'account_id': line['account_id'],
+          'tax_ids': line['tax_ids'],
+          'discount': line['discount'],
+          'product_uom_id': line['product_uom_id'],
+        },
+    ],
+  };
+
+  bool get _hasEdits => _editSnapshot.hasChanges(_editableValues);
 
   Contact? _selectedCustomer;
   int? _selectedJournalId;
@@ -400,6 +435,8 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     _reasonController.text = reason;
 
     await _loadCreditNoteLinesForEditing(data['invoice_line_ids']);
+
+    _editSnapshot.capture(_editableValues);
   }
 
   Future<void> _loadCreditNoteLinesForEditing(dynamic rawLineIds) async {
@@ -629,6 +666,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
       child: Scaffold(
         backgroundColor: backgroundColor,
         appBar: AppBar(
+          forceMaterialTransparency: true,
           backgroundColor: backgroundColor,
           foregroundColor: isDark ? Colors.white : theme.primaryColor,
           elevation: 0,
@@ -774,9 +812,11 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
 
   /// Looks products up on the server for the inline dropdown panel.
   Future<List<Product>> _searchProducts(String query) async {
+    // The line-item dropdown shows no thumbnails, so skip the images.
     final results = await _apiService.searchProducts(
       query,
       limit: query.isEmpty ? 20 : 100,
+      withImages: false,
     );
     return results.map((data) => Product.fromJson(data)).toList();
   }
@@ -1059,19 +1099,28 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
   }
 
   Widget _buildSaveButton(bool isDark) {
-    return Consumer<InvoiceProvider>(
-      builder: (context, invoiceProvider, child) {
-        final isLoading = invoiceProvider.isLoading || _isSaving;
-        return MoboSubmitButton(
-          label: _isEditing ? 'Update Credit Note' : 'Create Credit Note',
-          loadingLabel: _isEditing
-              ? 'Updating Credit Note'
-              : 'Creating Credit Note',
-          isLoading: isLoading,
-          isReady: _selectedCustomer != null && _creditNoteLines.isNotEmpty,
-          onPressed: _saveCreditNote,
-        );
-      },
+    // The reason field doesn't rebuild the screen, so listen to it here.
+    return ListenableBuilder(
+      listenable: _reasonController,
+      builder: (context, _) => Consumer<InvoiceProvider>(
+        builder: (context, invoiceProvider, child) {
+          final isLoading = invoiceProvider.isLoading || _isSaving;
+          // An edit that changes nothing has nothing to submit.
+          final nothingToSave = _isEditing && !_hasEdits;
+          return MoboSubmitButton(
+            label: _isEditing ? 'Update Credit Note' : 'Create Credit Note',
+            loadingLabel: _isEditing
+                ? 'Updating Credit Note'
+                : 'Creating Credit Note',
+            isLoading: isLoading,
+            isReady:
+                !nothingToSave &&
+                _selectedCustomer != null &&
+                _creditNoteLines.isNotEmpty,
+            onPressed: nothingToSave ? null : _saveCreditNote,
+          );
+        },
+      ),
     );
   }
 
@@ -1087,6 +1136,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     final secondaryTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
 
     return Container(
+      // Lines are inserted at the top; keyed by the line itself so each
+      // card keeps its own quantity/price inputs instead of inheriting the
+      // state of whichever line used to sit at this index.
+      key: ObjectKey(line),
       margin: const EdgeInsets.only(bottom: 12),
       child: Card(
         color: cardColor,
@@ -1151,7 +1204,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                 ],
               ),
               const SizedBox(height: 12),
+              // Quantity and price share the full row; the line total gets a
+              // row of its own so neither input is squeezed by it.
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: Column(
@@ -1163,8 +1219,8 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                             color: secondaryTextColor,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        _CreditNoteQuantityInput(
+                        const SizedBox(height: 6),
+                        LineQuantityInput(
                           initialValue: (line['quantity'] as num).toDouble(),
                           onChanged: (value) {
                             setState(() {
@@ -1177,7 +1233,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                       ],
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1188,8 +1244,8 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                             color: secondaryTextColor,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        _CreditNotePriceInput(
+                        const SizedBox(height: 6),
+                        LinePriceInput(
                           initialValue: (line['price_unit'] as num).toDouble(),
                           onChanged: (value) {
                             setState(() {
@@ -1203,25 +1259,30 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                       ],
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Total',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: secondaryTextColor,
-                        ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Text(
+                    'Total',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: secondaryTextColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '$_currentCurrencySymbol${(line['price_subtotal'] ?? 0.0).toStringAsFixed(2)}',
+                      textAlign: TextAlign.right,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.white : AppTheme.primaryColor,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '$_currentCurrencySymbol${(line['price_subtotal'] ?? 0.0).toStringAsFixed(2)}',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: isDark ? Colors.white : AppTheme.primaryColor,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -1586,242 +1647,5 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
         }
       }
     }
-  }
-}
-
-class _CreditNoteQuantityInput extends StatefulWidget {
-  final double initialValue;
-  final Function(double) onChanged;
-  final bool isDark;
-
-  const _CreditNoteQuantityInput({
-    required this.initialValue,
-    required this.onChanged,
-    required this.isDark,
-  });
-
-  @override
-  _CreditNoteQuantityInputState createState() =>
-      _CreditNoteQuantityInputState();
-}
-
-class _CreditNoteQuantityInputState extends State<_CreditNoteQuantityInput> {
-  late TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(
-      text: widget.initialValue.toStringAsFixed(0),
-    );
-    _controller.addListener(_onQuantityChanged);
-  }
-
-  @override
-  void dispose() {
-    _controller.removeListener(_onQuantityChanged);
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onQuantityChanged() {
-    final value = double.tryParse(_controller.text) ?? 0.0;
-    widget.onChanged(value > 0 ? value : 1.0);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = widget.isDark;
-
-    return SizedBox(
-      height: 40,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1F1F1F) : Colors.white,
-          border: Border.all(
-            color: isDark ? Colors.grey[800]! : theme.dividerColor,
-          ),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.remove, size: 18),
-              onPressed: () {
-                final currentValue = double.tryParse(_controller.text) ?? 1.0;
-                if (currentValue > 1) {
-                  _controller.text = (currentValue - 1).toInt().toString();
-                }
-              },
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(),
-              style: IconButton.styleFrom(
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.horizontal(
-                    left: Radius.circular(6),
-                  ),
-                ),
-              ),
-            ),
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                textAlign: TextAlign.center,
-                keyboardType: TextInputType.number,
-                style: GoogleFonts.manrope(color: isDark ? Colors.white : null),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  errorBorder: InputBorder.none,
-                  disabledBorder: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(
-                    vertical: 8,
-                    horizontal: 4,
-                  ),
-                  isDense: true,
-                  counterText: '',
-                  filled: true,
-                  fillColor: Colors.transparent,
-                ),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.add, size: 18),
-              onPressed: () {
-                final currentValue = double.tryParse(_controller.text) ?? 0.0;
-                _controller.text = (currentValue + 1).toInt().toString();
-              },
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(),
-              style: IconButton.styleFrom(
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.horizontal(
-                    right: Radius.circular(6),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CreditNotePriceInput extends StatefulWidget {
-  final double initialValue;
-  final Function(double) onChanged;
-  final bool isDark;
-  final String currencySymbol;
-
-  const _CreditNotePriceInput({
-    required this.initialValue,
-    required this.onChanged,
-    required this.isDark,
-    required this.currencySymbol,
-  });
-
-  @override
-  _CreditNotePriceInputState createState() => _CreditNotePriceInputState();
-}
-
-class _CreditNotePriceInputState extends State<_CreditNotePriceInput> {
-  late TextEditingController _controller;
-  final _focusNode = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(
-      text: widget.initialValue.toStringAsFixed(2),
-    );
-    _controller.addListener(_onPriceChanged);
-  }
-
-  @override
-  void dispose() {
-    _controller.removeListener(_onPriceChanged);
-    _controller.dispose();
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  void _onPriceChanged() {
-    final cleanText = _controller.text.replaceAll(RegExp(r'[^\d.]'), '');
-    final value = double.tryParse(cleanText) ?? 0.0;
-    widget.onChanged(value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = widget.isDark;
-
-    return SizedBox(
-      height: 40,
-      child: TextField(
-        controller: _controller,
-        focusNode: _focusNode,
-        textAlign: TextAlign.right,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        style: GoogleFonts.manrope(color: isDark ? Colors.white : null),
-        decoration: InputDecoration(
-          prefixIcon: Padding(
-            padding: const EdgeInsets.only(
-              left: 12,
-              right: 8,
-              top: 12,
-              bottom: 12,
-            ),
-            child: Text(
-              widget.currencySymbol,
-              style: GoogleFonts.manrope(
-                color: isDark ? Colors.grey[400] : Colors.grey,
-              ),
-            ),
-          ),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 0,
-            minHeight: 0,
-          ),
-          filled: true,
-          fillColor: isDark ? const Color(0xFF1F1F1F) : Colors.white,
-          contentPadding: const EdgeInsets.symmetric(
-            vertical: 8,
-            horizontal: 12,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.grey[800]! : theme.dividerColor,
-            ),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.grey[800]! : theme.dividerColor,
-            ),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.blue[300]! : theme.primaryColor,
-              width: 1.5,
-            ),
-          ),
-          isDense: true,
-        ),
-        onTap: () {
-          _controller.selection = TextSelection(
-            baseOffset: 0,
-            extentOffset: _controller.text.length,
-          );
-        },
-      ),
-    );
   }
 }

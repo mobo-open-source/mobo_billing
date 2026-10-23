@@ -12,6 +12,7 @@ import '../../widgets/custom_text_field.dart';
 import '../../widgets/custom_text_field_simple.dart' as simple;
 import '../../models/product.dart';
 import '../../utils/data_loss_warning_mixin.dart';
+import '../../utils/form_snapshot.dart';
 import '../../services/runtime_permission_service.dart';
 import '../../services/odoo_error_handler.dart';
 
@@ -62,6 +63,45 @@ class _ProductFormScreenState extends State<ProductFormScreen>
   final ImagePicker _picker = ImagePicker();
 
   bool get _isNameFilled => _nameController.text.trim().isNotEmpty;
+
+  /// How the product being edited looked once loaded. Save Changes stays
+  /// disabled until the form differs from it.
+  final _editSnapshot = FormSnapshot();
+
+  /// Text fields don't rebuild the screen, so the submit button listens to
+  /// them directly.
+  late final Listenable _textFields = Listenable.merge([
+    _nameController,
+    _defaultCodeController,
+    _barcodeController,
+    _listPriceController,
+    _standardPriceController,
+    _weightController,
+    _volumeController,
+    _descriptionController,
+  ]);
+
+  /// The values [_saveProduct] writes, in a form [_editSnapshot] can compare.
+  Map<String, dynamic> get _editableValues => {
+    'name': _nameController.text.trim(),
+    'default_code': _defaultCodeController.text,
+    'barcode': _barcodeController.text,
+    'list_price': double.tryParse(_listPriceController.text) ?? 0.0,
+    'standard_price': double.tryParse(_standardPriceController.text) ?? 0.0,
+    'weight': double.tryParse(_weightController.text) ?? 0.0,
+    'volume': double.tryParse(_volumeController.text) ?? 0.0,
+    'description_sale': _descriptionController.text,
+    'active': _isActive,
+    'sale_ok': _canBeSold,
+    'purchase_ok': _canBePurchased,
+    'image': _pickedImageFile?.path,
+    'categ_id': _selectedCategory,
+    'taxes_id': _selectedTax,
+    'uom_id': _selectedUOM,
+    'currency_id': _selectedCurrency,
+  };
+
+  bool get _hasEdits => _editSnapshot.hasChanges(_editableValues);
 
   @override
   bool get hasUnsavedData {
@@ -197,10 +237,13 @@ class _ProductFormScreenState extends State<ProductFormScreen>
             : p.currencyId;
       }
 
+      if (_isEditMode) _editSnapshot.capture(_editableValues);
       setState(() {
         _dropdownsLoading = false;
       });
     } catch (e) {
+      // The form still opens on whatever loaded, so that is the baseline.
+      if (_isEditMode) _editSnapshot.capture(_editableValues);
       setState(() {
         _dropdownsLoading = false;
       });
@@ -369,6 +412,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
         },
         child: Scaffold(
           appBar: AppBar(
+            forceMaterialTransparency: true,
             title: Text(
               _isEditMode ? 'Edit Product' : 'Create Product',
               style: TextStyle(
@@ -453,6 +497,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
       },
       child: Scaffold(
         appBar: AppBar(
+          forceMaterialTransparency: true,
           title: Text(
             _isEditMode ? 'Edit Product' : 'Create Product',
             style: TextStyle(
@@ -505,7 +550,8 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               const SizedBox(height: 16),
               simple.CustomTextField(
                 controller: _nameController,
-                labelText: 'Product Name *',
+                labelText: 'Product Name',
+                isRequired: true,
                 hintText: 'Enter product name',
                 isDark: isDark,
                 validator: (v) {
@@ -1133,39 +1179,47 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               SafeArea(
                 child: SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: (_isLoading || !_isNameFilled)
-                        ? null
-                        : _saveProduct,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shadowColor: Colors.transparent,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 14,
-                        horizontal: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      disabledBackgroundColor: isDark
-                          ? Colors.grey[700]!
-                          : Colors.grey[400]!,
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : Text(
-                            _isEditMode ? 'Save Changes' : 'Create Product',
-                            style: const TextStyle(fontSize: 16),
+                  child: ListenableBuilder(
+                    listenable: _textFields,
+                    builder: (context, _) {
+                      // An edit that changes nothing has nothing to submit.
+                      final nothingToSave = _isEditMode && !_hasEdits;
+                      return ElevatedButton(
+                        onPressed:
+                            (_isLoading || !_isNameFilled || nothingToSave)
+                            ? null
+                            : _saveProduct,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shadowColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 14,
+                            horizontal: 16,
                           ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          disabledBackgroundColor: isDark
+                              ? Colors.grey[700]!
+                              : Colors.grey[400]!,
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(
+                                _isEditMode ? 'Save Changes' : 'Create Product',
+                                style: const TextStyle(fontSize: 16),
+                              ),
+                      );
+                    },
                   ),
                 ),
               ),
@@ -1211,7 +1265,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
 
     try {
       final productData = {
-        'name': _nameController.text,
+        'name': _nameController.text.trim(),
         'default_code': _defaultCodeController.text.isEmpty
             ? false
             : _defaultCodeController.text,

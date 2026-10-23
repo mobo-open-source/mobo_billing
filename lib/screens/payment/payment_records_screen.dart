@@ -11,6 +11,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
 import 'payment_detail_screen.dart';
 import '../../services/connectivity_service.dart';
+import '../../services/odoo_session_manager.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
 import '../../widgets/offline_data_banner.dart';
@@ -21,6 +22,8 @@ import 'package:intl/intl.dart';
 import '../../widgets/filter_badges.dart';
 import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../providers/navigation_provider.dart';
+import '../../utils/refresh_on_tab_select.dart';
 
 class PaymentRecordsScreen extends StatefulWidget {
   const PaymentRecordsScreen({Key? key}) : super(key: key);
@@ -29,7 +32,8 @@ class PaymentRecordsScreen extends StatefulWidget {
   State<PaymentRecordsScreen> createState() => _PaymentRecordsScreenState();
 }
 
-class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
+class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
+    with RefreshOnTabSelect {
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounceTimer;
 
@@ -59,6 +63,45 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
     super.dispose();
   }
 
+  @override
+  int get tabIndex => NavigationProvider.paymentsTab;
+
+  /// Reloads what is on screen — same page, search, filters and group-by.
+  @override
+  Future<void> onTabSelected() async {
+    if (_isFirstLoad) return;
+    final provider = Provider.of<PaymentProvider>(context, listen: false);
+    final domain = _buildFilterDomain();
+    final customFilter = domain.isNotEmpty ? domain : null;
+    final query = _searchController.text.trim();
+
+    if (_selectedGroupBy != null) {
+      await provider.fetchGroupSummary(
+        groupByField: _selectedGroupBy!,
+        customFilter: customFilter,
+      );
+      final openGroups = _expandedGroups.entries
+          .where((e) => e.value && provider.groupSummary.containsKey(e.key))
+          .map((e) => e.key);
+      await Future.wait(openGroups.map((k) => _loadGroupPayments(provider, k)));
+    } else if (query.isNotEmpty) {
+      await provider.searchPayments(
+        query,
+        offset: provider.currentOffset,
+        customFilter: customFilter,
+      );
+    } else {
+      await provider.loadPayments(
+        offset: provider.currentOffset,
+        customFilter: customFilter,
+      );
+    }
+
+    if (provider.error != null && mounted) {
+      _showErrorSnackBar(provider.error!);
+    }
+  }
+
   void _onSearchChanged(String query) {
     setState(() {});
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
@@ -78,6 +121,8 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
         startDate: _startDate,
         endDate: _endDate,
         selectedGroupBy: _selectedGroupBy,
+        statusFilters: _paymentStatusFilters,
+        groupByOptions: _paymentGroupByOptions,
         onApply: (filters, start, end, groupBy) {
           setState(() {
             _activeFilters.clear();
@@ -102,76 +147,71 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
     );
   }
 
+  /// Re-runs the list from page one with the current filters, keeping any
+  /// search text in the box.
   Future<void> _applyFilters() async {
     final provider = Provider.of<PaymentProvider>(context, listen: false);
+    final domain = _buildFilterDomain();
+    final customFilter = domain.isNotEmpty ? domain : null;
+    final query = _searchController.text.trim();
 
     if (_selectedGroupBy != null) {
-      final filterDomain = _buildFilterDomain();
-      provider.fetchGroupSummary(
+      // read_group replaces every loaded group, so collapse the open tiles
+      // rather than leave them spinning on data that is no longer there.
+      setState(() => _expandedGroups.clear());
+      await provider.fetchGroupSummary(
         groupByField: _selectedGroupBy!,
-        customFilter: filterDomain.isNotEmpty ? filterDomain : null,
+        customFilter: customFilter,
       );
+    } else if (query.isNotEmpty) {
+      await _runSearch(provider, query);
     } else {
-      final domain = _buildFilterDomain();
-      provider.loadPayments(
+      await provider.loadPayments(
         offset: 0,
         limit: 40,
-        customFilter: domain.isNotEmpty ? domain : null,
+        customFilter: customFilter,
       );
     }
   }
 
+  /// Status options for the filter sheet — the payment lifecycle, not the
+  /// invoice one the sheet defaults to (partial/in_payment/... don't exist on
+  /// account.payment). Offers only statuses the connected server really has,
+  /// so every chip matches a badge Odoo itself shows: Odoo 17 payments are
+  /// Draft/Posted; 18 and 19 replaced Posted with In Process and added
+  /// Rejected (Odoo 20 drops In Process again).
+  Map<String, String> get _paymentStatusFilters {
+    final version = OdooSessionManager.serverMajorVersion;
+    return {
+      'draft': 'Draft',
+      if (version < 18) 'posted': 'Posted',
+      if (version >= 18 && version < 20) 'in_process': 'In Process',
+      'paid': 'Paid',
+      'cancelled': 'Cancelled',
+      if (version >= 18) 'rejected': 'Rejected',
+    };
+  }
+
+  /// account.payment has no salesperson/sales team (it stopped inheriting
+  /// account.move in Odoo 18), so group by its own fields.
+  static const Map<String, String> _paymentGroupByOptions = {
+    'state': 'Status',
+    'partner_id': 'Partner',
+    'journal_id': 'Journal',
+    'payment_method_line_id': 'Payment Method',
+  };
+
   List<dynamic> _buildFilterDomain() {
     List<dynamic> domain = [];
 
-    if (_activeFilters.isNotEmpty) {
-      List<dynamic> statusConditions = [];
-      for (String filter in _activeFilters) {
-        switch (filter) {
-          case 'draft':
-            statusConditions.add(['state', '=', 'draft']);
-            break;
-          case 'posted':
-            statusConditions.add(['state', '=', 'posted']);
-            break;
-          case 'cancelled':
-            statusConditions.add(['state', '=', 'cancel']);
-            break;
-
-          case 'paid':
-            statusConditions.add(['state', '=', 'posted']);
-            break;
-          case 'not_paid':
-            statusConditions.add(['state', '=', 'draft']);
-            break;
-        }
-      }
-
-      if (statusConditions.isNotEmpty) {
-        int n = statusConditions.length;
-      }
-
-      List<dynamic> validConditions = [];
-      for (String filter in _activeFilters) {
-        if (filter == 'draft')
-          validConditions.add(['state', '=', 'draft']);
-        else if (filter == 'posted')
-          validConditions.add(['state', '=', 'posted']);
-        else if (filter == 'cancelled')
-          validConditions.add(['state', '=', 'cancel']);
-        else if (filter == 'paid')
-          validConditions.add(['state', '=', 'posted']);
-      }
-
-      if (validConditions.isNotEmpty) {
-        if (validConditions.length > 1) {
-          for (int i = 0; i < validConditions.length - 1; i++) {
-            domain.add('|');
-          }
-        }
-        domain.addAll(validConditions);
-      }
+    final stateConditions = _activeFilters
+        .map(_stateCondition)
+        .whereType<List<dynamic>>()
+        .toList();
+    for (int i = 0; i < stateConditions.length - 1; i++) {
+      domain.add('|');
     }
+    domain.addAll(stateConditions);
 
     if (_startDate != null) {
       final startDateStr = DateFormat('yyyy-MM-dd').format(_startDate!);
@@ -184,6 +224,39 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
     }
 
     return domain;
+  }
+
+  /// The `account.payment` state condition for a status filter, or `null`
+  /// for filters that don't apply to payments. Odoo 17 payments mirror their
+  /// journal entry (draft/posted/cancel); Odoo 18 gave them their own
+  /// lifecycle (draft → in_process → paid, plus canceled/rejected), which
+  /// Odoo 20 changed to draft → paid → reconciled.
+  List<dynamic>? _stateCondition(String filter) {
+    final version = OdooSessionManager.serverMajorVersion;
+    switch (filter) {
+      case 'draft':
+        return ['state', '=', 'draft'];
+      case 'posted':
+        // Odoo 17 only — later versions have no "Posted" payment state.
+        return ['state', '=', 'posted'];
+      case 'in_process':
+        return ['state', '=', 'in_process'];
+      case 'paid':
+        // Matches Odoo's own "Paid" search filter on 18+. On 17 a posted
+        // payment is only paid once reconciled; `state` alone can't tell.
+        if (version >= 18) return ['state', '=', 'paid'];
+        return ['is_reconciled', '=', true];
+      case 'cancelled':
+        return [
+          'state',
+          'in',
+          ['cancel', 'canceled'],
+        ];
+      case 'rejected':
+        return ['state', '=', 'rejected'];
+      default:
+        return null;
+    }
   }
 
   Widget _buildActiveFiltersChips(PaymentProvider provider) {
@@ -211,7 +284,9 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                 backgroundColor: Theme.of(
                   context,
                 ).primaryColor.withOpacity(0.1),
-                labelStyle: TextStyle(color: Theme.of(context).primaryColor),
+                labelStyle: GoogleFonts.manrope(
+                  color: Theme.of(context).primaryColor,
+                ),
                 deleteIconColor: Theme.of(context).primaryColor,
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
@@ -233,7 +308,9 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                 backgroundColor: Theme.of(
                   context,
                 ).primaryColor.withOpacity(0.1),
-                labelStyle: TextStyle(color: Theme.of(context).primaryColor),
+                labelStyle: GoogleFonts.manrope(
+                  color: Theme.of(context).primaryColor,
+                ),
                 deleteIconColor: Theme.of(context).primaryColor,
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
@@ -548,7 +625,7 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
             ),
           );
           if (result == true && context.mounted) {
-            Provider.of<PaymentProvider>(context, listen: false).loadPayments();
+            _applyFilters();
           }
         },
         backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
@@ -972,7 +1049,11 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          groupKey,
+                          // Grouped by status, the key is Odoo's raw state
+                          // ("in_process"); label it like the card badges.
+                          _selectedGroupBy == 'state'
+                              ? _getStateLabel(groupKey)
+                              : groupKey,
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -1058,6 +1139,8 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen> {
         return 'Sales Team';
       case 'journal_id':
         return 'Journal';
+      case 'payment_method_line_id':
+        return 'Payment Method';
       default:
         return key
             .split('_')

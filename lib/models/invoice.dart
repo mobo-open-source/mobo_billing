@@ -28,6 +28,14 @@ class Invoice {
   String get partnerName => customerName;
   int? get partnerId => customerId;
 
+  /// Name to show for the move. Odoo only numbers a move when it is posted —
+  /// a draft's name is empty or `/` — so a draft is labelled by its type.
+  String get displayName {
+    final trimmed = name.trim();
+    if (trimmed.isNotEmpty && trimmed != '/') return trimmed;
+    return moveType == 'out_refund' ? 'Draft Credit Note' : 'Draft Invoice';
+  }
+
   final String? salespersonName;
   final String? salesTeamName;
   final String? partnerBankName;

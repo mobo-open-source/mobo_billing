@@ -337,11 +337,7 @@ class _LoginScreenState extends State<LoginScreen> {
           if (accessResult != AppAccessResult.ok) {
             await authProvider.logout();
             if (mounted) {
-              if (accessResult == AppAccessResult.accessDenied) {
-                showAccessDeniedDialog(context);
-              } else {
-                showModuleMissingDialog(context);
-              }
+              showAppAccessDialog(context, accessResult);
               setState(() {
                 _isLoading = false;
               });

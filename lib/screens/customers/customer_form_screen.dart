@@ -9,6 +9,7 @@ import '../../providers/customer_provider.dart';
 import '../../providers/customer_form_provider.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
+import '../../services/odoo_session_manager.dart';
 import '../../widgets/connection_status_widget.dart';
 import '../../widgets/mobo_form_fields.dart';
 import '../../theme/form_styles.dart';
@@ -16,6 +17,8 @@ import '../../theme/app_theme.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../widgets/confetti_dialog.dart';
 import '../../utils/data_loss_warning_mixin.dart';
+import '../../utils/odoo_html_utils.dart';
+import '../../utils/form_validators.dart';
 import '../../services/odoo_error_handler.dart';
 
 class CustomerFormScreen extends StatefulWidget {
@@ -56,6 +59,26 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
   String? _selectedCurrency;
   String? _selectedLanguage;
 
+  /// Fires on any text edit, so the submit button can track whether there is
+  /// anything left to save.
+  late final Listenable _textFields = Listenable.merge([
+    _nameController,
+    _emailController,
+    _phoneController,
+    _mobileController,
+    _websiteController,
+    _functionController,
+    _streetController,
+    _street2Controller,
+    _cityController,
+    _zipController,
+    _companyNameController,
+    _vatController,
+    _industryController,
+    _creditLimitController,
+    _commentController,
+  ]);
+
   @override
   bool get hasUnsavedData {
     if (_hasBeenSaved) return false;
@@ -86,6 +109,9 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
 
   @override
   void onConfirmLeave() {}
+
+  /// Odoo 19 removed `res.partner.mobile`; only ask for one where it exists.
+  bool get _supportsMobile => OdooSessionManager.serverMajorVersion < 19;
 
   @override
   void initState() {
@@ -151,6 +177,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
   }
 
   Future<void> _save() async {
+    if (_hasBeenSaved) return;
     if (!ConnectivityService.instance.isConnected) {
       CustomSnackbar.showError(
         context,
@@ -158,7 +185,18 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
       );
       return;
     }
-    if (!_formKey.currentState!.validate()) return;
+    final invalidFields = _formKey.currentState!.validateGranularly();
+    if (invalidFields.isNotEmpty) {
+      // The first bad field may be scrolled out of view (Email sits at the
+      // top, Save at the bottom) — bring it up so its error is seen.
+      Scrollable.ensureVisible(
+        invalidFields.first.context,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        alignment: 0.2,
+      );
+      return;
+    }
 
     final customerProvider = Provider.of<CustomerProvider>(
       context,
@@ -169,23 +207,31 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
       listen: false,
     );
 
+    final isEditing = widget.isEditing;
+
     final Map<String, dynamic> data = {
       'name': _nameController.text.trim(),
       'is_company': _isCompany,
-      'type': 'contact',
+      // Only a new partner is set up as a customer contact; an edit must not
+      // reset the type of an existing address or its customer rank.
+      if (!isEditing) 'type': 'contact',
+      if (!isEditing) 'customer_rank': 1,
     };
 
-    data['customer_rank'] = 1;
-
+    // A blank field is left out of a new record, but on an edit it is sent as
+    // `false` so that clearing a value actually removes it in Odoo.
     void addField(String key, String value) {
-      if (value.trim().isNotEmpty && value.trim().toLowerCase() != 'false') {
-        data[key] = value.trim();
+      final trimmed = value.trim();
+      if (trimmed.isNotEmpty && trimmed.toLowerCase() != 'false') {
+        data[key] = trimmed;
+      } else if (isEditing) {
+        data[key] = false;
       }
     }
 
     addField('email', _emailController.text);
     addField('phone', _phoneController.text);
-    addField('mobile', _mobileController.text);
+    if (_supportsMobile) addField('mobile', _mobileController.text);
     addField('website', _websiteController.text);
     addField('function', _functionController.text);
     addField('street', _streetController.text);
@@ -193,14 +239,19 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
     addField('city', _cityController.text);
     addField('zip', _zipController.text);
     addField('vat', _vatController.text);
-    addField('comment', _commentController.text);
+    addField('comment', textToOdooHtml(_commentController.text));
+    addField('company_name', _companyNameController.text);
 
-    if (_selectedCountryId != null) data['country_id'] = _selectedCountryId;
-    if (_selectedStateId != null) data['state_id'] = _selectedStateId;
+    // Changing the country clears the state, so on an edit both are sent even
+    // when empty — otherwise the old state would stay attached.
+    if (_selectedCountryId != null || isEditing) {
+      data['country_id'] = _selectedCountryId ?? false;
+    }
+    if (_selectedStateId != null || isEditing) {
+      data['state_id'] = _selectedStateId ?? false;
+    }
     if (_selectedTitle != null) data['title'] = int.tryParse(_selectedTitle!);
     if (_selectedLanguage != null) data['lang'] = _selectedLanguage;
-    if (_companyNameController.text.isNotEmpty)
-      data['company_name'] = _companyNameController.text.trim();
 
     if (_industryController.text.isNotEmpty) {
       final industryId = int.tryParse(_industryController.text.trim());
@@ -209,7 +260,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
       }
     }
 
-    if (_creditLimitController.text.isNotEmpty) {
+    if (_creditLimitController.text.trim().isNotEmpty || isEditing) {
       data['credit_limit'] =
           double.tryParse(_creditLimitController.text.trim()) ?? 0.0;
     }
@@ -571,6 +622,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
             formProviderForGate.countryOptions.isEmpty) {
           return Scaffold(
             appBar: AppBar(
+              forceMaterialTransparency: true,
               title: Text(
                 widget.isEditing ? 'Edit Customer' : 'Create Customer',
               ),
@@ -599,6 +651,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
         if (!sessionService.hasValidSession) {
           return Scaffold(
             appBar: AppBar(
+              forceMaterialTransparency: true,
               title: Text(
                 widget.isEditing ? 'Edit Customer' : 'Create Customer',
               ),
@@ -622,6 +675,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
             if (formProvider.error != null) {
               return Scaffold(
                 appBar: AppBar(
+                  forceMaterialTransparency: true,
                   title: Text(
                     widget.isEditing ? 'Edit Customer' : 'Create Customer',
                   ),
@@ -659,6 +713,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
               },
               child: Scaffold(
                 appBar: AppBar(
+                  forceMaterialTransparency: true,
                   title: Text(
                     widget.isEditing ? 'Edit Customer' : 'Create Customer',
                   ),
@@ -679,290 +734,306 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                   onRefresh: () => formProvider.loadDropdownData(),
                   child: Form(
                     key: _formKey,
-                    child: ListView(
+                    // Not a lazy ListView: fields scrolled out of view would be
+                    // disposed, and Form.validate() only checks mounted ones —
+                    // so a bad email went unchecked once the user scrolled
+                    // down to Save.
+                    child: SingleChildScrollView(
                       padding: const EdgeInsets.all(20),
                       physics: const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        const SizedBox(height: 16),
-                        _buildPhotoPicker(formProvider, isDark, primaryColor),
-                        const SizedBox(height: 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 16),
+                          _buildPhotoPicker(formProvider, isDark, primaryColor),
+                          const SizedBox(height: 16),
 
-                        MoboFormCard(
-                          title: 'Basic Information',
-                          children: [
-                            MoboTextField(
-                              controller: _nameController,
-                              label: 'Name',
-                              hintText: 'Enter full name',
-                              isRequired: true,
-                              leadingIcon: HugeIcons.strokeRoundedUser,
-                              validator: (v) => (v == null || v.trim().isEmpty)
-                                  ? 'Name is required'
-                                  : null,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _emailController,
-                              label: 'Email',
-                              hintText: 'Enter email address',
-                              leadingIcon: HugeIcons.strokeRoundedMail01,
-                              keyboardType: TextInputType.emailAddress,
-                              validator: (v) {
-                                if (v != null && v.trim().isNotEmpty) {
-                                  final emailRegex = RegExp(
-                                    r'^[^@\s]+@[^@\s]+\.[^@\s]+',
-                                  );
-                                  if (!emailRegex.hasMatch(v.trim())) {
-                                    return 'Enter a valid email address';
-                                  }
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _phoneController,
-                              label: 'Phone',
-                              hintText: 'Enter phone number',
-                              leadingIcon: HugeIcons.strokeRoundedCall,
-                              keyboardType: TextInputType.phone,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _mobileController,
-                              label: 'Mobile',
-                              hintText: 'Enter mobile number',
-                              leadingIcon: HugeIcons.strokeRoundedSmartPhone01,
-                              keyboardType: TextInputType.phone,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _websiteController,
-                              label: 'Website',
-                              hintText: 'Enter website URL',
-                              leadingIcon: HugeIcons.strokeRoundedGlobe,
-                              keyboardType: TextInputType.url,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _functionController,
-                              label: 'Job Position',
-                              hintText: 'Enter job position',
-                              leadingIcon: HugeIcons.strokeRoundedBriefcase01,
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Checkbox(
-                                  value: _isCompany,
-                                  activeColor: AppTheme.primaryColor,
-                                  onChanged: (v) =>
-                                      setState(() => _isCompany = v ?? false),
-                                ),
-                                Text(
-                                  'Is Company',
-                                  style: AppFormTheme.fieldValueStyle(isDark),
+                          MoboFormCard(
+                            title: 'Basic Information',
+                            children: [
+                              MoboTextField(
+                                controller: _nameController,
+                                label: 'Name',
+                                hintText: 'Enter full name',
+                                isRequired: true,
+                                leadingIcon: HugeIcons.strokeRoundedUser,
+                                validator: (v) => (v == null || v.trim().isEmpty)
+                                    ? 'Name is required'
+                                    : null,
+                              ),
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _emailController,
+                                label: 'Email',
+                                hintText: 'Enter email address',
+                                leadingIcon: HugeIcons.strokeRoundedMail01,
+                                keyboardType: TextInputType.emailAddress,
+                                validator: validateEmail,
+                                autovalidateMode:
+                                    AutovalidateMode.onUserInteraction,
+                              ),
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _phoneController,
+                                label: 'Phone',
+                                hintText: 'Enter phone number',
+                                leadingIcon: HugeIcons.strokeRoundedCall,
+                                keyboardType: TextInputType.phone,
+                              ),
+                              if (_supportsMobile) ...[
+                                const SizedBox(height: 16),
+                                MoboTextField(
+                                  controller: _mobileController,
+                                  label: 'Mobile',
+                                  hintText: 'Enter mobile number',
+                                  leadingIcon:
+                                      HugeIcons.strokeRoundedSmartPhone01,
+                                  keyboardType: TextInputType.phone,
                                 ),
                               ],
-                            ),
-                          ],
-                        ),
-
-                        MoboFormCard(
-                          title: 'Company Details',
-                          children: [
-                            MoboTextField(
-                              controller: _companyNameController,
-                              label: 'Company Name',
-                              hintText: 'Enter company name',
-                              leadingIcon: HugeIcons.strokeRoundedBuilding03,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _vatController,
-                              label: 'VAT Number',
-                              hintText: 'Enter VAT number',
-                              leadingIcon: HugeIcons.strokeRoundedInvoice01,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _industryController,
-                              label: 'Industry',
-                              hintText: 'Enter industry',
-                              leadingIcon: HugeIcons.strokeRoundedFactory01,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _creditLimitController,
-                              label: 'Credit Limit',
-                              hintText: 'Enter credit limit',
-                              leadingIcon: HugeIcons.strokeRoundedDollarCircle,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                            ),
-                          ],
-                        ),
-
-                        MoboFormCard(
-                          title: 'Address',
-                          children: [
-                            MoboTextField(
-                              controller: _streetController,
-                              label: 'Street',
-                              hintText: 'Enter street address',
-                              leadingIcon: HugeIcons.strokeRoundedLocation01,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _street2Controller,
-                              label: 'Street 2',
-                              hintText: 'Enter additional address',
-                              leadingIcon: HugeIcons.strokeRoundedLocation01,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _cityController,
-                              label: 'City',
-                              hintText: 'Enter city name',
-                              leadingIcon: HugeIcons.strokeRoundedCity01,
-                            ),
-                            const SizedBox(height: 16),
-                            MoboInlineDropdown<Map<String, dynamic>>(
-                              label: 'Country',
-                              hintText: 'Select country',
-                              leadingIcon: HugeIcons.strokeRoundedGlobe,
-                              selectedLabel: _optionLabel(
-                                formProvider.countryOptions,
-                                (c) => c['id'] == _selectedCountryId,
-                                'name',
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _websiteController,
+                                label: 'Website',
+                                hintText: 'Enter website URL',
+                                leadingIcon: HugeIcons.strokeRoundedGlobe,
+                                keyboardType: TextInputType.url,
                               ),
-                              items: formProvider.countryOptions,
-                              titleBuilder: (c) =>
-                                  c['name']?.toString() ?? 'Unknown',
-                              isItemSelected: (c) =>
-                                  c['id'] == _selectedCountryId,
-                              emptyText: 'No countries found',
-                              onItemTap: (country) {
-                                final id = country['id'] as int?;
-                                setState(() {
-                                  _selectedCountryId = id;
-                                  _selectedStateId = null;
-                                });
-                                if (id != null) formProvider.fetchStates(id);
-                              },
-                            ),
-                            if (formProvider.stateOptions.isNotEmpty) ...[
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _functionController,
+                                label: 'Job Position',
+                                hintText: 'Enter job position',
+                                leadingIcon: HugeIcons.strokeRoundedBriefcase01,
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Checkbox(
+                                    value: _isCompany,
+                                    activeColor: AppTheme.primaryColor,
+                                    onChanged: (v) =>
+                                        setState(() => _isCompany = v ?? false),
+                                  ),
+                                  Text(
+                                    'Is Company',
+                                    style: AppFormTheme.fieldValueStyle(isDark),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+
+                          MoboFormCard(
+                            title: 'Company Details',
+                            children: [
+                              MoboTextField(
+                                controller: _companyNameController,
+                                label: 'Company Name',
+                                hintText: 'Enter company name',
+                                leadingIcon: HugeIcons.strokeRoundedBuilding03,
+                              ),
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _vatController,
+                                label: 'VAT Number',
+                                hintText: 'Enter VAT number',
+                                leadingIcon: HugeIcons.strokeRoundedInvoice01,
+                              ),
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _industryController,
+                                label: 'Industry',
+                                hintText: 'Enter industry',
+                                leadingIcon: HugeIcons.strokeRoundedFactory01,
+                              ),
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _creditLimitController,
+                                label: 'Credit Limit',
+                                hintText: 'Enter credit limit',
+                                leadingIcon: HugeIcons.strokeRoundedDollarCircle,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                              ),
+                            ],
+                          ),
+
+                          MoboFormCard(
+                            title: 'Address',
+                            children: [
+                              MoboTextField(
+                                controller: _streetController,
+                                label: 'Street',
+                                hintText: 'Enter street address',
+                                leadingIcon: HugeIcons.strokeRoundedLocation01,
+                              ),
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _street2Controller,
+                                label: 'Street 2',
+                                hintText: 'Enter additional address',
+                                leadingIcon: HugeIcons.strokeRoundedLocation01,
+                              ),
+                              const SizedBox(height: 16),
+                              MoboTextField(
+                                controller: _cityController,
+                                label: 'City',
+                                hintText: 'Enter city name',
+                                leadingIcon: HugeIcons.strokeRoundedCity01,
+                              ),
                               const SizedBox(height: 16),
                               MoboInlineDropdown<Map<String, dynamic>>(
-                                label: 'State',
-                                hintText: 'Select state',
-                                leadingIcon:
-                                    HugeIcons.strokeRoundedMapsLocation01,
+                                label: 'Country',
+                                hintText: 'Select country',
+                                leadingIcon: HugeIcons.strokeRoundedGlobe,
                                 selectedLabel: _optionLabel(
-                                  formProvider.stateOptions,
-                                  (st) => st['id'] == _selectedStateId,
+                                  formProvider.countryOptions,
+                                  (c) => c['id'] == _selectedCountryId,
                                   'name',
                                 ),
-                                items: formProvider.stateOptions,
-                                titleBuilder: (st) =>
-                                    st['name']?.toString() ?? 'Unknown',
-                                isItemSelected: (st) =>
-                                    st['id'] == _selectedStateId,
-                                emptyText: 'No states found',
-                                onItemTap: (st) => setState(
-                                  () => _selectedStateId = st['id'] as int?,
-                                ),
+                                items: formProvider.countryOptions,
+                                titleBuilder: (c) =>
+                                    c['name']?.toString() ?? 'Unknown',
+                                isItemSelected: (c) =>
+                                    c['id'] == _selectedCountryId,
+                                emptyText: 'No countries found',
+                                onItemTap: (country) {
+                                  final id = country['id'] as int?;
+                                  setState(() {
+                                    _selectedCountryId = id;
+                                    _selectedStateId = null;
+                                  });
+                                  if (id != null) formProvider.fetchStates(id);
+                                },
                               ),
-                            ],
-                            const SizedBox(height: 16),
-                            MoboTextField(
-                              controller: _zipController,
-                              label: 'ZIP Code',
-                              hintText: 'Enter ZIP code',
-                              leadingIcon: HugeIcons.strokeRoundedLocation01,
-                            ),
-                          ],
-                        ),
-
-                        MoboFormCard(
-                          title: 'Additional Information',
-                          children: [
-                            if (formProvider.titleOptions.isNotEmpty) ...[
-                              MoboInlineDropdown<Map<String, String>>(
-                                label: 'Title',
-                                hintText: 'Select title',
-                                leadingIcon: HugeIcons.strokeRoundedUserAccount,
-                                selectedLabel: _optionLabel(
-                                  formProvider.titleOptions,
-                                  (t) => t['value'] == _selectedTitle,
-                                  'label',
+                              if (formProvider.stateOptions.isNotEmpty) ...[
+                                const SizedBox(height: 16),
+                                MoboInlineDropdown<Map<String, dynamic>>(
+                                  label: 'State',
+                                  hintText: 'Select state',
+                                  leadingIcon:
+                                      HugeIcons.strokeRoundedMapsLocation01,
+                                  selectedLabel: _optionLabel(
+                                    formProvider.stateOptions,
+                                    (st) => st['id'] == _selectedStateId,
+                                    'name',
+                                  ),
+                                  items: formProvider.stateOptions,
+                                  titleBuilder: (st) =>
+                                      st['name']?.toString() ?? 'Unknown',
+                                  isItemSelected: (st) =>
+                                      st['id'] == _selectedStateId,
+                                  emptyText: 'No states found',
+                                  onItemTap: (st) => setState(
+                                    () => _selectedStateId = st['id'] as int?,
+                                  ),
                                 ),
-                                items: formProvider.titleOptions,
-                                titleBuilder: (t) => t['label'] ?? '',
-                                isItemSelected: (t) =>
-                                    t['value'] == _selectedTitle,
-                                emptyText: 'No titles found',
-                                onItemTap: (t) =>
-                                    setState(() => _selectedTitle = t['value']),
-                              ),
+                              ],
                               const SizedBox(height: 16),
-                            ],
-                            if (formProvider.languageOptions.isNotEmpty) ...[
-                              MoboInlineDropdown<Map<String, String>>(
-                                label: 'Language',
-                                hintText: 'Select language',
-                                leadingIcon: HugeIcons.strokeRoundedTranslate,
-                                selectedLabel: _optionLabel(
-                                  formProvider.languageOptions,
-                                  (l) => l['value'] == _selectedLanguage,
-                                  'label',
-                                ),
-                                items: formProvider.languageOptions,
-                                titleBuilder: (l) => l['label'] ?? '',
-                                isItemSelected: (l) =>
-                                    l['value'] == _selectedLanguage,
-                                emptyText: 'No languages found',
-                                onItemTap: (l) => setState(
-                                  () => _selectedLanguage = l['value'],
-                                ),
+                              MoboTextField(
+                                controller: _zipController,
+                                label: 'ZIP Code',
+                                hintText: 'Enter ZIP code',
+                                leadingIcon: HugeIcons.strokeRoundedLocation01,
                               ),
-                              const SizedBox(height: 16),
                             ],
-                            MoboTextField(
-                              controller: _commentController,
-                              label: 'Internal Notes',
-                              hintText: 'Enter any additional information',
-                              leadingIcon: HugeIcons.strokeRoundedNote01,
-                              maxLines: 3,
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 8),
-                        SafeArea(
-                          child: Consumer<CustomerProvider>(
-                            builder: (context, customerProvider, child) {
-                              final isBusy =
-                                  customerProvider.isLoading ||
-                                  formProvider.isOcrLoading;
-                              return MoboSubmitButton(
-                                label: widget.isEditing
-                                    ? 'Save Changes'
-                                    : 'Create Customer',
-                                loadingLabel: widget.isEditing
-                                    ? 'Saving Changes'
-                                    : 'Creating Customer',
-                                isLoading: isBusy,
-                                isReady: _nameController.text.trim().isNotEmpty,
-                                onPressed: _save,
-                              );
-                            },
                           ),
-                        ),
-                        const SizedBox(height: 40),
-                      ],
+
+                          MoboFormCard(
+                            title: 'Additional Information',
+                            children: [
+                              if (formProvider.titleOptions.isNotEmpty) ...[
+                                MoboInlineDropdown<Map<String, String>>(
+                                  label: 'Title',
+                                  hintText: 'Select title',
+                                  leadingIcon: HugeIcons.strokeRoundedUserAccount,
+                                  selectedLabel: _optionLabel(
+                                    formProvider.titleOptions,
+                                    (t) => t['value'] == _selectedTitle,
+                                    'label',
+                                  ),
+                                  items: formProvider.titleOptions,
+                                  titleBuilder: (t) => t['label'] ?? '',
+                                  isItemSelected: (t) =>
+                                      t['value'] == _selectedTitle,
+                                  emptyText: 'No titles found',
+                                  onItemTap: (t) =>
+                                      setState(() => _selectedTitle = t['value']),
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                              if (formProvider.languageOptions.isNotEmpty) ...[
+                                MoboInlineDropdown<Map<String, String>>(
+                                  label: 'Language',
+                                  hintText: 'Select language',
+                                  leadingIcon: HugeIcons.strokeRoundedTranslate,
+                                  selectedLabel: _optionLabel(
+                                    formProvider.languageOptions,
+                                    (l) => l['value'] == _selectedLanguage,
+                                    'label',
+                                  ),
+                                  items: formProvider.languageOptions,
+                                  titleBuilder: (l) => l['label'] ?? '',
+                                  isItemSelected: (l) =>
+                                      l['value'] == _selectedLanguage,
+                                  emptyText: 'No languages found',
+                                  onItemTap: (l) => setState(
+                                    () => _selectedLanguage = l['value'],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                              MoboTextField(
+                                controller: _commentController,
+                                label: 'Internal Notes',
+                                hintText: 'Enter any additional information',
+                                leadingIcon: HugeIcons.strokeRoundedNote01,
+                                maxLines: 3,
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 8),
+                          SafeArea(
+                            child: ListenableBuilder(
+                              listenable: _textFields,
+                              builder: (context, _) => Consumer<CustomerProvider>(
+                                builder: (context, customerProvider, child) {
+                                  final isBusy =
+                                      customerProvider.isLoading ||
+                                      formProvider.isOcrLoading;
+                                  // Already saved, or an edit that changes
+                                  // nothing — there is nothing to submit.
+                                  final nothingToSave =
+                                      _hasBeenSaved ||
+                                      (widget.isEditing &&
+                                          !hasUnsavedData &&
+                                          formProvider.pickedImage == null);
+                                  return MoboSubmitButton(
+                                    label: widget.isEditing
+                                        ? 'Save Changes'
+                                        : 'Create Customer',
+                                    loadingLabel: widget.isEditing
+                                        ? 'Saving Changes'
+                                        : 'Creating Customer',
+                                    isLoading: isBusy,
+                                    isReady:
+                                        !nothingToSave &&
+                                        _nameController.text.trim().isNotEmpty,
+                                    onPressed: nothingToSave ? null : _save,
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                          // Room to scroll the submit button clear of the
+                          // Scan Card button, which only shows when creating.
+                          SizedBox(height: widget.isEditing ? 40 : 96),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1051,67 +1122,158 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
     );
   }
 
+  /// Loading placeholder laid out like the form itself — photo, the four
+  /// section cards with their fields, then the submit button — so nothing
+  /// shifts when the real form replaces it. The cards and their titles are
+  /// real; only the labels and inputs inside them shimmer.
   Widget _buildShimmerLoading(bool isDark, Color primaryColor) {
-    final shimmerBase = isDark ? Colors.grey[800]! : Colors.grey[300]!;
-    final shimmerHighlight = isDark ? Colors.grey[700]! : Colors.grey[100]!;
+    final shimmerBase = isDark ? Colors.grey[800]! : Colors.grey[200]!;
+    final shimmerHighlight = isDark ? Colors.grey[700]! : Colors.grey[50]!;
+
+    Widget shimmer(Widget child) => Shimmer.fromColors(
+      baseColor: shimmerBase,
+      highlightColor: shimmerHighlight,
+      child: child,
+    );
+
+    Widget bar({
+      required double height,
+      double? width,
+      double radius = AppRadius.xs,
+    }) => Container(
+      height: height,
+      width: width,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+
+    // A label line over an input box, sized like MoboTextField: a 14px label,
+    // a 10px gap and a 48px field (taller for a multiline one). The label bar
+    // is roughly as wide as the label it stands in for.
+    Widget field(String label, {double height = 48}) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        bar(height: 14, width: label.length * 7.5),
+        const SizedBox(height: 10),
+        bar(height: height, radius: AppRadius.md),
+      ],
+    );
+
+    // Fields stacked with the form's 16px gap, shimmering as one block.
+    Widget fields(List<Widget> items, {Widget? trailing}) => shimmer(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(height: 16),
+            items[i],
+          ],
+          ?trailing,
+        ],
+      ),
+    );
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          widget.isEditing ? 'Edit Customer' : 'Create Customer',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: isDark ? Colors.white : Colors.black,
-          ),
-        ),
+        forceMaterialTransparency: true,
+        title: Text(widget.isEditing ? 'Edit Customer' : 'Create Customer'),
         backgroundColor: isDark ? Colors.grey[900] : Colors.white,
         foregroundColor: isDark ? Colors.white : primaryColor,
         elevation: 0,
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
-          icon: const HugeIcon(icon: HugeIcons.strokeRoundedArrowLeft01),
+          icon: HugeIcon(
+            icon: HugeIcons.strokeRoundedArrowLeft01,
+            color: isDark ? Colors.white : Colors.black,
+          ),
         ),
       ),
-      body: Container(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Shimmer.fromColors(
-            baseColor: shimmerBase,
-            highlightColor: shimmerHighlight,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 96,
-                      height: 96,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ...List.generate(
-                    15,
-                    (index) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Container(
-                        height: 48,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+      backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const SizedBox(height: 16),
+          Center(
+            child: shimmer(
+              Container(
+                width: 96,
+                height: 96,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
           ),
-        ),
+          const SizedBox(height: 16),
+          MoboFormCard(
+            title: 'Basic Information',
+            children: [
+              fields(
+                [
+                  field('Name'),
+                  field('Email'),
+                  field('Phone'),
+                  if (_supportsMobile) field('Mobile'),
+                  field('Website'),
+                  field('Job Position'),
+                ],
+                // The "Is Company" checkbox row: a 48px tap target holding
+                // an 18px box, then its label.
+                trailing: Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Center(child: bar(height: 18, width: 18)),
+                      ),
+                      bar(height: 14, width: 80),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          MoboFormCard(
+            title: 'Company Details',
+            children: [
+              fields([
+                field('Company Name'),
+                field('VAT Number'),
+                field('Industry'),
+                field('Credit Limit'),
+              ]),
+            ],
+          ),
+          MoboFormCard(
+            title: 'Address',
+            children: [
+              fields([
+                field('Street'),
+                field('Street 2'),
+                field('City'),
+                field('Country'),
+                field('ZIP Code'),
+              ]),
+            ],
+          ),
+          MoboFormCard(
+            title: 'Additional Information',
+            children: [
+              fields([
+                field('Title'),
+                field('Language'),
+                field('Internal Notes', height: 90),
+              ]),
+            ],
+          ),
+          const SizedBox(height: 8),
+          shimmer(bar(height: 48, radius: AppRadius.md)),
+        ],
       ),
     );
   }

@@ -1,3 +1,5 @@
+import '../utils/odoo_html_utils.dart';
+
 /// Represents an Odoo res.partner (Customer/Contact) with profile and accounting data.
 class Customer {
   final int? id;
@@ -120,7 +122,9 @@ class Customer {
       city: getString(json['city']),
       zip: getString(json['zip']),
       website: getString(json['website']),
-      comment: getString(json['comment']),
+      // An Html field in Odoo — held as plain text so it edits and displays
+      // without raw `<p>` tags.
+      comment: getString(odooHtmlToText(json['comment'])),
       isCompany: json['is_company'] == true,
       customerRank: json['customer_rank'] is int ? json['customer_rank'] : 0,
       supplierRank: json['supplier_rank'] is int ? json['supplier_rank'] : 0,

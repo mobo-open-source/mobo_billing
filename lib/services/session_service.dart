@@ -389,6 +389,14 @@ class SessionService extends ChangeNotifier {
         allowedCompanyIds: [],
       );
 
+      // Company ids belong to the outgoing account's database. CompanyProvider
+      // restores these before the server's own default, so left in place
+      // they select (and write to res.users) a company of the other server.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('selected_company_id');
+      await prefs.remove('selected_allowed_company_ids');
+      await prefs.remove('pending_company_id');
+
       await OdooSessionManager.updateSession(newSession);
 
       OdooApiService().updateSession(newSession);
@@ -400,16 +408,16 @@ class SessionService extends ChangeNotifier {
             context,
             listen: false,
           );
+          // No `sessionInfo` stub: the manager then reads the real
+          // session info from the new server — its version decides how
+          // version-specific calls are made, and a stub without one was
+          // treated as Odoo 17, failing on 18+ servers.
           await authProvider.loginWithSessionId(
             serverUrl: newSession.serverUrl,
             database: newSession.database,
             username: newSession.userLogin,
             password: newSession.password,
             sessionId: newSession.sessionId,
-            sessionInfo: {
-              'uid': newSession.userId,
-              'name': newSession.userName ?? newSession.userLogin,
-            },
           );
         }
       } catch (e) {}

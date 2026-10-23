@@ -4,6 +4,7 @@ import '../services/connectivity_service.dart';
 import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 import '../services/odoo_error_handler.dart';
+import '../services/odoo_session_manager.dart';
 import '../models/product.dart';
 
 /// Provider for managing product catalog, variant search, and category grouping.
@@ -106,8 +107,18 @@ class ProductProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Bumped by every [loadProducts]; a response for an older number has been
+  /// superseded and is dropped, so a slow unfiltered reload can't land on top
+  /// of the search the user started after it.
+  int _loadSeq = 0;
+
   /// Loads a paginated list of product templates from the Odoo server.
   Future<void> loadProducts({int offset = 0, String search = ''}) async {
+    // A keyboard suggestion leaves a trailing space, and `ilike '%foo %'`
+    // misses a product named "foo".
+    search = search.trim();
+    final seq = ++_loadSeq;
+
     // Offline: the product picker still needs options, so serve the last set.
     if (!ConnectivityService.instance.isConnected && _serveCachedProducts()) {
       return;
@@ -182,6 +193,7 @@ class ProductProvider extends ChangeNotifier {
               ),
             ),
       ]);
+      if (seq != _loadSeq) return;
       final countResult = results[0];
       _totalCount = countResult is int ? countResult : 0;
       final result = results[1];
@@ -196,16 +208,20 @@ class ProductProvider extends ChangeNotifier {
         _products = [];
       }
     } on TimeoutException catch (e) {
+      if (seq != _loadSeq) return;
       if (_products.isEmpty && _serveCachedProducts()) return;
 
       _error = 'TIMEOUT: ${e.message}';
     } catch (e) {
+      if (seq != _loadSeq) return;
       if (_products.isEmpty && _serveCachedProducts()) return;
 
       _error = OdooErrorHandler.toUserMessage(e);
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (seq == _loadSeq) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -233,9 +249,17 @@ class ProductProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Searches for products based on name or reference.
+  /// Searches for products based on name or reference. When grouped, the
+  /// group counts are re-read too — the grouped view never shows the flat list.
   Future<void> searchProducts(String query) async {
-    await loadProducts(offset: 0, search: query);
+    final search = query.trim();
+    if (isGrouped) {
+      _currentSearchQuery = search;
+      _groupSummary.clear();
+      _loadedGroups.clear();
+      await _fetchGroupSummary();
+    }
+    await loadProducts(offset: 0, search: search);
   }
 
   /// Navigates to the next page of products.
@@ -277,7 +301,13 @@ class ProductProvider extends ChangeNotifier {
       domain.add(['type', '=', 'consu']);
     }
     if (_showStorableOnly) {
-      domain.add(['type', '=', 'product']);
+      // Odoo 18 dropped the `product` (storable) type: storable goods are
+      // `consu` products with the `is_storable` flag.
+      domain.add(
+        OdooSessionManager.serverMajorVersion >= 18
+            ? ['is_storable', '=', true]
+            : ['type', '=', 'product'],
+      );
     }
     if (_showAvailableOnly) {
       domain.add(['qty_available', '>', 0]);
@@ -334,34 +364,22 @@ class ProductProvider extends ChangeNotifier {
       final domain = await _buildDomain(_currentSearchQuery);
 
       final result = await _apiService
-          .call(
-            'product.template',
-            'read_group',
-            [domain],
-            {
-              'groupby': [_selectedGroupBy],
-            },
-          )
+          .readGroup('product.template', domain, groupby: [_selectedGroupBy!])
           .timeout(
             const Duration(seconds: 30),
             onTimeout: () =>
                 throw TimeoutException('Loading group summary timed out'),
           );
 
-      if (result is List) {
-        _groupSummary.clear();
-        int total = 0;
-        for (final group in result) {
-          if (group is Map) {
-            final groupMap = Map<String, dynamic>.from(group);
-            final groupKey = getGroupKeyFromReadGroup(groupMap);
-            final count = groupMap['${_selectedGroupBy}_count'] ?? 0;
-            _groupSummary[groupKey] = count;
-            total += count as int;
-          }
-        }
-        _totalCount = total;
+      _groupSummary.clear();
+      int total = 0;
+      for (final group in result) {
+        final groupKey = getGroupKeyFromReadGroup(group);
+        final count = group['${_selectedGroupBy}_count'] as int;
+        _groupSummary[groupKey] = count;
+        total += count;
       }
+      _totalCount = total;
     } catch (e) {
       if (_groupSummary.isEmpty) {
         _groupSummary.clear();

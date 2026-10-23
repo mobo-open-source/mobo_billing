@@ -365,16 +365,42 @@ class AuthProvider with ChangeNotifier {
   }
 
   /// Checks if the 'account' module is installed on the Odoo server.
-  Future<bool> checkRequiredModules() async {
+  /// Pass [session] right after `OdooSessionManager.authenticate`, which
+  /// doesn't make the new session current — without it this would check the
+  /// previous account's server.
+  Future<bool> checkRequiredModules({OdooSessionModel? session}) async {
+    if (session != null) {
+      return await _apiService.isModuleInstalledFor(session, 'account');
+    }
     return await _apiService.isModuleInstalled('account');
   }
 
+  /// Whether the session's Odoo database has expired — see
+  /// [OdooSessionManager.isDatabaseExpired]. Pass [session] right after
+  /// `OdooSessionManager.authenticate`, as with [checkRequiredModules]. A
+  /// failed lookup (old server, network blip) does not block the login.
+  Future<bool> isDatabaseExpired({OdooSessionModel? session}) async {
+    final target = session ?? await OdooSessionManager.getCurrentSession();
+    if (target == null) return false;
+    try {
+      return await OdooSessionManager.isDatabaseExpired(
+        target.serverUrl,
+        target.sessionId,
+      ).timeout(const Duration(seconds: 15));
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Checks whether the logged-in user can actually use the app: the
-  /// billing module must be installed on the server AND the user must have
-  /// billing access rights (e.g. an assigned Billing/Invoicing user group).
+  /// database must not have expired, the billing module must be installed
+  /// on the server AND the user must have billing access rights (e.g. an
+  /// assigned Billing/Invoicing user group).
   /// Used to block access from the login screen itself, instead of letting
   /// the user in and surfacing access errors deep inside individual screens.
   Future<AppAccessResult> checkAppAccess() async {
+    if (await isDatabaseExpired()) return AppAccessResult.databaseExpired;
+
     final moduleInstalled = await _apiService.isModuleInstalled('account');
     if (!moduleInstalled) return AppAccessResult.moduleMissing;
 
@@ -386,4 +412,4 @@ class AuthProvider with ChangeNotifier {
 }
 
 /// Outcome of [AuthProvider.checkAppAccess].
-enum AppAccessResult { ok, moduleMissing, accessDenied }
+enum AppAccessResult { ok, databaseExpired, moduleMissing, accessDenied }

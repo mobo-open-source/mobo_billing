@@ -20,6 +20,8 @@ import '../../widgets/invoice_filter_bottomsheet.dart';
 import 'package:intl/intl.dart';
 import '../../models/invoice.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../providers/navigation_provider.dart';
+import '../../utils/refresh_on_tab_select.dart';
 
 class CreditNotesScreen extends StatefulWidget {
   const CreditNotesScreen({Key? key}) : super(key: key);
@@ -28,7 +30,8 @@ class CreditNotesScreen extends StatefulWidget {
   State<CreditNotesScreen> createState() => _CreditNotesScreenState();
 }
 
-class _CreditNotesScreenState extends State<CreditNotesScreen> {
+class _CreditNotesScreenState extends State<CreditNotesScreen>
+    with RefreshOnTabSelect {
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
 
@@ -58,6 +61,45 @@ class _CreditNotesScreenState extends State<CreditNotesScreen> {
     _searchController.dispose();
     _searchDebounce?.cancel();
     super.dispose();
+  }
+
+  @override
+  int get tabIndex => NavigationProvider.creditNotesTab;
+
+  /// Reloads what is on screen — same page, search, filters and group-by.
+  @override
+  Future<void> onTabSelected() async {
+    if (_isFirstLoad) return;
+    final provider = Provider.of<CreditNoteProvider>(context, listen: false);
+    final domain = _buildFilterDomain();
+    final customFilter = domain.isNotEmpty ? domain : null;
+    final query = _searchController.text.trim();
+
+    if (_selectedGroupBy != null) {
+      await provider.fetchGroupSummary(
+        groupByField: _selectedGroupBy!,
+        customFilter: customFilter,
+      );
+      final openGroups = _expandedGroups.entries
+          .where((e) => e.value && provider.groupSummary.containsKey(e.key))
+          .map((e) => e.key);
+      await Future.wait(openGroups.map((k) => _loadGroupInvoices(provider, k)));
+    } else if (query.isNotEmpty) {
+      await provider.searchCreditNotes(
+        query,
+        offset: provider.currentOffset,
+        customFilter: customFilter,
+      );
+    } else {
+      await provider.loadCreditNotes(
+        offset: provider.currentOffset,
+        customFilter: customFilter,
+      );
+    }
+
+    if (provider.error != null && mounted) {
+      _showErrorSnackBar(provider.error!);
+    }
   }
 
   @override

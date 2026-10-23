@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/form_styles.dart';
 
 /// A customizable [TextFormField] wrapper with a label above the field,
 /// used throughout the Invoice, Credit Note and Payment forms.
@@ -17,6 +18,9 @@ class CustomTextField extends StatelessWidget {
   final Widget? suffixIcon;
   final bool enabled;
 
+  /// Appends the red required-field star to [labelText].
+  final bool isRequired;
+
   const CustomTextField({
     required this.controller,
     required this.labelText,
@@ -28,6 +32,7 @@ class CustomTextField extends StatelessWidget {
     this.maxLines = 1,
     this.suffixIcon,
     this.enabled = true,
+    this.isRequired = false,
     Key? key,
   }) : super(key: key);
 
@@ -36,8 +41,9 @@ class CustomTextField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        buildFieldLabel(
           labelText,
+          isRequired: isRequired,
           style: TextStyle(
             fontFamily: GoogleFonts.manrope(
               fontWeight: FontWeight.w400,

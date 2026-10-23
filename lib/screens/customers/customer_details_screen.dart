@@ -29,6 +29,8 @@ import '../../widgets/full_image_screen.dart';
 import '../../providers/last_opened_provider.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../services/runtime_permission_service.dart';
+import '../../services/odoo_session_manager.dart';
+import '../../utils/odoo_html_utils.dart';
 
 class CustomerDetailsScreen extends StatefulWidget {
   final Customer? customer;
@@ -98,6 +100,9 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
   Customer? _currentCustomer;
   Map<String, dynamic>? _customerStats;
   bool _isLoadingStats = false;
+
+  /// Odoo 19 removed `res.partner.mobile`; only ask for one where it exists.
+  bool get _supportsMobile => OdooSessionManager.serverMajorVersion < 19;
 
   @override
   void initState() {
@@ -389,6 +394,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             ? Colors.grey[900]
             : const Color(0xFFF5F7FA),
         appBar: AppBar(
+          forceMaterialTransparency: true,
           backgroundColor: theme.brightness == Brightness.dark
               ? Colors.grey[900]
               : Colors.transparent,
@@ -714,16 +720,18 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                                   icon: Icons.phone_outlined,
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildFormField(
-                                  label: 'Mobile',
-                                  value: _mobileController.text,
-                                  controller: _mobileController,
-                                  keyboardType: TextInputType.phone,
-                                  icon: Icons.smartphone_outlined,
+                              if (_supportsMobile) ...[
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildFormField(
+                                    label: 'Mobile',
+                                    value: _mobileController.text,
+                                    controller: _mobileController,
+                                    keyboardType: TextInputType.phone,
+                                    icon: Icons.smartphone_outlined,
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
 
@@ -939,9 +947,10 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         'name': _nameController.text,
         'email': _emailController.text.isEmpty ? false : _emailController.text,
         'phone': _phoneController.text.isEmpty ? false : _phoneController.text,
-        'mobile': _mobileController.text.isEmpty
-            ? false
-            : _mobileController.text,
+        if (_supportsMobile)
+          'mobile': _mobileController.text.isEmpty
+              ? false
+              : _mobileController.text,
         'vat': _vatController.text.isEmpty ? false : _vatController.text,
         'street': _streetController.text.isEmpty
             ? false
@@ -952,7 +961,9 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         'city': _cityController.text.isEmpty ? false : _cityController.text,
         'zip': _zipController.text.trim(),
         'website': _websiteController.text.trim(),
-        'comment': _commentController.text.trim(),
+        'comment': _commentController.text.trim().isEmpty
+            ? false
+            : textToOdooHtml(_commentController.text),
         'function': _jobPositionController.text.trim(),
         'is_company': _isCompany,
         'customer_rank': _isCustomer ? 1 : 0,
@@ -3750,7 +3761,6 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
 
   Future<void> _handleLocationAction() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryColor = Theme.of(context).primaryColor;
 
     bool hasAddress =
         _streetController.text.isNotEmpty ||
@@ -3768,9 +3778,11 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     final shouldGeo = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        elevation: isDark ? 0 : 8,
-        backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+        ),
+        elevation: 0,
+        backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
         title: Text(
           'Geolocalize Customer',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -3833,45 +3845,59 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
           Row(
             children: [
               Expanded(
-                child: TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  style: TextButton.styleFrom(
-                    foregroundColor: isDark
-                        ? Colors.grey[400]
-                        : Colors.grey[700],
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primaryColor,
+                      side: const BorderSide(
+                        color: AppTheme.primaryColor,
+                        width: 1.5,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    child: const Text(
+                      'Cancel',
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(fontWeight: FontWeight.w500),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Expanded(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      elevation: 0,
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    // Scale down rather than wrap mid-word on narrow screens.
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'Geolocalize',
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                    elevation: isDark ? 0 : 3,
-                  ),
-                  child: const Text(
-                    'Geolocalize',
-                    style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ),

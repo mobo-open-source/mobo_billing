@@ -10,7 +10,6 @@ import '../services/odoo_session_manager.dart';
 import 'custom_snackbar.dart';
 import '../models/invoice.dart';
 import '../models/payment.dart';
-import '../services/runtime_permission_service.dart';
 
 class PDFGenerator {
   static const bool _debugMode = false;
@@ -19,18 +18,24 @@ class PDFGenerator {
   static const int _maxRetryAttempts = 1;
 
   /// Hard ceiling for one PDF request, covering *every* report candidate.
-  /// Without it the fallback list multiplies the per-request timeout (5 reports
-  /// x 30s) and the "Generating PDF" dialog can sit there for minutes.
-  static const Duration _overallDeadline = Duration(seconds: 45);
+  /// Odoo renders through wkhtmltopdf, which can need well over 30s on a busy
+  /// server or the first render after a restart, so the report that is
+  /// actually rendering gets the whole budget rather than a 30s slice.
+  static const Duration _overallDeadline = Duration(seconds: 60);
 
-  /// Report candidates for a customer invoice, most likely first.
+  /// Report candidates for a customer invoice or credit note, most likely
+  /// first. `account.report_invoice_with_payments` is the standard report in
+  /// Odoo 14–20; the rest only matter on customised databases.
   static const List<String> invoiceReportNames = [
     'account.report_invoice_with_payments',
     'account.report_invoice',
     'account.account_invoices',
-    'account.report_invoice_document',
-    'account.account_invoice_report',
   ];
+
+  /// Report name that last rendered successfully, per server URL and report
+  /// family, so later prints go straight to it instead of re-walking the
+  /// candidates.
+  static final Map<String, String> _resolvedReportNames = {};
 
   /// A connectivity failure — retrying the other report names cannot help.
   static bool _isOfflineError(Object error) {
@@ -44,25 +49,36 @@ class PDFGenerator {
         message.contains('Connection closed');
   }
 
-  /// Downloads the rendered invoice PDF, trying each report name in turn.
+  /// Report for a customer payment receipt (`account.payment`).
+  static const List<String> paymentReportNames = [
+    'account.report_payment_receipt',
+  ];
+
+  /// Downloads the rendered PDF of [recordId] (an invoice, credit note or
+  /// payment, depending on [reportNames]), trying each report name in turn.
   ///
-  /// Bounded two ways so the caller's loading dialog always ends: the whole
-  /// walk shares [_overallDeadline], and an offline error aborts immediately
-  /// instead of burning that budget on candidates that cannot succeed.
-  static Future<Uint8List> _fetchInvoicePdfBytes({
+  /// Only a definitive answer (missing report, error page, non-PDF body) moves
+  /// on to the next candidate. A timeout means the server is still rendering;
+  /// abandoning it for another report name would start a second render from
+  /// scratch with less time left, so it ends the walk instead. The whole walk
+  /// shares [_overallDeadline], and an offline error aborts immediately.
+  static Future<Uint8List> _fetchReportPdfBytes({
     required String odooUrl,
-    required int invoiceId,
+    required int recordId,
     List<String> reportNames = invoiceReportNames,
   }) async {
-    const methodName = '_fetchInvoicePdfBytes';
+    const methodName = '_fetchReportPdfBytes';
     final deadline = DateTime.now().add(_overallDeadline);
-    final perRequestTimeout = _isLocalEnvironment(odooUrl)
-        ? _localTimeout
-        : _requestTimeout;
 
-    Object? lastError;
+    // Keyed per report family too: invoices and payments resolve different
+    // report names on the same server.
+    final cacheKey = '$odooUrl|${reportNames.first}';
+    final cached = _resolvedReportNames[cacheKey];
+    final candidates = cached != null && reportNames.contains(cached)
+        ? [cached, ...reportNames.where((name) => name != cached)]
+        : reportNames;
 
-    for (final reportName in reportNames) {
+    for (final reportName in candidates) {
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) {
         _log(
@@ -73,39 +89,39 @@ class PDFGenerator {
         break;
       }
 
-      final timeout = remaining < perRequestTimeout
-          ? remaining
-          : perRequestTimeout;
-
       try {
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         final pdfUrl =
-            '$odooUrl/report/pdf/$reportName/$invoiceId?t=$timestamp';
+            '$odooUrl/report/pdf/$reportName/$recordId?t=$timestamp';
 
         final response = await OdooSessionManager.makeAuthenticatedRequest(
           pdfUrl,
           body: null,
-          timeout: timeout,
+          timeout: remaining,
           maxRetries: 1,
-        ).timeout(timeout);
+        ).timeout(remaining);
 
         if (response.statusCode == 200 && _isPdfContent(response.bodyBytes)) {
           _log('Generated PDF with report $reportName', method: methodName);
+          _resolvedReportNames[cacheKey] = reportName;
           return response.bodyBytes;
         }
 
-        lastError = Exception(
-          'Report $reportName returned status ${response.statusCode}',
-        );
-      } on TimeoutException catch (e) {
-        lastError = e;
         _log(
-          'Report $reportName timed out after ${timeout.inSeconds}s',
+          'Report $reportName returned status ${response.statusCode}',
           method: methodName,
           level: 'WARN',
         );
+      } on TimeoutException {
+        _log(
+          'Report $reportName timed out after ${remaining.inSeconds}s',
+          method: methodName,
+          level: 'WARN',
+        );
+        throw Exception(
+          'The server took too long to generate the PDF. Please try again.',
+        );
       } catch (e) {
-        lastError = e;
         if (_isOfflineError(e)) {
           throw Exception(
             'Could not reach the server. Check your internet connection and try again.',
@@ -119,25 +135,23 @@ class PDFGenerator {
       }
     }
 
-    if (lastError is TimeoutException) {
-      throw Exception(
-        'The server took too long to generate the PDF. Please try again.',
-      );
-    }
-
     throw Exception(
-      'Could not generate the invoice PDF. Please try again in a moment.',
+      'Could not generate the PDF. Please try again in a moment.',
     );
   }
 
-  /// Renders the invoice and hands it to the platform print dialog.
+  /// Renders the invoice (or credit note) and hands it to the platform print
+  /// dialog, which also offers "Save as PDF".
   ///
-  /// This is what "Print Invoice" uses — `Share.shareXFiles` only offers the
-  /// share sheet, which has no print action on most devices.
+  /// This is what "Print Invoice" and the credit note "Print" use —
+  /// `Share.shareXFiles` only offers the share sheet, which has no print
+  /// action on most devices. No storage permission is needed: the bytes go
+  /// straight to the print service without touching the filesystem.
   static Future<void> printInvoicePdf(
     BuildContext context,
     Invoice invoice, {
     VoidCallback? onPdfGenerated,
+    String documentLabel = 'Invoice',
   }) async {
     final invoiceName = _safeString(invoice.name);
     final odooSession = await OdooSessionManager.getCurrentSession();
@@ -147,9 +161,9 @@ class PDFGenerator {
       throw Exception('Unable to generate PDF: no active server session');
     }
 
-    final bytes = await _fetchInvoicePdfBytes(
+    final bytes = await _fetchReportPdfBytes(
       odooUrl: odooUrl,
-      invoiceId: invoice.id,
+      recordId: invoice.id,
     );
 
     // Close the caller's loading dialog before the system print sheet opens.
@@ -157,7 +171,42 @@ class PDFGenerator {
 
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,
-      name: 'Invoice $invoiceName',
+      name: '$documentLabel $invoiceName',
+    );
+  }
+
+  /// Renders the payment receipt and hands it to the platform print dialog,
+  /// which also offers "Save as PDF" and sharing.
+  ///
+  /// Same route as [printInvoicePdf]. The old share-sheet route failed on iOS
+  /// ("sharePositionOrigin: argument must be set"): the share sheet there is
+  /// anchored to a source rectangle, which this code never supplied. The print
+  /// dialog needs none, and no temp file is written.
+  static Future<void> printPaymentPdf(
+    BuildContext context,
+    Payment payment, {
+    VoidCallback? onPdfGenerated,
+  }) async {
+    final paymentName = _safeString(payment.name);
+    final odooSession = await OdooSessionManager.getCurrentSession();
+    final odooUrl = odooSession?.serverUrl ?? '';
+
+    if (odooUrl.isEmpty) {
+      throw Exception('Unable to generate PDF: no active server session');
+    }
+
+    final bytes = await _fetchReportPdfBytes(
+      odooUrl: odooUrl,
+      recordId: payment.id,
+      reportNames: paymentReportNames,
+    );
+
+    // Close the caller's loading dialog before the system print sheet opens.
+    onPdfGenerated?.call();
+
+    await Printing.layoutPdf(
+      onLayout: (_) async => bytes,
+      name: 'Payment Receipt $paymentName',
     );
   }
 
@@ -175,10 +224,9 @@ class PDFGenerator {
     const methodName = 'generateInvoicePdf';
     final String invoiceName = _safeString(invoice.name);
 
-    final hasPermission =
-        await RuntimePermissionService.requestStoragePermission(context);
-    if (!hasPermission) return;
-
+    // No storage permission: the file goes to the app's own temp directory,
+    // which never needs one. Asking for it silently aborted the export on
+    // Android 13+, where READ/WRITE_EXTERNAL_STORAGE can no longer be granted.
     final odooSession = await OdooSessionManager.getCurrentSession();
     final String odooUrl = odooSession?.serverUrl ?? '';
     final int invoiceId = invoice.id;
@@ -193,9 +241,9 @@ class PDFGenerator {
     try {
       // Bounded by _overallDeadline, so this can never leave the caller's
       // loading dialog up for minutes.
-      final pdfBytes = await _fetchInvoicePdfBytes(
+      final pdfBytes = await _fetchReportPdfBytes(
         odooUrl: odooUrl,
-        invoiceId: invoiceId,
+        recordId: invoiceId,
       );
 
       final tempDir = await getTemporaryDirectory();
@@ -262,10 +310,7 @@ class PDFGenerator {
     const methodName = 'generatePaymentPdf';
     final String paymentName = _safeString(payment.name);
 
-    final hasPermission =
-        await RuntimePermissionService.requestStoragePermission(context);
-    if (!hasPermission) return;
-
+    // No storage permission needed — see generateInvoicePdf.
     final odooSession = await OdooSessionManager.getCurrentSession();
     final String odooUrl = odooSession?.serverUrl ?? '';
     final int paymentId = payment.id;
@@ -538,12 +583,6 @@ class PDFGenerator {
     final int invoiceId = invoice.id;
     final String invoiceName = _safeString(invoice.name);
 
-    const reportNames = [
-      'account.report_invoice_with_payments',
-      'account.report_invoice',
-      'account.account_invoices',
-    ];
-
     if (odooUrl.isEmpty || invoiceId == null) {
       _log(
         'Invalid parameters: missing URL or invoice ID',
@@ -561,7 +600,7 @@ class PDFGenerator {
         odooUrl,
         invoiceId,
         invoiceName,
-        reportNames,
+        invoiceReportNames,
       );
 
       if (filePath == null) {
@@ -657,9 +696,9 @@ class PDFGenerator {
     String invoiceName,
     List<String> reportNames,
   ) async {
-    final pdfBytes = await _fetchInvoicePdfBytes(
+    final pdfBytes = await _fetchReportPdfBytes(
       odooUrl: odooUrl,
-      invoiceId: invoiceId,
+      recordId: invoiceId,
       reportNames: reportNames,
     );
 

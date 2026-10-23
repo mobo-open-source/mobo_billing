@@ -238,7 +238,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
         const SizedBox(height: 24),
         Text(
           'Reset Password',
-          style: GoogleFonts.montserrat(
+          style: GoogleFonts.manrope(
             fontSize: 28,
             fontWeight: FontWeight.w600,
             color: Colors.white,
@@ -304,6 +304,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
               });
             },
             cursorColor: Colors.black,
+            // Stay black in error state too — see LoginTextField.
+            cursorErrorColor: Colors.black,
             style: GoogleFonts.manrope(
               fontSize: 14,
               fontWeight: FontWeight.w400,
@@ -471,7 +473,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
           const SizedBox(height: 16),
           Text(
             'Email Sent!',
-            style: GoogleFonts.montserrat(
+            style: GoogleFonts.manrope(
               fontSize: 18,
               fontWeight: FontWeight.w600,
               color: Colors.white,

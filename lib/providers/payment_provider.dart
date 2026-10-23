@@ -24,6 +24,13 @@ class PaymentProvider with ChangeNotifier {
   int _totalCount = 0;
 
   String? _currentSearchQuery;
+
+  /// The screen's filter domain (status/date) for the current listing, kept so
+  /// paging and post-action reloads stay filtered.
+  List<dynamic>? _currentCustomFilter;
+
+  /// Group label → many2one record id, from the last read_group.
+  Map<String, int> _groupIds = {};
   String _currentStatusFilter = 'all';
 
   List<Payment> get payments => _payments;
@@ -67,6 +74,7 @@ class PaymentProvider with ChangeNotifier {
     _totalCount = 0;
     _currentSearchQuery = null;
     _currentStatusFilter = 'all';
+    _currentCustomFilter = null;
     _groupSummary = {};
     _loadedGroups = {};
     _isShowingCachedData = false;
@@ -83,6 +91,7 @@ class PaymentProvider with ChangeNotifier {
     List<dynamic>? customFilter,
   }) async {
     _currentStatusFilter = status;
+    _currentCustomFilter = customFilter;
 
     if (_currentSearchQuery != null) {
       _currentSearchQuery = null;
@@ -236,6 +245,7 @@ class PaymentProvider with ChangeNotifier {
 
     _currentSearchQuery = query;
     _currentStatusFilter = status;
+    _currentCustomFilter = customFilter;
     _setLoading(true);
     _setError(null);
 
@@ -413,6 +423,27 @@ class PaymentProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-runs the current listing — same page, search and filters — e.g. after
+  /// an action changed a payment.
+  Future<void> refresh() {
+    final query = _currentSearchQuery;
+    if (query != null && query.isNotEmpty) {
+      return searchPayments(
+        query,
+        offset: _currentOffset,
+        limit: _limit,
+        status: _currentStatusFilter,
+        customFilter: _currentCustomFilter,
+      );
+    }
+    return loadPayments(
+      offset: _currentOffset,
+      limit: _limit,
+      status: _currentStatusFilter,
+      customFilter: _currentCustomFilter,
+    );
+  }
+
   /// Navigation to the next page of payments.
   Future<void> goToNextPage() async {
     if (hasNextPage) {
@@ -422,12 +453,14 @@ class PaymentProvider with ChangeNotifier {
           offset: _currentOffset + _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       } else {
         await loadPayments(
           offset: _currentOffset + _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       }
     }
@@ -442,12 +475,14 @@ class PaymentProvider with ChangeNotifier {
           offset: _currentOffset - _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       } else {
         await loadPayments(
           offset: _currentOffset - _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       }
     }
@@ -470,11 +505,11 @@ class PaymentProvider with ChangeNotifier {
           );
 
       if (result is int) {
-        await loadPayments();
+        await refresh();
         _setLoading(false);
         return result;
       } else if (result is List && result.isNotEmpty && result[0] is int) {
-        await loadPayments();
+        await refresh();
         _setLoading(false);
         return result[0] as int;
       } else {
@@ -502,11 +537,7 @@ class PaymentProvider with ChangeNotifier {
           );
 
       if (result) {
-        await loadPayments(
-          offset: _currentOffset,
-          limit: _limit,
-          status: _currentStatusFilter,
-        );
+        await refresh();
 
         if (_groupSummary.isNotEmpty) {
           _loadedGroups.clear();
@@ -521,11 +552,7 @@ class PaymentProvider with ChangeNotifier {
       if (errorStr.contains('missingerror') ||
           errorStr.contains('does not exist') ||
           errorStr.contains('has been deleted')) {
-        await loadPayments(
-          offset: _currentOffset,
-          limit: _limit,
-          status: _currentStatusFilter,
-        );
+        await refresh();
         _loadedGroups.clear();
         _setLoading(false);
         return true;
@@ -552,7 +579,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Confirming payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -577,7 +604,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Cancelling payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -602,7 +629,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Marking as sent timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -627,7 +654,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Unmarking as sent timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -652,7 +679,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Resetting to draft timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -677,7 +704,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Rejecting payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -702,7 +729,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Validating payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -737,31 +764,27 @@ class PaymentProvider with ChangeNotifier {
         domain.addAll(customFilter);
       }
 
-      final result = await _apiService.callKw({
-        'model': 'account.payment',
-        'method': 'read_group',
-        'args': [
-          domain,
-          [groupByField],
-          [groupByField],
-        ],
-        'kwargs': {},
-      });
+      final result = await _apiService.readGroup(
+        'account.payment',
+        domain,
+        groupby: [groupByField],
+      );
 
       _groupSummary = {};
       _loadedGroups = {};
+      _groupIds = {};
       int total = 0;
 
-      if (result is List) {
-        for (var item in result) {
-          if (item is Map) {
-            final key = _getGroupKeyFromReadGroup(item[groupByField]);
-            final count = item['${groupByField}_count'] as int? ?? 0;
-            if (count > 0) {
-              _groupSummary[key] = count;
-              total += count;
-            }
+      for (var item in result) {
+        final raw = item[groupByField];
+        final key = _getGroupKeyFromReadGroup(raw);
+        final count = item['${groupByField}_count'] as int? ?? 0;
+        if (count > 0) {
+          _groupSummary[key] = count;
+          if (raw is List && raw.isNotEmpty && raw[0] is int) {
+            _groupIds[key] = raw[0] as int;
           }
+          total += count;
         }
       }
       _totalCount = total;
@@ -868,6 +891,16 @@ class PaymentProvider with ChangeNotifier {
     if (groupKey == 'Undefined') {
       return [
         [groupByField, '=', false],
+      ];
+    }
+
+    // Many2one groups match on the record id: the key is read_group's
+    // display name ("Company, Contact"), which `partner_id.name` never equals
+    // for a child contact.
+    final groupId = _groupIds[groupKey];
+    if (groupId != null) {
+      return [
+        [groupByField, '=', groupId],
       ];
     }
 

@@ -23,6 +23,7 @@ import '../widgets/company_selector_widget.dart';
 import '../providers/company_provider.dart';
 import '../services/review_service.dart';
 import '../widgets/lazy_load_indexed_stack.dart';
+import '../widgets/app_side_rail.dart';
 
 class MainAppScreen extends StatefulWidget {
   const MainAppScreen({Key? key}) : super(key: key);
@@ -32,6 +33,16 @@ class MainAppScreen extends StatefulWidget {
 }
 
 class _MainAppScreenState extends State<MainAppScreen> {
+  /// The tabs, in [LazyLoadIndexedStack] order — shared by the bottom bar
+  /// (portrait) and the side rail (landscape).
+  static const List<AppNavTab> _tabs = [
+    (icon: HugeIcons.strokeRoundedDashboardSquare02, label: 'Dashboard'),
+    (icon: HugeIcons.strokeRoundedInvoice, label: 'Invoices'),
+    (icon: HugeIcons.strokeRoundedInvoice01, label: 'Credit Notes'),
+    (icon: HugeIcons.strokeRoundedWallet03, label: 'Payments'),
+    (icon: HugeIcons.strokeRoundedAnalytics01, label: 'Reports'),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -54,7 +65,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
   }
 
   void _onTabTapped(BuildContext context, int index) {
-    Provider.of<NavigationProvider>(context, listen: false).setIndex(index);
+    Provider.of<NavigationProvider>(context, listen: false).selectTab(index);
   }
 
   String _getAppBarTitle(int currentIndex) {
@@ -120,276 +131,272 @@ class _MainAppScreenState extends State<MainAppScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final nav = Provider.of<NavigationProvider>(context);
     final currentIndex = nav.currentIndex;
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
 
     return PopScope(
       canPop: currentIndex == 0,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (currentIndex != 0) {
-          nav.setIndex(0);
+        if (currentIndex != NavigationProvider.dashboardTab) {
+          nav.selectTab(NavigationProvider.dashboardTab);
         }
       },
-      child: Scaffold(
-        appBar: AppBar(
-          automaticallyImplyLeading: false,
-          titleSpacing: 16,
-          title: Text(
-            _getAppBarTitle(currentIndex),
-            style: GoogleFonts.manrope(
-              fontWeight: FontWeight.w700,
-              fontSize: 20,
+      child: Material(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: Row(
+          children: [
+            if (isLandscape) ...[
+              AppSideRail(
+                tabs: _tabs,
+                selectedIndex: currentIndex,
+                onSelected: (i) => _onTabTapped(context, i),
+              ),
+              VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: isDark ? Colors.grey[800] : AppTheme.divider,
+              ),
+            ],
+            // Keyed, and wrapped the same way in both orientations, so
+            // rotating the device keeps the open tabs (their data and scroll
+            // position) instead of rebuilding them as the rail comes and goes.
+            Expanded(
+              key: const ValueKey('main-content'),
+              child: MediaQuery.removePadding(
+                context: context,
+                // The rail already keeps clear of a left-hand notch.
+                removeLeft: isLandscape,
+                child: _buildScaffold(
+                  context,
+                  isDark,
+                  currentIndex,
+                  isLandscape,
+                ),
+              ),
             ),
-          ),
-          actions: _getAppBarActions(isDark, currentIndex),
-          foregroundColor: isDark ? Colors.white : Colors.black,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-        ),
-        body: LazyLoadIndexedStack(
-          index: currentIndex,
-          children: const [
-            DashboardScreen(),
-            InvoiceListScreenNew(),
-            CreditNotesScreen(),
-            PaymentRecordsScreen(),
-            ReportsDashboardScreen(),
           ],
         ),
-        floatingActionButton: currentIndex == 0
-            ? SpeedDial(
-                animatedIcon: AnimatedIcons.menu_close,
-                animatedIconTheme: IconThemeData(
-                  size: 22,
-                  color: isDark ? Colors.black : Colors.white,
+      ),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext context,
+    bool isDark,
+    int currentIndex,
+    bool isLandscape,
+  ) {
+    return Scaffold(
+      appBar: AppBar(
+        forceMaterialTransparency: true,
+        automaticallyImplyLeading: false,
+        titleSpacing: 16,
+        title: Text(
+          _getAppBarTitle(currentIndex),
+          style: GoogleFonts.manrope(fontWeight: FontWeight.w700, fontSize: 20),
+        ),
+        actions: _getAppBarActions(isDark, currentIndex),
+        foregroundColor: isDark ? Colors.white : Colors.black,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+      ),
+      body: LazyLoadIndexedStack(
+        index: currentIndex,
+        children: const [
+          DashboardScreen(),
+          InvoiceListScreenNew(),
+          CreditNotesScreen(),
+          PaymentRecordsScreen(),
+          ReportsDashboardScreen(),
+        ],
+      ),
+      floatingActionButton: currentIndex == 0
+          ? SpeedDial(
+              animatedIcon: AnimatedIcons.menu_close,
+              animatedIconTheme: IconThemeData(
+                size: 22,
+                color: isDark ? Colors.black : Colors.white,
+              ),
+              spacing: 8,
+              spaceBetweenChildren: 8,
+              closeManually: false,
+              useRotationAnimation: true,
+              animationCurve: Curves.easeOutCubic,
+              animationDuration: const Duration(milliseconds: 160),
+              direction: SpeedDialDirection.up,
+              onOpen: () => HapticFeedback.lightImpact(),
+              onClose: () => HapticFeedback.selectionClick(),
+              backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
+              foregroundColor: isDark ? Colors.black : Colors.white,
+              overlayColor: Colors.black,
+              overlayOpacity: isDark ? 0.30 : 0.20,
+              elevation: 0,
+              tooltip: 'Quick Actions',
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              childPadding: const EdgeInsets.all(6),
+              childMargin: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 0,
+              ),
+              heroTag: 'speed-dial-hero-tag',
+              children: [
+                SpeedDialChild(
+                  child: const Icon(Icons.payment, color: Colors.white),
+                  backgroundColor: isDark
+                      ? Colors.grey[800]
+                      : AppTheme.primaryColor,
+                  label: 'Create Payment',
+                  labelStyle: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                  labelBackgroundColor: isDark
+                      ? Colors.grey[850]
+                      : Colors.white,
+                  elevation: 0,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CreatePaymentScreen(),
+                      ),
+                    );
+                  },
                 ),
-                spacing: 8,
-                spaceBetweenChildren: 8,
-                closeManually: false,
-                useRotationAnimation: true,
-                animationCurve: Curves.easeOutCubic,
-                animationDuration: const Duration(milliseconds: 160),
-                direction: SpeedDialDirection.up,
-                onOpen: () => HapticFeedback.lightImpact(),
-                onClose: () => HapticFeedback.selectionClick(),
-                backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
-                foregroundColor: isDark ? Colors.black : Colors.white,
-                overlayColor: Colors.black,
-                overlayOpacity: isDark ? 0.30 : 0.20,
-                elevation: 0,
-                tooltip: 'Quick Actions',
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
+                SpeedDialChild(
+                  child: const Icon(Icons.note_add, color: Colors.white),
+                  backgroundColor: isDark
+                      ? Colors.grey[800]
+                      : AppTheme.primaryColor,
+                  label: 'Create Credit Note',
+                  labelStyle: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                  labelBackgroundColor: isDark
+                      ? Colors.grey[850]
+                      : Colors.white,
+                  elevation: 0,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CreateCreditNoteScreen(),
+                      ),
+                    );
+                  },
                 ),
-                childPadding: const EdgeInsets.all(6),
-                childMargin: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 0,
+                SpeedDialChild(
+                  child: const Icon(Icons.person_add, color: Colors.white),
+                  backgroundColor: isDark
+                      ? Colors.grey[800]
+                      : AppTheme.primaryColor,
+                  label: 'Create Customer',
+                  labelStyle: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                  labelBackgroundColor: isDark
+                      ? Colors.grey[850]
+                      : Colors.white,
+                  elevation: 0,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CustomerFormScreen(),
+                      ),
+                    );
+                  },
                 ),
-                heroTag: 'speed-dial-hero-tag',
-                children: [
-                  SpeedDialChild(
-                    child: const Icon(Icons.payment, color: Colors.white),
-                    backgroundColor: isDark
-                        ? Colors.grey[800]
-                        : AppTheme.primaryColor,
-                    label: 'Create Payment',
-                    labelStyle: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                    labelBackgroundColor: isDark
-                        ? Colors.grey[850]
-                        : Colors.white,
-                    elevation: 0,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const CreatePaymentScreen(),
-                        ),
-                      );
-                    },
+                SpeedDialChild(
+                  child: const Icon(Icons.receipt_long, color: Colors.white),
+                  backgroundColor: isDark
+                      ? Colors.grey[800]
+                      : AppTheme.primaryColor,
+                  label: 'Create Invoice',
+                  labelStyle: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.white : Colors.black87,
                   ),
-                  SpeedDialChild(
-                    child: const Icon(Icons.note_add, color: Colors.white),
-                    backgroundColor: isDark
-                        ? Colors.grey[800]
-                        : AppTheme.primaryColor,
-                    label: 'Create Credit Note',
-                    labelStyle: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                    labelBackgroundColor: isDark
-                        ? Colors.grey[850]
-                        : Colors.white,
-                    elevation: 0,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const CreateCreditNoteScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  SpeedDialChild(
-                    child: const Icon(Icons.person_add, color: Colors.white),
-                    backgroundColor: isDark
-                        ? Colors.grey[800]
-                        : AppTheme.primaryColor,
-                    label: 'Create Customer',
-                    labelStyle: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                    labelBackgroundColor: isDark
-                        ? Colors.grey[850]
-                        : Colors.white,
-                    elevation: 0,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const CustomerFormScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  SpeedDialChild(
-                    child: const Icon(Icons.receipt_long, color: Colors.white),
-                    backgroundColor: isDark
-                        ? Colors.grey[800]
-                        : AppTheme.primaryColor,
-                    label: 'Create Invoice',
-                    labelStyle: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                    labelBackgroundColor: isDark
-                        ? Colors.grey[850]
-                        : Colors.white,
-                    elevation: 0,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const CreateInvoiceScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              )
-            : null,
-        bottomNavigationBar: Builder(
-          builder: (context) {
-            final isDark = Theme.of(context).brightness == Brightness.dark;
-            return SnakeNavigationBar.color(
-              behaviour: SnakeBarBehaviour.pinned,
-              snakeShape: SnakeShape.indicator,
-              padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
-              backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-              selectedItemColor: isDark ? Colors.white : AppTheme.primaryColor,
-              unselectedItemColor: isDark ? Colors.grey[300] : Colors.black,
-              showUnselectedLabels: true,
-              showSelectedLabels: true,
-              currentIndex: currentIndex,
-              onTap: (i) => _onTabTapped(context, i),
-              snakeViewColor: AppTheme.primaryColor,
-              elevation: 8,
-              height: 70,
-              items: [
-                BottomNavigationBarItem(
-                  icon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedDashboardSquare02,
-                    ),
-                  ),
-                  label: 'Dashboard',
-                  activeIcon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedDashboardSquare02,
-                      color: isDark ? Colors.white : AppTheme.primaryColor,
-                    ),
-                  ),
-                ),
-                BottomNavigationBarItem(
-                  icon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(icon: HugeIcons.strokeRoundedInvoice),
-                  ),
-                  label: 'Invoices',
-                  activeIcon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedInvoice,
-                      color: isDark ? Colors.white : AppTheme.primaryColor,
-                    ),
-                  ),
-                ),
-                BottomNavigationBarItem(
-                  icon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(icon: HugeIcons.strokeRoundedInvoice01),
-                  ),
-                  label: 'Credit Notes',
-                  activeIcon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedInvoice01,
-                      color: isDark ? Colors.white : AppTheme.primaryColor,
-                    ),
-                  ),
-                ),
-                BottomNavigationBarItem(
-                  icon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(icon: HugeIcons.strokeRoundedWallet03),
-                  ),
-                  label: 'Payments',
-                  activeIcon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedWallet03,
-                      color: isDark ? Colors.white : AppTheme.primaryColor,
-                    ),
-                  ),
-                ),
-                BottomNavigationBarItem(
-                  icon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(icon: HugeIcons.strokeRoundedAnalytics01),
-                  ),
-                  label: 'Reports',
-                  activeIcon: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedAnalytics01,
-                      color: isDark ? Colors.white : AppTheme.primaryColor,
-                    ),
-                  ),
+                  labelBackgroundColor: isDark
+                      ? Colors.grey[850]
+                      : Colors.white,
+                  elevation: 0,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const CreateInvoiceScreen(),
+                      ),
+                    );
+                  },
                 ),
               ],
-              selectedLabelStyle: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : AppTheme.primaryColor,
-                overflow: TextOverflow.ellipsis,
-              ),
-              unselectedLabelStyle: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                overflow: TextOverflow.ellipsis,
-              ),
-              shadowColor: isDark ? Colors.black26 : Colors.grey[200]!,
-            );
-          },
-        ),
-      ),
+            )
+          : null,
+      bottomNavigationBar: isLandscape
+          ? null
+          : Builder(
+              builder: (context) {
+                final isDark = Theme.of(context).brightness == Brightness.dark;
+                return SnakeNavigationBar.color(
+                  behaviour: SnakeBarBehaviour.pinned,
+                  snakeShape: SnakeShape.indicator,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 0,
+                    vertical: 0,
+                  ),
+                  backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+                  selectedItemColor: isDark
+                      ? Colors.white
+                      : AppTheme.primaryColor,
+                  unselectedItemColor: isDark ? Colors.grey[300] : Colors.black,
+                  showUnselectedLabels: true,
+                  showSelectedLabels: true,
+                  currentIndex: currentIndex,
+                  onTap: (i) => _onTabTapped(context, i),
+                  snakeViewColor: AppTheme.primaryColor,
+                  elevation: 8,
+                  height: 70,
+                  items: [
+                    for (final tab in _tabs)
+                      BottomNavigationBarItem(
+                        icon: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5.0),
+                          child: HugeIcon(icon: tab.icon),
+                        ),
+                        label: tab.label,
+                        activeIcon: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5.0),
+                          child: HugeIcon(
+                            icon: tab.icon,
+                            color: isDark
+                                ? Colors.white
+                                : AppTheme.primaryColor,
+                          ),
+                        ),
+                      ),
+                  ],
+                  selectedLabelStyle: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white : AppTheme.primaryColor,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  unselectedLabelStyle: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  shadowColor: isDark ? Colors.black26 : Colors.grey[200]!,
+                );
+              },
+            ),
     );
   }
 }

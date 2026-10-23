@@ -112,20 +112,6 @@ class PaymentRpcService {
         }
 
         if (!success) {
-          final reconciledInvoiceIds = payment['reconciled_invoice_ids'];
-          if (reconciledInvoiceIds is List && reconciledInvoiceIds.isNotEmpty) {
-            final invoiceId = reconciledInvoiceIds.first;
-
-            await InvoiceService.sendInvoice(
-              context,
-              invoiceId,
-              closeLoadingDialog: closeLoadingDialog,
-            );
-            return;
-          }
-        }
-
-        if (!success) {
           try {
             final templates = await apiService.searchRead(
               'mail.template',
@@ -141,6 +127,9 @@ class PaymentRpcService {
             int? templateId = templates.isNotEmpty
                 ? templates.first['id']
                 : null;
+            if (templateId == null) {
+              throw StateError('No payment receipt mail template');
+            }
 
             final baseContext = {
               'default_model': 'account.payment',
@@ -186,6 +175,22 @@ class PaymentRpcService {
               success = true;
             }
           } catch (e) {}
+        }
+
+        // Last resort when no receipt template could be used: send the invoice
+        // this payment paid instead.
+        if (!success) {
+          final reconciledInvoiceIds = payment['reconciled_invoice_ids'];
+          if (reconciledInvoiceIds is List && reconciledInvoiceIds.isNotEmpty) {
+            final invoiceId = reconciledInvoiceIds.first;
+
+            await InvoiceService.sendInvoice(
+              context,
+              invoiceId,
+              closeLoadingDialog: closeLoadingDialog,
+            );
+            return;
+          }
         }
 
         if (success) {

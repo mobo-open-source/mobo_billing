@@ -133,9 +133,14 @@ class LastOpenedProvider extends ChangeNotifier {
 
   LastOpenedItem? get lastOpened => _items.isNotEmpty ? _items.first : null;
 
+  late final Future<void> _loading;
+
   LastOpenedProvider() {
-    _loadItems();
+    _loading = _loadItems();
   }
+
+  /// Completes once the stored history has been read from disk.
+  Future<void> ensureLoaded() => _loading;
 
   Future<void> _loadItems() async {
     _isLoading = true;
@@ -146,7 +151,9 @@ class LastOpenedProvider extends ChangeNotifier {
 
       if (jsonString != null) {
         final List<dynamic> jsonList = json.decode(jsonString);
-        _items = jsonList.map((json) => LastOpenedItem.fromJson(json)).toList();
+        _items = jsonList
+            .map((json) => _retitleDraft(LastOpenedItem.fromJson(json)))
+            .toList();
 
         _items.sort((a, b) => b.lastAccessed.compareTo(a.lastAccessed));
       }
@@ -186,7 +193,7 @@ class LastOpenedProvider extends ChangeNotifier {
     final item = LastOpenedItem(
       id: 'invoice_${invoice.id}',
       type: 'invoice',
-      title: _validateValue(invoice.name, 'Untitled'),
+      title: _documentTitle(invoice.name, 'invoice'),
       subtitle:
           'Invoice for ${_validateValue(invoice.customerName, 'Unknown')}',
       route: '/invoice_details',
@@ -242,7 +249,7 @@ class LastOpenedProvider extends ChangeNotifier {
     final item = LastOpenedItem(
       id: 'credit_note_$creditNoteId',
       type: 'credit_note',
-      title: _validateValue(creditNoteName, 'Untitled'),
+      title: _documentTitle(creditNoteName, 'credit_note'),
       subtitle: 'Credit Note for ${_validateValue(customerName, 'Unknown')}',
       route: '/credit_note_details',
       data: creditNoteData,
@@ -317,6 +324,109 @@ class LastOpenedProvider extends ChangeNotifier {
     _items.removeWhere((item) => item.id == itemId);
     await _saveItems();
     notifyListeners();
+  }
+
+  /// Server ids of the invoices and credit notes in the history.
+  List<int> get documentIds =>
+      _items.map(_documentRecordId).whereType<int>().toSet().toList();
+
+  /// Brings tracked invoices and credit notes in line with fresh server
+  /// [records] (`account.move` reads keyed by `id`). An entry tracked while
+  /// its move was a draft is otherwise stuck as "Draft Invoice" after the move
+  /// is posted. Order and access times are left as they are.
+  Future<void> refreshDocuments(List<Map<String, dynamic>> records) async {
+    final byId = {
+      for (final record in records)
+        if (record['id'] is int) record['id'] as int: record,
+    };
+    if (byId.isEmpty) return;
+
+    var changed = false;
+    _items = _items.map((item) {
+      final record = byId[_documentRecordId(item)];
+      if (record == null) return item;
+
+      final title = _documentTitle(record['name']?.toString(), item.type);
+      final partner =
+          record['partner_id'] is List &&
+              (record['partner_id'] as List).length > 1
+          ? (record['partner_id'] as List)[1]?.toString()
+          : null;
+      final subtitle = partner == null
+          ? item.subtitle
+          : '${item.type == 'credit_note' ? 'Credit Note' : 'Invoice'} for '
+                '${_validateValue(partner, 'Unknown')}';
+      final data = {...?item.data, ...record};
+      if (title == item.title &&
+          subtitle == item.subtitle &&
+          data['state'] == item.data?['state'] &&
+          data['payment_state'] == item.data?['payment_state']) {
+        return item;
+      }
+
+      changed = true;
+      return LastOpenedItem(
+        id: item.id,
+        type: item.type,
+        title: title,
+        subtitle: subtitle,
+        route: item.route,
+        data: data,
+        lastAccessed: item.lastAccessed,
+        iconKey: item.iconKey,
+      );
+    }).toList();
+
+    if (!changed) return;
+    await _saveItems();
+    notifyListeners();
+  }
+
+  /// The `account.move` id behind an invoice or credit note entry.
+  static int? _documentRecordId(LastOpenedItem item) {
+    final String prefix;
+    if (item.type == 'invoice') {
+      prefix = 'invoice_';
+    } else if (item.type == 'credit_note') {
+      prefix = 'credit_note_';
+    } else {
+      return null;
+    }
+    final id = item.data?['id'];
+    if (id is int) return id;
+    return item.id.startsWith(prefix)
+        ? int.tryParse(item.id.substring(prefix.length))
+        : null;
+  }
+
+  /// Title for an invoice or credit note. Odoo only numbers one when it is
+  /// posted — a draft's name is empty, `false` or `/` — so a draft is
+  /// labelled as such rather than "Untitled".
+  static String _documentTitle(String? name, String type) {
+    final trimmed = name?.trim() ?? '';
+    if (trimmed.isEmpty || trimmed == '/' || trimmed.toLowerCase() == 'false') {
+      return type == 'credit_note' ? 'Draft Credit Note' : 'Draft Invoice';
+    }
+    return trimmed;
+  }
+
+  /// Entries saved before drafts were labelled carry the title "Untitled";
+  /// relabel them from the record data stored alongside.
+  static LastOpenedItem _retitleDraft(LastOpenedItem item) {
+    if (item.title != 'Untitled' ||
+        (item.type != 'invoice' && item.type != 'credit_note')) {
+      return item;
+    }
+    return LastOpenedItem(
+      id: item.id,
+      type: item.type,
+      title: _documentTitle(item.data?['name']?.toString(), item.type),
+      subtitle: item.subtitle,
+      route: item.route,
+      data: item.data,
+      lastAccessed: item.lastAccessed,
+      iconKey: item.iconKey,
+    );
   }
 
   String _validateValue(String? value, String fallback) {

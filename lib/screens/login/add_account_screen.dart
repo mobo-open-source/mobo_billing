@@ -417,7 +417,22 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
       if (mounted) {
         final authProvider = Provider.of<AuthProvider>(context, listen: false);
-        final isBillingInstalled = await authProvider.checkRequiredModules();
+
+        // The new session isn't current or stored yet, so just stop here —
+        // the accounts already signed in stay as they are.
+        if (await authProvider.isDatabaseExpired(session: newSession)) {
+          if (mounted) {
+            showDatabaseExpiredDialog(context);
+            setState(() {
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+
+        final isBillingInstalled = await authProvider.checkRequiredModules(
+          session: newSession,
+        );
 
         if (!isBillingInstalled) {
           await authProvider.logout();

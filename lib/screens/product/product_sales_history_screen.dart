@@ -211,6 +211,7 @@ class _ProductSalesHistoryScreenState extends State<ProductSalesHistoryScreen> {
     return Scaffold(
       backgroundColor: isDark ? Colors.black : Colors.grey[50],
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

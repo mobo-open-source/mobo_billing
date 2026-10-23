@@ -46,6 +46,11 @@ class _TotpPageState extends State<TotpPage> {
   bool _isSessionExtracted = false;
   bool _loginSuccess = false;
 
+  /// The session save in flight, if any. The page-load handler and
+  /// [_submitTotp]'s own polling can both notice the login at about the same
+  /// moment; they share one save instead of racing two.
+  Future<bool>? _sessionSave;
+
   /// Whether the server presented its TOTP form, and whether the user has
   /// answered it. A session that appears while a challenge is outstanding is
   /// never accepted — see [_acceptWebSession].
@@ -209,34 +214,6 @@ class _TotpPageState extends State<TotpPage> {
             ),
           ),
 
-          Positioned(
-            top: 0,
-            left: 0,
-            child: SafeArea(
-              bottom: false,
-              child: IgnorePointer(
-                ignoring: _loading,
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => Navigator.of(context).pop(),
-                    borderRadius: BorderRadius.circular(32),
-                    child: Container(
-                      height: 64,
-                      width: 64,
-                      alignment: Alignment.center,
-                      child: HugeIcon(
-                        icon: HugeIcons.strokeRoundedArrowLeft01,
-                        color: _loading ? Colors.white54 : Colors.white,
-                        size: 24,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-
           Padding(
             padding: const EdgeInsets.all(24.0),
             child: Column(
@@ -259,6 +236,34 @@ class _TotpPageState extends State<TotpPage> {
                 ),
               ),
             ),
+
+          // Last in the stack so it stays tappable over the loading overlay:
+          // a login page that never finishes loading must not trap the user.
+          Positioned(
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.of(context).pop(),
+                  borderRadius: BorderRadius.circular(32),
+                  child: Container(
+                    height: 64,
+                    width: 64,
+                    alignment: Alignment.center,
+                    child: HugeIcon(
+                      icon: HugeIcons.strokeRoundedArrowLeft01,
+                      // The overlay is near-white, so white would vanish on it.
+                      color: _loading ? Colors.black54 : Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -275,7 +280,7 @@ class _TotpPageState extends State<TotpPage> {
         const SizedBox(height: 24),
         Text(
           'Two-factor Authentication',
-          style: GoogleFonts.montserrat(
+          style: GoogleFonts.manrope(
             fontWeight: FontWeight.w600,
             color: Colors.white,
             fontSize: 25,
@@ -332,6 +337,8 @@ class _TotpPageState extends State<TotpPage> {
               });
             },
             cursorColor: Colors.black,
+            // Stay black in error state too — see LoginTextField.
+            cursorErrorColor: Colors.black,
             style: GoogleFonts.manrope(
               fontSize: 14,
               fontWeight: FontWeight.w400,
@@ -411,6 +418,31 @@ class _TotpPageState extends State<TotpPage> {
                             ),
                           ),
                         ),
+                        // The server never showed its code form (the load
+                        // failed or timed out), so there is nothing to type
+                        // into yet — offer to start over.
+                        if (!_totpChallengeSeen && !_verifying)
+                          TextButton(
+                            onPressed: _retryLogin,
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              minimumSize: Size.zero,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: Text(
+                              'Retry',
+                              style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                decoration: TextDecoration.underline,
+                                decorationColor: Colors.white,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   )
@@ -461,6 +493,19 @@ class _TotpPageState extends State<TotpPage> {
         ],
       ),
     );
+  }
+
+  /// Starts the login over after a failed or timed-out load.
+  void _retryLogin() {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+      _credentialsInjected = false;
+      _totpChallengeSeen = false;
+      _totpSubmitted = false;
+    });
+    _startLogin();
   }
 
   /// Clears this server's cookies, then loads the login page.
@@ -645,19 +690,28 @@ class _TotpPageState extends State<TotpPage> {
 
       await Future.delayed(const Duration(seconds: 2));
 
+      bool loggedIn = false;
       for (int i = 0; i < 20; i++) {
-        final isLoggedIn = await _webController!.evaluateJavascript(
-          source: """
-          (function() {
-            const userMenu = document.querySelector('.o_user_menu, .oe_topbar_avatar, .o_apps_switcher, [data-menu="account"]');
-            const webClient = document.querySelector('.o_web_client, .o_action_manager');
-            const error = document.querySelector('.alert-danger, .o_error_dialog');
-            if (userMenu || webClient) return true;
-            if (error) return 'error';
-            return false;
-          })();
-          """,
-        );
+        // The page-load handler may already have completed the login.
+        if (!mounted || _loginSuccess) return;
+
+        dynamic isLoggedIn;
+        try {
+          isLoggedIn = await _webController!.evaluateJavascript(
+            source: """
+            (function() {
+              const userMenu = document.querySelector('.o_user_menu, .oe_topbar_avatar, .o_apps_switcher, [data-menu="account"]');
+              const webClient = document.querySelector('.o_web_client, .o_action_manager');
+              const error = document.querySelector('.alert-danger, .o_error_dialog');
+              if (userMenu || webClient) return true;
+              if (error) return 'error';
+              return false;
+            })();
+            """,
+          );
+        } catch (_) {
+          // The page is mid-navigation; look again on the next tick.
+        }
 
         if (isLoggedIn == 'error') {
           // The code was rejected, so the challenge is outstanding again and a
@@ -668,10 +722,18 @@ class _TotpPageState extends State<TotpPage> {
           );
           return;
         }
+        if (isLoggedIn == true) {
+          loggedIn = true;
+          break;
+        }
         await Future.delayed(const Duration(milliseconds: 500));
       }
 
-      await Future.delayed(const Duration(seconds: 4));
+      // Only when the client never showed up is it worth waiting for a late
+      // session. Waiting regardless kept "Authenticating" spinning for ~14s
+      // after a correct code.
+      if (!loggedIn) await Future.delayed(const Duration(seconds: 4));
+      if (!mounted || _loginSuccess) return;
 
       final currentUrl = await _webController!.getUrl();
       final urlStr = currentUrl?.toString() ?? '';
@@ -755,7 +817,9 @@ class _TotpPageState extends State<TotpPage> {
   }
 
   Future<void> _onLoginSuccess() async {
-    if (!mounted) return;
+    // Both the page-load handler and _submitTotp's polling can reach this for
+    // the same login; the second caller must not switch accounts again.
+    if (!mounted || _loginSuccess) return;
 
     _cancelLoadTimeout();
     setState(() {
@@ -776,11 +840,7 @@ class _TotpPageState extends State<TotpPage> {
           _verifying = false;
         });
         Navigator.of(context).pop();
-        if (accessResult == AppAccessResult.accessDenied) {
-          showAccessDeniedDialog(context);
-        } else {
-          showModuleMissingDialog(context);
-        }
+        showAppAccessDialog(context, accessResult);
       }
       return;
     }
@@ -827,9 +887,14 @@ class _TotpPageState extends State<TotpPage> {
     }
   }
 
-  Future<bool> _saveSessionData({Map<String, dynamic>? sessionInfo}) async {
-    if (_isSessionExtracted) return true;
+  Future<bool> _saveSessionData({Map<String, dynamic>? sessionInfo}) {
+    if (_isSessionExtracted) return Future.value(true);
+    return _sessionSave ??= _extractSession(
+      sessionInfo: sessionInfo,
+    ).whenComplete(() => _sessionSave = null);
+  }
 
+  Future<bool> _extractSession({Map<String, dynamic>? sessionInfo}) async {
     try {
       final currentUrl = await _webController?.getUrl();
       final cookies = await CookieManager.instance().getCookies(
