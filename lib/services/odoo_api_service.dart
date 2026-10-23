@@ -995,9 +995,8 @@ class OdooApiService {
           ['state', '=', 'installed'],
         ],
       );
-      final isInstalled = count > 0;
 
-      return isInstalled;
+      return count > 0;
     } catch (e) {
       debugPrint('[isModuleInstalled] ir.module.module check failed: $e');
       try {

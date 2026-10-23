@@ -45,6 +45,8 @@ class CustomerTypeAhead extends StatelessWidget {
         const SizedBox(height: 8),
         TypeAheadField<Contact>(
           controller: controller,
+          autoFlipDirection: true,
+          constraints: const BoxConstraints(maxHeight: 320),
           builder: (context, controller, focusNode) {
             return TextFormField(
               controller: controller,

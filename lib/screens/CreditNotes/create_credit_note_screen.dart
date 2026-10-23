@@ -14,6 +14,7 @@ import '../../widgets/line_item_inputs.dart';
 import '../../models/contact.dart';
 import '../../models/product.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/form_styles.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../utils/date_picker_utils.dart';
 import '../../services/odoo_error_handler.dart';
@@ -980,7 +981,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                 'price_unit': product.listPrice ?? 0.0,
                 'price_subtotal': product.listPrice ?? 0.0,
                 'product_uom_id': product.uomId,
-                'tax_ids': <int>[],
+                'tax_ids': product.taxesId?.whereType<int>().toList() ?? <int>[],
                 'discount': 0.0,
               });
               _productSearchController.clear();
@@ -1262,6 +1263,20 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                 ],
               ),
               const SizedBox(height: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tax',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: secondaryTextColor,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  _buildTaxSelector(line, isDark),
+                ],
+              ),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   Text(
@@ -1290,6 +1305,43 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
           ),
         ),
       ),
+    );
+  }
+
+  /// Per-line tax picker. A line can carry several taxes (copied from the
+  /// product), but the picker edits a single one; untouched lines keep theirs.
+  Widget _buildTaxSelector(Map<String, dynamic> line, bool isDark) {
+    final taxIds = line['tax_ids'] as List?;
+    final selected = taxIds?.isNotEmpty == true ? taxIds!.first : null;
+    // A tax that isn't among the loaded options (inactive, or a purchase tax
+    // on the product) must not be passed as `value` — the dropdown asserts on
+    // a value with no matching item.
+    final hasSelected = _taxes.any((tax) => tax['id'] == selected);
+
+    return DropdownButtonFormField<int>(
+      isExpanded: true,
+      value: hasSelected ? selected as int : null,
+      decoration: AppFormTheme.inputDecoration(
+        isDark: isDark,
+        hintText: 'Select Tax',
+      ),
+      dropdownColor: AppFormTheme.surface(isDark),
+      style: AppFormTheme.fieldValueStyle(isDark),
+      items: [
+        for (final tax in _taxes)
+          DropdownMenuItem<int>(
+            value: tax['id'] as int,
+            child: Text(
+              tax['name']?.toString() ?? 'Tax',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      onChanged: (val) {
+        setState(() {
+          line['tax_ids'] = val != null ? [val] : <int>[];
+        });
+      },
     );
   }
 
@@ -1328,22 +1380,36 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
         return;
       }
 
-      final invalidLines = _creditNoteLines
-          .where(
-            (line) =>
-                (line['name']?.isNotEmpty == true ||
-                    line['product_name']?.isNotEmpty == true) &&
-                (line['quantity'] ?? 0.0) > 0 &&
-                (line['price_unit'] ?? 0.0) > 0,
-          )
-          .toList();
-
-      if (invalidLines.isEmpty && _creditNoteLines.isNotEmpty) {}
-
       if (_creditNoteLines.isEmpty) {
         CustomSnackbar.showError(
           context,
           'Please add at least one credit note line',
+        );
+        return;
+      }
+
+      // These are the same conditions applied when building invoice_line_ids
+      // for the RPC payload further down — any line that fails them here
+      // would otherwise be silently dropped from the created record.
+      bool lineSurvives(Map<String, dynamic> line) =>
+          (line['name']?.isNotEmpty == true ||
+              line['product_name']?.isNotEmpty == true) &&
+          (line['quantity'] ?? 0.0) > 0 &&
+          (line['price_unit'] ?? 0.0) > 0;
+
+      final droppedLines = _creditNoteLines
+          .where((line) => !lineSurvives(line))
+          .toList();
+
+      if (droppedLines.isNotEmpty) {
+        final names = droppedLines
+            .map((line) => line['product_name']?.toString() ?? 'Unnamed line')
+            .join(', ');
+        CustomSnackbar.showError(
+          context,
+          droppedLines.length == _creditNoteLines.length
+              ? 'All lines have an invalid quantity or unit price. Please fix them before saving.'
+              : 'These lines have an invalid quantity or unit price and would be excluded: $names',
         );
         return;
       }

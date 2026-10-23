@@ -100,29 +100,33 @@ class _CustomRatingDialogState extends State<CustomRatingDialog> {
             const SizedBox(height: 24),
 
             /// Filled stars are solid gold; the remainder are gold outlines.
-            RatingBar(
-              initialRating: _rating,
-              minRating: 1,
-              itemCount: 5,
-              itemSize: 42,
-              allowHalfRating: false,
-              glow: false,
-              itemPadding: const EdgeInsets.symmetric(horizontal: 2),
-              ratingWidget: RatingWidget(
-                full: const Icon(
-                  Icons.star_rounded,
-                  color: AppTheme.ratingStar,
+            /// Scaled down rather than overflowing on narrow screens.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: RatingBar(
+                initialRating: _rating,
+                minRating: 1,
+                itemCount: 5,
+                itemSize: 42,
+                allowHalfRating: false,
+                glow: false,
+                itemPadding: const EdgeInsets.symmetric(horizontal: 2),
+                ratingWidget: RatingWidget(
+                  full: const Icon(
+                    Icons.star_rounded,
+                    color: AppTheme.ratingStar,
+                  ),
+                  half: const Icon(
+                    Icons.star_half_rounded,
+                    color: AppTheme.ratingStar,
+                  ),
+                  empty: const Icon(
+                    Icons.star_border_rounded,
+                    color: AppTheme.ratingStar,
+                  ),
                 ),
-                half: const Icon(
-                  Icons.star_half_rounded,
-                  color: AppTheme.ratingStar,
-                ),
-                empty: const Icon(
-                  Icons.star_border_rounded,
-                  color: AppTheme.ratingStar,
-                ),
+                onRatingUpdate: (rating) => setState(() => _rating = rating),
               ),
-              onRatingUpdate: (rating) => setState(() => _rating = rating),
             ),
             const SizedBox(height: 28),
 

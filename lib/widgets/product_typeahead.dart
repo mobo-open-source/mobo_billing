@@ -46,6 +46,8 @@ class ProductTypeAhead extends StatelessWidget {
         TypeAheadField<Product>(
           controller: controller,
           focusNode: focusNode,
+          autoFlipDirection: true,
+          constraints: const BoxConstraints(maxHeight: 320),
           builder: (context, controller, focusNode) {
             return TextFormField(
               controller: controller,

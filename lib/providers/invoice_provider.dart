@@ -826,7 +826,7 @@ class InvoiceProvider with ChangeNotifier {
       _setLoading(false);
       return newInvoice;
     } catch (e) {
-      if (kDebugMode) _setLoading(false);
+      _setLoading(false);
       rethrow;
     }
   }
@@ -845,7 +845,7 @@ class InvoiceProvider with ChangeNotifier {
       _setLoading(false);
       return invoiceId;
     } catch (e) {
-      if (kDebugMode) _setLoading(false);
+      _setLoading(false);
       rethrow;
     }
   }
@@ -875,7 +875,7 @@ class InvoiceProvider with ChangeNotifier {
       _setLoading(false);
       return success;
     } catch (e) {
-      if (kDebugMode) _setLoading(false);
+      _setLoading(false);
       rethrow;
     }
   }
@@ -902,7 +902,7 @@ class InvoiceProvider with ChangeNotifier {
       _setLoading(false);
       return success;
     } catch (e) {
-      if (kDebugMode) _setLoading(false);
+      _setLoading(false);
       rethrow;
     }
   }
@@ -927,6 +927,10 @@ class InvoiceProvider with ChangeNotifier {
     final residualBefore = await _readResidual(invoiceId);
 
     try {
+      // registerPayment makes up to 4 sequential RPC round-trips
+      // (read move, read payment method, create wizard, action_create_payments),
+      // each with its own internal timeout in OdooApiService.call(), so this
+      // needs headroom for the whole chain rather than a single-call timeout.
       final success = await _apiService
           .registerPayment(
             invoiceId,
@@ -939,7 +943,7 @@ class InvoiceProvider with ChangeNotifier {
             paymentMethodLineId: paymentMethodLineId,
           )
           .timeout(
-            const Duration(seconds: 60),
+            const Duration(seconds: 90),
             onTimeout: () =>
                 throw TimeoutException('Registering payment timed out'),
           );
