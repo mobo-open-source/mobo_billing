@@ -21,6 +21,11 @@ class CustomTextField extends StatelessWidget {
   /// Appends the red required-field star to [labelText].
   final bool isRequired;
 
+  /// Text shown inside the field ahead of the input — e.g. a currency symbol
+  /// before an amount. Unlike `prefixText`, it stays visible while the field
+  /// is empty and unfocused.
+  final String? prefix;
+
   const CustomTextField({
     required this.controller,
     required this.labelText,
@@ -33,6 +38,7 @@ class CustomTextField extends StatelessWidget {
     this.suffixIcon,
     this.enabled = true,
     this.isRequired = false,
+    this.prefix,
     Key? key,
   }) : super(key: key);
 
@@ -73,21 +79,38 @@ class CustomTextField extends StatelessWidget {
               fontStyle: FontStyle.italic,
               fontSize: 14,
             ),
-            prefixText: '',
+            prefixIcon: prefix == null
+                ? null
+                : Padding(
+                    padding: const EdgeInsets.only(left: 16, right: 8),
+                    child: Text(
+                      prefix!,
+                      style: TextStyle(
+                        fontFamily: GoogleFonts.manrope(
+                          fontWeight: FontWeight.w600,
+                        ).fontFamily,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white70 : Colors.grey[700],
+                      ),
+                    ),
+                  ),
+            prefixIconConstraints: const BoxConstraints(
+              minWidth: 0,
+              minHeight: 0,
+            ),
             suffixIcon: suffixIcon,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: showBorder ? _getBorderColor() : Colors.transparent,
-                width: 2,
-              ),
+              borderSide: showBorder
+                  ? BorderSide(color: _getBorderColor(), width: 2)
+                  : AppFormTheme.restingBorderSide(isDark),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: showBorder ? AppTheme.primaryColor : Colors.transparent,
-                width: 1,
-              ),
+              borderSide: showBorder
+                  ? const BorderSide(color: AppTheme.primaryColor, width: 1)
+                  : AppFormTheme.restingBorderSide(isDark),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),

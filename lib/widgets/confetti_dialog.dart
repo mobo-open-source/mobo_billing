@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'dart:math';
 
+import '../theme/app_theme.dart';
+
 Future<void> showInvoiceSentConfettiDialog(
   BuildContext context,
   String invoiceName, {
@@ -17,7 +19,6 @@ Future<void> showInvoiceSentConfettiDialog(
       itemName: invoiceName,
       message:
           'Your ${documentType.toLowerCase()} has been successfully delivered to the recipient\'s email address.',
-      buttonText: 'Perfect!',
       logName: 'InvoiceDialog',
     ),
   );
@@ -35,7 +36,6 @@ Future<void> showCustomerCreatedConfettiDialog(
       title: 'Customer Created Successfully',
       itemName: customerName,
       message: 'The customer has been successfully added to the database.',
-      buttonText: 'Perfect!',
       logName: 'CustomerDialog',
     ),
   );
@@ -55,7 +55,6 @@ Future<void> showInvoiceCreatedConfettiDialog(
       itemName: invoiceName,
       message:
           'Your draft ${documentType.toLowerCase()} has been created. You can review and confirm it in Odoo before sending to your customer.',
-      buttonText: 'Perfect!',
       logName: 'InvoiceCreatedDialog',
     ),
   );
@@ -73,7 +72,6 @@ Future<void> showPaymentCreatedConfettiDialog(
       title: 'Payment Registered Successfully',
       itemName: paymentName,
       message: 'The payment has been successfully registered and posted.',
-      buttonText: 'Perfect!',
       logName: 'PaymentCreatedDialog',
     ),
   );
@@ -83,7 +81,6 @@ class UniversalConfettiDialog extends StatefulWidget {
   final String title;
   final String itemName;
   final String message;
-  final String buttonText;
   final String logName;
 
   const UniversalConfettiDialog({
@@ -91,7 +88,6 @@ class UniversalConfettiDialog extends StatefulWidget {
     required this.title,
     required this.itemName,
     required this.message,
-    required this.buttonText,
     required this.logName,
   });
 
@@ -147,7 +143,7 @@ class _UniversalConfettiDialogState extends State<UniversalConfettiDialog> {
         curve: Curves.easeOutCubic,
         child: Container(
           width: double.maxFinite,
-          constraints: const BoxConstraints(maxWidth: 340.0, minHeight: 300.0),
+          constraints: const BoxConstraints(maxWidth: 340.0, minHeight: 240.0),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
             borderRadius: BorderRadius.circular(24.0),
@@ -283,7 +279,8 @@ class _UniversalConfettiDialogState extends State<UniversalConfettiDialog> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.all(28.0),
+                // Extra room above, so the title starts below the close button.
+                padding: const EdgeInsets.fromLTRB(28.0, 44.0, 28.0, 32.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.center,
@@ -298,36 +295,20 @@ class _UniversalConfettiDialogState extends State<UniversalConfettiDialog> {
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 16.0),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 12.0,
+                    const SizedBox(height: 8.0),
+                    // The record's name is plain green text — it confirms the
+                    // success, so it shouldn't read as a tappable chip.
+                    Text(
+                      widget.itemName,
+                      style: textTheme.titleMedium?.copyWith(
+                        fontSize: 18.0,
+                        color: StatusColors.green,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.1,
                       ),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? Colors.grey.shade800.withOpacity(0.6)
-                            : colorScheme.primary.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(12.0),
-                        border: Border.all(
-                          color: isDark
-                              ? Colors.grey.shade700
-                              : colorScheme.primary.withOpacity(0.1),
-                          width: 1.0,
-                        ),
-                      ),
-                      child: Text(
-                        widget.itemName,
-                        style: textTheme.titleMedium?.copyWith(
-                          color: isDark ? Colors.white : colorScheme.primary,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.1,
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 16.0),
                     Text(
@@ -341,57 +322,24 @@ class _UniversalConfettiDialogState extends State<UniversalConfettiDialog> {
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 28.0),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48.0,
-                      child: ElevatedButton(
-                        style:
-                            ElevatedButton.styleFrom(
-                              backgroundColor: colorScheme.primary,
-                              foregroundColor: colorScheme.onPrimary,
-                              elevation: 0,
-                              shadowColor: Colors.transparent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                              ),
-                            ).copyWith(
-                              overlayColor: MaterialStateProperty.all(
-                                colorScheme.onPrimary.withOpacity(0.08),
-                              ),
-                            ),
-                        onPressed: () {
-                          _confettiController.stop();
-                          Navigator.of(context).pop();
-                        },
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            HugeIcon(
-                              icon: HugeIcons.strokeRoundedCheckmarkCircle02,
-                              size: 18.0,
-                              color: isDark
-                                  ? Colors.white
-                                  : colorScheme.onPrimary,
-                            ),
-                            const SizedBox(width: 8.0),
-                            Text(
-                              widget.buttonText,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15.0,
-                                letterSpacing: 0.2,
-                                color: isDark
-                                    ? Colors.white
-                                    : colorScheme.onPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ],
+                ),
+              ),
+              // No action button: the dialog is dismissed from the corner.
+              Positioned(
+                top: 8,
+                right: 8,
+                child: IconButton(
+                  tooltip: 'Close',
+                  onPressed: () {
+                    _confettiController.stop();
+                    Navigator.of(context).pop();
+                  },
+                  icon: HugeIcon(
+                    icon: HugeIcons.strokeRoundedCancel01,
+                    size: 20,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
                 ),
               ),
             ],

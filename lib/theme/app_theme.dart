@@ -10,6 +10,30 @@ class AppTheme {
   static const Color primaryColor = Color(0xFFC03355);
   static const Color secondary = Color(0xFFFFFFFF);
 
+  /// Light Mobo wash (primary at 8%) behind the filter-sheet option chips and
+  /// date fields.
+  static const Color primaryTint = Color(0x14C03355);
+
+  /// [primaryTint] laid over white — the light-mode fill of the filter option
+  /// chips, Active Filters chips and date fields. Opaque, because a
+  /// translucent chip fill lets the theme canvas show through it.
+  static final Color primaryTintSolid = Color.alphaBlend(primaryTint, white);
+
+  /// Dark-mode filter controls (option chips, date fields). An option at rest
+  /// sits on neutral grey; an active one — an Active Filters chip or a picked
+  /// date — on a deep Mobo wash, with Mobo text lightened enough to stay
+  /// legible on it where the full-strength primary would not.
+  static final Color darkOptionFill = Colors.grey[700]!;
+  static final Color darkOptionBorder = Colors.grey[600]!;
+  static final Color darkActiveFill = Color.alphaBlend(
+    primaryColor.withValues(alpha: 0.3),
+    darkSurface,
+  );
+  static final Color darkActiveBorder = primaryColor.withValues(alpha: 0.6);
+  static final Color darkActiveText = HSLColor.fromColor(
+    primaryColor,
+  ).withLightness(0.62).toColor();
+
   static const Color vivaMagentaLight = Color(0xFFC03355);
   static const Color vivaMagentaDark = Color(0xFFC03355);
   static const Color vivaMagentaAccent = Color(0xFFC03355);
@@ -44,6 +68,13 @@ class AppTheme {
   static const Color mediumGrey = divider;
   static const Color darkGrey = Color(0xFF757575);
 
+  /// Fill of an inactive submit button in light mode — a form with nothing to
+  /// save yet. Dark mode keeps `grey[700]`.
+  static const Color disabledButtonFill = Color(0xFFBDBDBD);
+
+  /// Label and icon colour of an inactive submit button, in both themes.
+  static const Color disabledButtonText = Color(0xFFFFFFFF);
+
   /// Reference shadow colour constant — black @ ~10%.
   static const Color shadow = Color(0x1A000000);
 
@@ -66,6 +97,21 @@ class AppTheme {
   static const Color warning = StatusColors.orange;
   static const Color error = StatusColors.red;
   static const Color info = StatusColors.blue;
+
+  /// Checkbox with a Mobo-coloured outline that fills Mobo with a white tick
+  /// when ticked — rather than Material's near-black outline.
+  static final CheckboxThemeData checkboxTheme = CheckboxThemeData(
+    fillColor: WidgetStateProperty.resolveWith(
+      (states) => states.contains(WidgetState.selected)
+          ? primaryColor
+          : Colors.transparent,
+    ),
+    checkColor: WidgetStateProperty.all(white),
+    side: WidgetStateBorderSide.resolveWith(
+      (states) => const BorderSide(color: primaryColor, width: 2),
+    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+  );
 
   static ThemeData get lightTheme {
     return ThemeData(
@@ -320,6 +366,8 @@ class AppTheme {
         ),
       ),
 
+      checkboxTheme: checkboxTheme,
+
       dialogTheme: DialogThemeData(
         backgroundColor: white,
         elevation: 0,
@@ -392,6 +440,7 @@ class AppTheme {
           borderRadius: BorderRadius.circular(AppRadius.control),
         ),
       ),
+      checkboxTheme: checkboxTheme,
       dialogTheme: DialogThemeData(
         backgroundColor: darkSurface,
         elevation: 0,
@@ -449,6 +498,16 @@ class AppTheme {
     borderRadius: BorderRadius.circular(AppRadius.lg),
     border: Border.all(color: primaryColor.withValues(alpha: 0.2)),
   );
+}
+
+/// Layout constants shared across screens.
+class AppSpacing {
+  const AppSpacing._();
+
+  /// Bottom padding for a scrolling list that has a floating action button
+  /// over it: the button's 56px height, its 16px margin and a 16px gap, so the
+  /// last row can scroll up clear of the button instead of ending under it.
+  static const double fabClearance = 88;
 }
 
 /// §4 — the radius scale. Default to [md] when unsure.
@@ -588,6 +647,10 @@ class StatusColors {
   }
 
   /// §10 — the canonical status badge. No border; tint comes from [color].
+  ///
+  /// Unlike §10, dark mode keeps the status colour rather than going white,
+  /// so a state reads the same in both themes. [isDark] is kept so callers
+  /// need not change.
   static Widget buildStatusBadge(
     String label,
     Color color, {
@@ -596,9 +659,7 @@ class StatusColors {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.15)
-            : color.withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(AppRadius.badge),
       ),
       child: Text(
@@ -606,7 +667,7 @@ class StatusColors {
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w600,
-          color: isDark ? Colors.white : color,
+          color: color,
           letterSpacing: 0.1,
         ),
       ),

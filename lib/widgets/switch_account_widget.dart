@@ -19,8 +19,7 @@ class SwitchAccountWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final iconColor = isDark ? Colors.white70 : Colors.black54;
-    final subtitleColor = isDark ? Colors.white38 : Colors.black38;
+    final secondary = isDark ? Colors.grey[400]! : Colors.grey[600]!;
 
     return Consumer<SessionService>(
       builder: (context, sessionService, child) {
@@ -32,26 +31,29 @@ class SwitchAccountWidget extends StatelessWidget {
         final accountCount = otherAccounts.length;
 
         return ExpansionTile(
+          // Without these, an expanded ExpansionTile draws divider-coloured
+          // lines above and below itself.
           shape: const Border(),
           collapsedShape: const Border(),
+          // The chevron turns brand-coloured while the row is open.
+          iconColor: AppTheme.primaryColor,
+          collapsedIconColor: secondary,
           leading: HugeIcon(
             icon: HugeIcons.strokeRoundedUserSwitch,
-            color: iconColor,
+            color: secondary,
           ),
-          trailing: HugeIcon(
-            icon: HugeIcons.strokeRoundedArrowDown01,
-            color: iconColor,
-            size: 20,
-          ),
-          title: const Text(
+          title: Text(
             'Switch Accounts',
-            style: TextStyle(fontWeight: FontWeight.w500),
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black87,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           subtitle: Text(
             accountCount > 0
                 ? '$accountCount other account${accountCount != 1 ? 's' : ''} available'
                 : 'Add multiple accounts to switch quickly',
-            style: TextStyle(color: subtitleColor, fontSize: 12),
+            style: TextStyle(color: secondary),
           ),
           children: [
             if (accountCount == 0)
@@ -107,21 +109,40 @@ class SwitchAccountWidget extends StatelessWidget {
   Widget _buildEmptyState(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 24.0, horizontal: 24.0),
+      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          HugeIcon(
-            icon: HugeIcons.strokeRoundedUserSwitch,
-            color: isDark ? Colors.white10 : Colors.black12,
-            size: 48,
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Center(
+              child: HugeIcon(
+                icon: HugeIcons.strokeRoundedUserAdd01,
+                size: 30,
+                color: AppTheme.primaryColor,
+              ),
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Text(
-            'No other accounts stored. Add another account to quickly switch between them.',
+            'No Other Accounts',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white : Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Add multiple accounts to switch between them quickly',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: isDark ? Colors.white38 : Colors.black38,
-              fontSize: 13,
+              fontSize: 14,
+              color: isDark ? Colors.grey[400] : Colors.grey[600],
             ),
           ),
         ],
@@ -139,10 +160,10 @@ class SwitchAccountWidget extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: isDark ? Colors.grey[850] : Colors.grey[50],
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        color: isDark ? Colors.grey[800] : Colors.grey[50],
         border: Border.all(
-          color: isDark ? Colors.grey[800]! : Colors.grey[200]!,
+          color: isDark ? Colors.grey[700]! : Colors.grey[200]!,
         ),
       ),
       child: Material(
@@ -196,10 +217,11 @@ class SwitchAccountWidget extends StatelessWidget {
             ],
           ),
           trailing: PopupMenuButton<String>(
+            position: PopupMenuPosition.under,
             icon: Icon(
               Icons.more_vert,
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              size: 18,
+              color: isDark ? Colors.white : Colors.black,
+              size: 20,
             ),
             onSelected: (value) async {
               if (value == 'remove') {
@@ -209,19 +231,9 @@ class SwitchAccountWidget extends StatelessWidget {
             itemBuilder: (context) => [
               PopupMenuItem<String>(
                 value: 'remove',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.delete_outline,
-                      size: 18,
-                      color: Colors.red[600],
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Remove',
-                      style: TextStyle(color: Colors.red[600], fontSize: 14),
-                    ),
-                  ],
+                child: Text(
+                  'Remove',
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black87),
                 ),
               ),
             ],
@@ -245,8 +257,8 @@ class SwitchAccountWidget extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
-          color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-          width: 1,
+          color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
+          width: 2,
         ),
       ),
       child: ClipOval(
@@ -324,37 +336,31 @@ class SwitchAccountWidget extends StatelessWidget {
   }
 
   Widget _buildAddAccountButton(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(
-        left: 16.0,
-        right: 16.0,
-        bottom: 16,
-        top: 8,
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const AddAccountScreen()),
-            );
-          },
-          icon: const HugeIcon(
-            icon: HugeIcons.strokeRoundedUserAdd01,
-            size: 18,
+    return Container(
+      margin: const EdgeInsets.all(16),
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton.icon(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddAccountScreen()),
+          );
+        },
+        icon: const HugeIcon(icon: HugeIcons.strokeRoundedUserAdd01, size: 18),
+        label: const Text(
+          'Add Account',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.primaryColor,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.md),
           ),
-          label: const Text('Add Account'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primaryColor,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            elevation: 0,
-            shadowColor: Colors.transparent,
-          ),
+          elevation: 0,
+          shadowColor: Colors.transparent,
         ),
       ),
     );

@@ -8,6 +8,8 @@ import '../../providers/invoice_provider.dart';
 import '../../services/payment_service.dart';
 import '../../widgets/custom_text_field_simple.dart';
 import '../../widgets/form_section_card.dart';
+import '../../widgets/pinned_action_bar.dart';
+import '../../theme/app_theme.dart';
 import '../../utils/date_picker_utils.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
 import 'package:hugeicons/hugeicons.dart';
@@ -65,6 +67,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _dueAmount = widget.invoice.amountResidual;
     _amountController.text = _dueAmount.toStringAsFixed(2);
     _paymentState = widget.invoice.paymentState ?? 'not_paid';
+
+    // The Create button follows what is typed in the amount.
+    _amountController.addListener(() {
+      if (mounted) setState(() {});
+    });
 
     _loadJournalsAndMethods();
 
@@ -165,6 +172,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
       context,
       listen: false,
     );
+    // The invoice carries its currency as a code ("USD"); the field shows the
+    // symbol, falling back to the company's when the invoice names none.
+    final currencySymbol = currencyCode != null
+        ? currencyProvider.getCurrencySymbol(currencyCode)
+        : currencyProvider.symbol;
     final formattedTotal = currencyProvider.formatAmount(
       totalAmount,
       currency: currencyCode,
@@ -390,6 +402,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                           controller: _amountController,
                           labelText: 'Amount',
                           hintText: '0.00',
+                          isRequired: true,
+                          prefix: currencySymbol,
                           isDark: isDark,
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
@@ -453,9 +467,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    _buildSaveButton(isDark),
-                    const SizedBox(height: 20),
                   ],
                 ),
               ),
@@ -463,6 +474,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ],
         ),
       ),
+      // Pinned under the form so saving never needs a scroll.
+      bottomNavigationBar: PinnedActionBar(child: _buildSaveButton(isDark)),
     );
   }
 
@@ -481,69 +494,61 @@ class _PaymentScreenState extends State<PaymentScreen> {
     if (date != null && mounted) setState(() => _selectedDate = date);
   }
 
+  /// The fields the form requires are filled: a journal, a payment method and
+  /// a positive amount (the date always has a value). Whether the amount is
+  /// within what is due is still checked by its validator on submit.
+  bool get _mandatoryFieldsFilled =>
+      _selectedJournalId != null &&
+      _selectedMethodLineId != null &&
+      (double.tryParse(_amountController.text.trim()) ?? 0) > 0;
+
   Widget _buildSaveButton(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: isDark
-                ? Colors.black.withOpacity(0.18)
-                : Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        height: 56,
-        child: Consumer<InvoiceProvider>(
-          builder: (context, invoiceProvider, child) {
-            final isLoading = invoiceProvider.isLoading || _isProcessingPayment;
-            return ElevatedButton.icon(
-              onPressed: isLoading ? null : _registerPayment,
-              icon: isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
-                  : const HugeIcon(
-                      icon: HugeIcons.strokeRoundedFileAdd,
-                      color: Colors.white,
-                      size: 20,
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: Consumer<InvoiceProvider>(
+        builder: (context, invoiceProvider, child) {
+          final isLoading = invoiceProvider.isLoading || _isProcessingPayment;
+          // Inactive until every required field is filled.
+          final canSubmit = _mandatoryFieldsFilled;
+          return ElevatedButton.icon(
+            onPressed: (isLoading || !canSubmit) ? null : _registerPayment,
+            icon: isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
-              label: Text(
-                isLoading ? 'Creating Payment...' : 'Create Payment',
-                style: GoogleFonts.manrope(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
+                  )
+                : const HugeIcon(
+                    icon: HugeIcons.strokeRoundedFileAdd,
+                    size: 20,
+                  ),
+            label: Text(
+              isLoading ? 'Creating Payment...' : 'Create Payment',
+              style: GoogleFonts.manrope(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shadowColor: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(
-                  vertical: 14,
-                  horizontal: 16,
-                ),
-                disabledBackgroundColor: isDark
-                    ? Colors.grey[700]!
-                    : Colors.grey[400]!,
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shadowColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
-            );
-          },
-        ),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              disabledBackgroundColor: isDark
+                  ? Colors.grey[700]!
+                  : AppTheme.disabledButtonFill,
+              disabledForegroundColor: AppTheme.disabledButtonText,
+            ),
+          );
+        },
       ),
     );
   }

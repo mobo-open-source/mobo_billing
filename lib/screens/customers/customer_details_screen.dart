@@ -1288,9 +1288,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                     ),
                     padding: const EdgeInsets.all(16),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).primaryColor,
+                      color: Theme.of(context).primaryColor,
                       size: 50,
                     ),
                   ),
@@ -1489,7 +1487,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                         _isCompany ? 'Company' : 'Customer',
                         style: TextStyle(
                           fontSize: 15,
-                          color: isDark ? Colors.white60 : theme.primaryColor,
+                          color: theme.primaryColor,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -3724,7 +3722,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             ListTile(
               leading: HugeIcon(
                 icon: HugeIcons.strokeRoundedCoordinate01,
-                color: isDark ? Colors.white : primaryColor,
+                color: primaryColor,
               ),
               title: Text(
                 'Geolocalize with Odoo',
@@ -3744,7 +3742,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             ListTile(
               leading: HugeIcon(
                 icon: HugeIcons.strokeRoundedMaping,
-                color: isDark ? Colors.white : primaryColor,
+                color: primaryColor,
               ),
               title: Text(
                 'Select location on map',

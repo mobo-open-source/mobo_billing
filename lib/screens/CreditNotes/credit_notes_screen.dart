@@ -16,12 +16,14 @@ import '../../widgets/empty_state_widget.dart';
 import '../../widgets/filter_badges.dart';
 import '../../widgets/mobo_search_field.dart';
 import '../../providers/currency_provider.dart';
+import '../../widgets/group_section_card.dart';
 import '../../widgets/invoice_filter_bottomsheet.dart';
 import 'package:intl/intl.dart';
 import '../../models/invoice.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../providers/navigation_provider.dart';
 import '../../utils/refresh_on_tab_select.dart';
+import '../../widgets/pagination_bar.dart';
 
 class CreditNotesScreen extends StatefulWidget {
   const CreditNotesScreen({Key? key}) : super(key: key);
@@ -244,19 +246,17 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
                               ? 'Try adjusting your filters'
                               : 'There are no credit note records to display',
                           showClearButton: _hasActiveFilters(),
-                          onClearFilters: () {
-                            setState(() {
-                              _activeFilters.clear();
-                              _startDate = null;
-                              _endDate = null;
-                              _selectedGroupBy = null;
-                            });
-                            provider.loadCreditNotes();
-                          },
+                          onClearFilters: () =>
+                              _clearFiltersAndGroupBy(provider),
                         );
                       } else {
                         content = ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.fromLTRB(
+                            16,
+                            0,
+                            16,
+                            AppSpacing.fabClearance,
+                          ),
                           itemCount: provider.creditNotes.length,
                           itemBuilder: (context, index) {
                             final creditNote = provider.creditNotes[index];
@@ -329,105 +329,27 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
             ).loadCreditNotes();
           }
         },
-        backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
+        backgroundColor: AppTheme.primaryColor,
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedFileAdd,
-          color: isDark ? Colors.black : Colors.white,
+          color: Colors.white,
         ),
       ),
     );
   }
 
   Widget _buildTopPaginationBar(CreditNoteProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final paginationText = _selectedGroupBy != null
-        ? '${provider.totalCount}/${provider.totalCount}'
-        : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}';
-
-    return Container(
-      padding: const EdgeInsets.only(right: 0, top: 4, bottom: 4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  paginationText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.grey[300] : Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_selectedGroupBy == null) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasPreviousPage && !provider.isLoading)
-                      ? () => provider.goToPreviousPage()
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowLeft01,
-                      size: 20,
-                      color: (provider.hasPreviousPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasNextPage && !provider.isLoading)
-                      ? () => provider.goToNextPage()
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowRight01,
-                      size: 20,
-                      color: (provider.hasNextPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PaginationBar(
+      totalCount: provider.totalCount,
+      rangeText: _selectedGroupBy != null
+          ? '${provider.totalCount}/${provider.totalCount}'
+          : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}',
+      showArrows: _selectedGroupBy == null,
+      hasPrevious: provider.hasPreviousPage,
+      hasNext: provider.hasNextPage,
+      isLoading: provider.isLoading,
+      onPrevious: () => provider.goToPreviousPage(),
+      onNext: () => provider.goToNextPage(),
     );
   }
 
@@ -454,7 +376,12 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
           child: _selectedGroupBy != null
               ? _buildGroupedContent(provider)
               : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.fromLTRB(
+                    16,
+                    0,
+                    16,
+                    AppSpacing.fabClearance,
+                  ),
                   itemCount: provider.creditNotes.length,
                   itemBuilder: (context, index) =>
                       _buildCreditNoteCard(provider.creditNotes[index]),
@@ -489,7 +416,7 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
     switch (state) {
       case 'posted':
         final isPaid = paymentState == 'paid';
-        statusColor = StatusColors.forState(isPaid ? 'paid' : 'draft');
+        statusColor = StatusColors.forState(isPaid ? 'paid' : 'posted');
         statusText = isPaid ? 'Paid' : 'Posted';
         break;
       case 'draft':
@@ -553,9 +480,7 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
-                            color: isDark
-                                ? Colors.white
-                                : AppTheme.primaryColor,
+                            color: AppTheme.primaryColor,
                             letterSpacing: -0.1,
                             fontFamily: GoogleFonts.manrope().fontFamily,
                           ),
@@ -581,27 +506,10 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
                       ],
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? Colors.white.withOpacity(0.15)
-                          : statusColor.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      statusText,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: isDark ? FontWeight.bold : FontWeight.w600,
-                        color: isDark ? Colors.white : statusColor,
-                        letterSpacing: 0.1,
-                        fontFamily: GoogleFonts.manrope().fontFamily,
-                      ),
-                    ),
+                  StatusColors.buildStatusBadge(
+                    statusText,
+                    statusColor,
+                    isDark: isDark,
                   ),
                 ],
               ),
@@ -1051,28 +959,30 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
     return domain;
   }
 
+  /// Drops every filter and the group-by, then reloads the full list.
+  void _clearFiltersAndGroupBy(CreditNoteProvider provider) {
+    setState(() {
+      _activeFilters.clear();
+      _startDate = null;
+      _endDate = null;
+      _selectedGroupBy = null;
+    });
+    provider.loadCreditNotes();
+  }
+
   Widget _buildGroupedContent(CreditNoteProvider provider) {
     if (provider.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (provider.groupSummary.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.folder_open, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'No groups found',
-              style: TextStyle(
-                fontSize: 18,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
+      // The same screen as an empty plain list; clearing resets the filters
+      // and the group-by together.
+      return EmptyStateWidget(
+        title: 'No results found',
+        subtitle: 'Try adjusting your filters or group by',
+        showClearButton: true,
+        onClearFilters: () => _clearFiltersAndGroupBy(provider),
       );
     }
 
@@ -1081,7 +991,7 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
 
     return ListView.builder(
       itemCount: groups.length,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.fabClearance),
       itemBuilder: (context, index) {
         final group = groups[index];
         final groupKey = group.key;
@@ -1109,110 +1019,24 @@ class _CreditNotesScreenState extends State<CreditNotesScreen>
     bool isDark,
     CreditNoteProvider provider,
   ) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
-        ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.08),
-            ),
-        ],
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () async {
-              setState(() {
-                _expandedGroups[groupKey] = !isExpanded;
-              });
+    return GroupSectionCard(
+      title: groupKey,
+      subtitle: '$count Credit Notes',
+      isExpanded: isExpanded,
+      onToggle: () async {
+        setState(() {
+          _expandedGroups[groupKey] = !isExpanded;
+        });
 
-              if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
-                await _loadGroupInvoices(provider, groupKey);
-              }
-            },
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          groupKey,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$count Credit Notes',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (isExpanded) ...[
-            if (loadedInvoices.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                child: Center(
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Theme.of(context).primaryColor,
-                      ),
-                    ),
-                  ),
-                ),
-              )
-            else
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: loadedInvoices.length,
-                padding: EdgeInsets.zero,
-                itemBuilder: (context, index) {
-                  final creditNote = loadedInvoices[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: _buildCreditNoteCard(creditNote),
-                  );
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
+        if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
+          await _loadGroupInvoices(provider, groupKey);
+        }
+      },
+      isLoading: loadedInvoices.isEmpty,
+      body: Column(
+        children: [
+          for (final creditNote in loadedInvoices)
+            _buildCreditNoteCard(creditNote),
         ],
       ),
     );

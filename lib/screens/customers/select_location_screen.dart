@@ -282,7 +282,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark ? Colors.white : theme.primaryColor,
+                      color: theme.primaryColor,
                       size: 50,
                     ),
                     const SizedBox(height: 24),
@@ -362,7 +362,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                         height: 50,
                         child: Container(
                           decoration: BoxDecoration(
-                            color: isDark ? Colors.white : theme.primaryColor,
+                            color: theme.primaryColor,
                             shape: BoxShape.circle,
                             border: Border.all(
                               color: colorScheme.surface,

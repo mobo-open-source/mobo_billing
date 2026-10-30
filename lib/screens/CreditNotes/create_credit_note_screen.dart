@@ -10,6 +10,7 @@ import '../../providers/credit_note_provider.dart';
 import '../../services/odoo_api_service.dart';
 import '../../services/review_service.dart';
 import '../../widgets/mobo_form_fields.dart';
+import '../../widgets/pinned_action_bar.dart';
 import '../../widgets/line_item_inputs.dart';
 import '../../models/contact.dart';
 import '../../models/product.dart';
@@ -27,6 +28,7 @@ import '../../services/data_cache.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
 import '../../widgets/offline_data_banner.dart';
+import '../../widgets/remove_product_dialog.dart';
 
 class CreateCreditNoteScreen extends StatefulWidget {
   final Map<String, dynamic>? sourceInvoice;
@@ -592,10 +594,20 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     });
   }
 
-  void _removeCreditNoteLine(int index) {
-    setState(() {
-      _creditNoteLines.removeAt(index);
-    });
+  /// Asks before dropping a product line, since the quantity and price already
+  /// entered go with it.
+  Future<void> _removeCreditNoteLine(int index) async {
+    final line = _creditNoteLines[index];
+    final confirmed = await confirmRemoveProduct(
+      context,
+      documentType: 'credit note',
+      productName: line['product_name']?.toString(),
+    );
+
+    if (confirmed && mounted) {
+      // By the line itself rather than the index, which could have shifted.
+      setState(() => _creditNoteLines.remove(line));
+    }
   }
 
   void _updateLineSubtotal(int index) {
@@ -669,7 +681,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
         appBar: AppBar(
           forceMaterialTransparency: true,
           backgroundColor: backgroundColor,
-          foregroundColor: isDark ? Colors.white : theme.primaryColor,
+          foregroundColor: theme.primaryColor,
           elevation: 0,
           title: Text(
             _isEditing ? 'Edit Credit Note' : 'Create Credit Note',
@@ -730,17 +742,34 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                     _buildCustomerSection(isDark),
                     _buildDetailsSection(isDark),
                     _buildLinesSection(isDark),
-                    const SizedBox(height: 8),
-                    _buildSaveButton(isDark),
-                    const SizedBox(height: 20),
                   ],
                 ),
               ),
             );
           },
         ),
+        // Pinned under the form so saving never needs a scroll.
+        bottomNavigationBar: Consumer2<ConnectivityService, SessionService>(
+          builder: (context, connectivityService, sessionService, child) =>
+              _isFormShown(connectivityService, sessionService)
+              ? PinnedActionBar(child: _buildSaveButton(isDark))
+              : const SizedBox.shrink(),
+        ),
       ),
     );
+  }
+
+  /// Whether the form itself is on screen — as opposed to the offline,
+  /// session, error or loading states that replace it — and so whether it has
+  /// a Save button to pin. Mirrors the checks the body makes, in order.
+  bool _isFormShown(
+    ConnectivityService connectivityService,
+    SessionService sessionService,
+  ) {
+    if (!connectivityService.isConnected && _journals.isEmpty) return false;
+    if (!sessionService.hasValidSession) return false;
+    if (_errorMessage != null) return false;
+    return !(_isInitLoading || (_isLoading && !_isSaving));
   }
 
   Widget _buildCustomerSection(bool isDark) {
@@ -769,6 +798,8 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
               _loadShippingAddresses(customer.id);
             });
           },
+          // The × beside the field: drops the customer and the shipping
+          // addresses that were loaded for them.
           onClear: () {
             setState(() {
               _selectedCustomer = null;
@@ -1046,14 +1077,10 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withOpacity(.1)
-            : AppTheme.primaryColor.withOpacity(0.1),
+        color: AppTheme.primaryColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(.3)
-              : AppTheme.primaryColor.withOpacity(0.3),
+          color: AppTheme.primaryColor.withOpacity(0.3),
         ),
       ),
       child: Column(
@@ -1143,6 +1170,9 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
       key: ObjectKey(line),
       margin: const EdgeInsets.only(bottom: 12),
       child: Card(
+        // The theme gives cards 8px side margins, which left this one
+        // narrower than the search field above it and the totals below.
+        margin: EdgeInsets.zero,
         color: cardColor,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -1295,7 +1325,7 @@ class _CreateCreditNoteScreenState extends State<CreateCreditNoteScreen>
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : AppTheme.primaryColor,
+                        color: AppTheme.primaryColor,
                       ),
                     ),
                   ),

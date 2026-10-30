@@ -212,7 +212,7 @@ class _FullImageScreenState extends State<FullImageScreen> {
   Widget _buildLoadingIndicator(bool isDark) {
     return Center(
       child: LoadingAnimationWidget.fourRotatingDots(
-        color: isDark ? Colors.white : AppTheme.primaryColor,
+        color: AppTheme.primaryColor,
         size: 40,
       ),
     );
@@ -292,7 +292,7 @@ class _FullImageScreenState extends State<FullImageScreen> {
           ),
         ),
         backgroundColor: isDark ? Colors.grey[900] : Colors.grey[50],
-        foregroundColor: isDark ? Colors.white : Theme.of(context).primaryColor,
+        foregroundColor: Theme.of(context).primaryColor,
         elevation: 0,
       ),
       body: LayoutBuilder(

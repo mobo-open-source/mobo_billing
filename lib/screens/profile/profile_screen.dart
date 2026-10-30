@@ -1378,9 +1378,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     padding: const EdgeInsets.all(16),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).colorScheme.primary,
+                      color: Theme.of(context).colorScheme.primary,
                       size: 50,
                     ),
                   ),
@@ -1514,11 +1512,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _tileDivider(bool isDark) =>
-      Divider(height: 0, color: isDark ? Colors.grey[800] : Colors.grey[200]);
+      Divider(height: 1, color: isDark ? Colors.grey[800] : Colors.grey[200]);
 
   Widget _quickActionTile(
     BuildContext context, {
-    required IconData icon,
+    required List<List<dynamic>> icon,
     required String title,
     String subtitle = '',
     VoidCallback? onTap,
@@ -1535,7 +1533,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         : (isDark ? Colors.grey[400]! : Colors.grey[600]!);
 
     return ListTile(
-      leading: Icon(icon, color: iconColor),
+      leading: HugeIcon(icon: icon, color: iconColor),
       title: Text(
         title,
         style: TextStyle(
@@ -1544,7 +1542,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
       subtitle: subtitle.isNotEmpty
-          ? Text(subtitle, style: TextStyle(color: subtitleColor))
+          ? Text(
+              subtitle,
+              style: TextStyle(fontSize: 13, color: subtitleColor),
+            )
           : null,
       trailing:
           trailing ??
@@ -1560,12 +1561,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildQuickActionsSection(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? Colors.grey[900] : Colors.white;
 
+    // Dividers between rows come from the loop below.
     final List<Widget> tiles = [
       _quickActionTile(
         context,
-        icon: Icons.settings_outlined,
+        icon: HugeIcons.strokeRoundedSettings01,
         title: 'Settings',
         subtitle: 'App preferences and sync options',
         onTap: () async {
@@ -1577,12 +1578,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           } catch (_) {}
         },
       ),
-      _tileDivider(isDark),
       const SwitchAccountWidget(),
-      _tileDivider(isDark),
       _quickActionTile(
         context,
-        icon: Icons.logout_outlined,
+        icon: HugeIcons.strokeRoundedLogout01,
         title: 'Logout',
         subtitle: 'Sign out from this device',
         destructive: true,
@@ -1601,23 +1600,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(12),
+        color: isDark ? Colors.grey[850] : Colors.white,
+        borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
+          color: isDark ? Colors.grey[850]! : Colors.grey[200]!,
+          width: 0.5,
         ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.06),
-            ),
-        ],
+        boxShadow: AppShadows.card,
       ),
       child: Material(
         type: MaterialType.transparency,

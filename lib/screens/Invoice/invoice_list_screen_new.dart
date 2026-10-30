@@ -9,6 +9,7 @@ import '../../providers/last_opened_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/invoice_list_tile.dart';
 import '../../widgets/shimmer_loading.dart';
+import '../../widgets/group_section_card.dart';
 import '../../widgets/invoice_filter_bottomsheet.dart';
 import 'package:intl/intl.dart';
 import '../../services/connectivity_service.dart';
@@ -24,6 +25,7 @@ import '../../utils/refresh_on_tab_select.dart';
 
 import 'invoice_detail_screen.dart';
 import 'create_invoice_screen.dart';
+import '../../widgets/pagination_bar.dart';
 
 class InvoiceListScreenNew extends StatefulWidget {
   final String? initialFilter;
@@ -240,14 +242,14 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
             Provider.of<InvoiceProvider>(context, listen: false).loadInvoices();
           }
         },
-        backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
+        backgroundColor: AppTheme.primaryColor,
         elevation: 0,
         focusElevation: 0,
         hoverElevation: 0,
         highlightElevation: 0,
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedTaskAdd01,
-          color: isDark ? Colors.black : Colors.white,
+          color: Colors.white,
         ),
       ),
     );
@@ -258,12 +260,14 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
       return _buildShimmerList();
     }
 
-    final Widget content;
-    if (provider.invoices.isEmpty && _selectedGroupBy == null) {
-      content = _buildEmptyState(isDark, provider);
-    } else {
-      content = _buildInvoiceContent(provider);
-    }
+    // With a group-by on, "nothing found" is a list with no groups rather than
+    // an empty page of invoices — and shows the same empty screen.
+    final isEmpty = _selectedGroupBy == null
+        ? provider.invoices.isEmpty
+        : provider.groupSummary.isEmpty;
+    final Widget content = isEmpty
+        ? _buildEmptyState(isDark, provider)
+        : _buildInvoiceContent(provider);
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -283,7 +287,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
         }
       },
       color: AppTheme.primaryColor,
-      child: (provider.invoices.isEmpty && _selectedGroupBy == null)
+      child: isEmpty
           ? LayoutBuilder(
               builder: (context, constraints) {
                 return SingleChildScrollView(
@@ -356,7 +360,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
     return ListView.builder(
       controller: _scrollController,
       itemCount: provider.invoices.length,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, AppSpacing.fabClearance),
       itemBuilder: (context, index) {
         if (index >= provider.invoices.length) {
           return const SizedBox.shrink();
@@ -511,7 +515,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
 
     return ListView.builder(
       itemCount: groups.length,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.fabClearance),
       itemBuilder: (context, index) {
         final group = groups[index];
         final groupKey = group.key;
@@ -539,222 +543,56 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
     bool isDark,
     InvoiceProvider provider,
   ) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
-        ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.08),
-            ),
-        ],
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () async {
-              setState(() {
-                _expandedGroups[groupKey] = !isExpanded;
-              });
+    return GroupSectionCard(
+      title: _groupTitle(groupKey),
+      subtitle: '$count invoice${count != 1 ? 's' : ''}',
+      isExpanded: isExpanded,
+      onToggle: () async {
+        setState(() {
+          _expandedGroups[groupKey] = !isExpanded;
+        });
 
-              if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
-                await _loadGroupInvoices(provider, groupKey);
-              }
-            },
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _groupTitle(groupKey),
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$count invoice${count != 1 ? 's' : ''}',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (isExpanded) ...[
-            if (loadedInvoices.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                child: Center(
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Theme.of(context).primaryColor,
-                      ),
-                    ),
-                  ),
-                ),
-              )
-            else
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: loadedInvoices.length,
-                padding: EdgeInsets.zero,
-                itemBuilder: (context, index) {
-                  if (index >= loadedInvoices.length)
-                    return const SizedBox.shrink();
-                  final invoice = loadedInvoices[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: InvoiceListTile(
+        if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
+          await _loadGroupInvoices(provider, groupKey);
+        }
+      },
+      isLoading: loadedInvoices.isEmpty,
+      body: Column(
+        children: [
+          for (final invoice in loadedInvoices)
+            InvoiceListTile(
+              invoice: invoice,
+              onTap: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => InvoiceDetailScreen(
+                      invoiceId: invoice.id,
                       invoice: invoice,
-                      onTap: () async {
-                        await Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => InvoiceDetailScreen(
-                              invoiceId: invoice.id,
-                              invoice: invoice,
-                            ),
-                          ),
-                        );
-                        if (mounted) {
-                          _applyFilters();
-                        }
-                      },
                     ),
-                  );
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
+                  ),
+                );
+                if (mounted) {
+                  _applyFilters();
+                }
+              },
+            ),
         ],
       ),
     );
   }
 
   Widget _buildTopPaginationBar(InvoiceProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final paginationText = _selectedGroupBy != null
-        ? '${provider.totalCount}/${provider.totalCount}'
-        : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}';
-
-    return Container(
-      padding: const EdgeInsets.only(right: 0, top: 4, bottom: 4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  paginationText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.grey[300] : Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_selectedGroupBy == null) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasPreviousPage && !provider.isLoading)
-                      ? () => provider.goToPreviousPage(filter: _currentFilter)
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowLeft01,
-                      size: 20,
-                      color: (provider.hasPreviousPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasNextPage && !provider.isLoading)
-                      ? () => provider.goToNextPage(filter: _currentFilter)
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowRight01,
-                      size: 20,
-                      color: (provider.hasNextPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PaginationBar(
+      totalCount: provider.totalCount,
+      rangeText: _selectedGroupBy != null
+          ? '${provider.totalCount}/${provider.totalCount}'
+          : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}',
+      showArrows: _selectedGroupBy == null,
+      hasPrevious: provider.hasPreviousPage,
+      hasNext: provider.hasNextPage,
+      isLoading: provider.isLoading,
+      onPrevious: () => provider.goToPreviousPage(filter: _currentFilter),
+      onNext: () => provider.goToNextPage(filter: _currentFilter),
     );
   }
 

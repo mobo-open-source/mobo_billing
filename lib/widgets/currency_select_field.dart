@@ -151,18 +151,21 @@ class _CurrencySelectFieldState extends State<CurrencySelectField> {
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               curve: Curves.easeInOut,
-              // 12px inside the 2px border around a 22px row: the same 50px
-              // as a MoboTextField, so the boxes line up beside one.
-              padding: const EdgeInsets.symmetric(
-                vertical: 12,
-                horizontal: AppFormTheme.fieldGutter,
+              // Border + padding always total 14px around a 22px row: the same
+              // 50px as a MoboTextField, so the boxes line up beside one. The
+              // 1px resting border thickens to 2px while the menu is open.
+              padding: EdgeInsets.symmetric(
+                vertical: _isOpen ? 12 : 13,
+                horizontal: AppFormTheme.fieldGutter + (_isOpen ? 0 : 1),
               ),
               decoration: BoxDecoration(
                 color: AppFormTheme.inputFill(isDark),
                 borderRadius: BorderRadius.circular(AppRadius.md),
                 border: Border.all(
-                  color: _isOpen ? AppTheme.primaryColor : Colors.transparent,
-                  width: 2,
+                  color: _isOpen
+                      ? AppTheme.primaryColor
+                      : AppFormTheme.restingBorderColor(isDark),
+                  width: _isOpen ? 2 : 1,
                 ),
               ),
               child: Row(

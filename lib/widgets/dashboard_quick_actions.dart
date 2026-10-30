@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
+import 'package:mobo_billing/theme/app_theme.dart';
 import 'package:shimmer/shimmer.dart';
 import 'dashboard_empty_state.dart';
 
@@ -137,6 +138,7 @@ class RecentItemsWidget extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isDark ? Colors.grey[850] : Colors.white,
                 borderRadius: BorderRadius.circular(12),
+                boxShadow: AppShadows.card,
               ),
               child: _buildRecentItem(item),
             ),
@@ -169,9 +171,9 @@ class RecentItemsWidget extends StatelessWidget {
                 Text(
                   name,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white : Colors.black87,
+                    color: AppTheme.primaryColor,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

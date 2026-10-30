@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../services/odoo_api_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../widgets/pinned_action_bar.dart';
 import '../../widgets/custom_text_field.dart';
 import '../../widgets/custom_text_field_simple.dart' as simple;
 import '../../models/product.dart';
@@ -334,7 +335,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                       HugeIcon(
                         icon: HugeIcons.strokeRoundedCamera02,
                         size: 20,
-                        color: isDark ? Colors.white : primaryColor,
+                        color: primaryColor,
                       ),
                       const SizedBox(width: 16),
                       Text(
@@ -368,7 +369,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                       HugeIcon(
                         icon: HugeIcons.strokeRoundedImageCrop,
                         size: 20,
-                        color: isDark ? Colors.white : primaryColor,
+                        color: primaryColor,
                       ),
                       const SizedBox(width: 16),
                       Text(
@@ -421,7 +422,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               ),
             ),
             backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-            foregroundColor: isDark ? Colors.white : primaryColor,
+            foregroundColor: primaryColor,
             elevation: 0,
             leading: IconButton(
               onPressed: () => handleNavigation(() => Navigator.pop(context)),
@@ -441,9 +442,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
     if (_pickedImageFile != null) {
       photoWidget = CircleAvatar(
         radius: 48,
-        backgroundColor: isDark
-            ? Colors.grey.shade200
-            : primaryColor.withOpacity(.1),
+        backgroundColor: primaryColor.withOpacity(.1),
         backgroundImage: FileImage(_pickedImageFile!),
       );
     } else if (_imageBase64 != null && _imageBase64!.isNotEmpty) {
@@ -454,34 +453,28 @@ class _ProductFormScreenState extends State<ProductFormScreen>
         final bytes = base64Decode(base64String);
         photoWidget = CircleAvatar(
           radius: 48,
-          backgroundColor: isDark
-              ? Colors.grey.shade200
-              : primaryColor.withOpacity(.1),
+          backgroundColor: primaryColor.withOpacity(.1),
           backgroundImage: MemoryImage(bytes),
         );
       } catch (e) {
         photoWidget = CircleAvatar(
           radius: 48,
-          backgroundColor: isDark
-              ? Colors.grey.shade200
-              : primaryColor.withOpacity(.1),
+          backgroundColor: primaryColor.withOpacity(.1),
           child: Icon(
             Icons.image,
             size: 48,
-            color: isDark ? Colors.grey.shade800 : primaryColor,
+            color: primaryColor,
           ),
         );
       }
     } else {
       photoWidget = CircleAvatar(
         radius: 48,
-        backgroundColor: isDark
-            ? Colors.grey.shade200
-            : primaryColor.withOpacity(.1),
+        backgroundColor: primaryColor.withOpacity(.1),
         child: Icon(
           Icons.image,
           size: 48,
-          color: isDark ? Colors.grey.shade800 : primaryColor,
+          color: primaryColor,
         ),
       );
     }
@@ -506,7 +499,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
             ),
           ),
           backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-          foregroundColor: isDark ? Colors.white : primaryColor,
+          foregroundColor: primaryColor,
           elevation: 0,
           leading: IconButton(
             onPressed: () => handleNavigation(() => Navigator.pop(context)),
@@ -535,7 +528,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                         borderRadius: BorderRadius.circular(24),
                         child: CircleAvatar(
                           radius: 18,
-                          backgroundColor: isDark ? Colors.grey : primaryColor,
+                          backgroundColor: primaryColor,
                           child: Icon(
                             Icons.add_a_photo,
                             color: Colors.white,
@@ -1142,8 +1135,6 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               Row(
                 children: [
                   Checkbox(
-                    checkColor: Colors.white,
-                    activeColor: isDark ? Colors.grey : primaryColor,
                     value: _isActive,
                     onChanged: (v) => setState(() => _isActive = v ?? true),
                   ),
@@ -1154,8 +1145,6 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               Row(
                 children: [
                   Checkbox(
-                    checkColor: Colors.white,
-                    activeColor: isDark ? Colors.grey : primaryColor,
                     value: _canBeSold,
                     onChanged: (v) => setState(() => _canBeSold = v ?? true),
                   ),
@@ -1166,8 +1155,6 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               Row(
                 children: [
                   Checkbox(
-                    checkColor: Colors.white,
-                    activeColor: isDark ? Colors.grey : primaryColor,
                     value: _canBePurchased,
                     onChanged: (v) =>
                         setState(() => _canBePurchased = v ?? true),
@@ -1175,57 +1162,58 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                   const Text('Can be Purchased'),
                 ],
               ),
-              const SizedBox(height: 24),
-              SafeArea(
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ListenableBuilder(
-                    listenable: _textFields,
-                    builder: (context, _) {
-                      // An edit that changes nothing has nothing to submit.
-                      final nothingToSave = _isEditMode && !_hasEdits;
-                      return ElevatedButton(
-                        onPressed:
-                            (_isLoading || !_isNameFilled || nothingToSave)
-                            ? null
-                            : _saveProduct,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: primaryColor,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shadowColor: Colors.transparent,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 14,
-                            horizontal: 16,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          disabledBackgroundColor: isDark
-                              ? Colors.grey[700]!
-                              : Colors.grey[400]!,
-                        ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Text(
-                                _isEditMode ? 'Save Changes' : 'Create Product',
-                                style: const TextStyle(fontSize: 16),
-                              ),
-                      );
-                    },
-                  ),
-                ),
-              ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
+        // Pinned under the form so saving never needs a scroll.
+        bottomNavigationBar: PinnedActionBar(child: _buildSaveButton(isDark)),
+      ),
+    );
+  }
+
+  Widget _buildSaveButton(bool isDark) {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ListenableBuilder(
+        listenable: _textFields,
+        builder: (context, _) {
+          // An edit that changes nothing has nothing to submit.
+          final nothingToSave = _isEditMode && !_hasEdits;
+          return ElevatedButton(
+            onPressed: (_isLoading || !_isNameFilled || nothingToSave)
+                ? null
+                : _saveProduct,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shadowColor: Colors.transparent,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              disabledBackgroundColor: isDark
+                  ? Colors.grey[700]!
+                  : AppTheme.disabledButtonFill,
+              disabledForegroundColor: AppTheme.disabledButtonText,
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : Text(
+                    _isEditMode ? 'Save Changes' : 'Create Product',
+                    style: const TextStyle(fontSize: 16),
+                  ),
+          );
+        },
       ),
     );
   }
@@ -1314,16 +1302,15 @@ class _ProductFormScreenState extends State<ProductFormScreen>
             _isLoading = false;
           });
 
-          Navigator.pop(context, true);
-
-          Future.delayed(const Duration(milliseconds: 100), () {
-            if (context.mounted) {
-              CustomSnackbar.showSuccess(
-                context,
-                'Product updated successfully',
-              );
-            }
-          });
+          // Pop first, then toast on the navigator's context so the snackbar
+          // (a dialog route) shows on the details page instead of being
+          // dismissed along with the form.
+          final navigator = Navigator.of(context);
+          navigator.pop(true);
+          CustomSnackbar.showSuccess(
+            navigator.context,
+            'Product updated successfully',
+          );
         }
       } else {
         final newId = await _apiService.create('product.product', productData);

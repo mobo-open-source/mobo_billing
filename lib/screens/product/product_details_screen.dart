@@ -28,6 +28,8 @@ class ProductDetailsScreen extends StatefulWidget {
 class _ProductDetailsScreenState extends State<ProductDetailsScreen>
     with TickerProviderStateMixin {
   bool _isLoading = false;
+  // Set once the product has been edited so the list refreshes when leaving.
+  bool _wasEdited = false;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   Product? _loadedProduct;
@@ -249,6 +251,18 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen>
 
   @override
   Widget build(BuildContext context) {
+    // After an edit, any way of leaving (app-bar arrow or system back) hands
+    // 'refresh' to the list so it reloads without a second toast.
+    return PopScope(
+      canPop: !_wasEdited,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) Navigator.of(context).pop('refresh');
+      },
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final product = _product;
 
@@ -268,7 +282,8 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen>
             icon: HugeIcons.strokeRoundedArrowLeft01,
             color: isDark ? Colors.white : Colors.black,
           ),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () =>
+              Navigator.of(context).pop(_wasEdited ? 'refresh' : null),
         ),
         actions: [
           IconButton(
@@ -291,8 +306,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen>
                         ),
                       ),
                     );
-                    if (result == true && context.mounted) {
-                      Navigator.pop(context, 'updated');
+                    if (result == true && mounted) {
+                      _wasEdited = true;
+                      await _loadProductDetails();
                     }
                   },
           ),
@@ -396,7 +412,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen>
           : FadeTransition(
               opacity: _fadeAnimation,
               child: RefreshIndicator(
-                color: isDark ? Colors.blue[200] : AppTheme.primaryColor,
+                color: AppTheme.primaryColor,
                 onRefresh: () async {
                   await _loadProductDetails();
                 },
@@ -416,9 +432,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen>
                                 'Sale Price',
                                 currencyProvider.formatAmount(salePrice),
                                 highlight: true,
-                                valueColor: isDark
-                                    ? Colors.white70
-                                    : AppTheme.primaryColor,
+                                valueColor: AppTheme.primaryColor,
                               );
                             },
                           ),
@@ -1276,9 +1290,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen>
                       shape: BoxShape.circle,
                     ),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).primaryColor,
+                      color: Theme.of(context).primaryColor,
                       size: 50,
                     ),
                   ),

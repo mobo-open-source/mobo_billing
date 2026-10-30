@@ -2115,9 +2115,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                         ? (isDark ? Colors.grey[500] : Colors.grey[400])
                         : (_isEditMode
                               ? (isDark ? Colors.white : Colors.black)
-                              : (isDark
-                                    ? Colors.white
-                                    : AppTheme.primaryColor)),
+                              : AppTheme.primaryColor),
                   ),
                 ),
               ),

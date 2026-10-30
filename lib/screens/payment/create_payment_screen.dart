@@ -20,6 +20,7 @@ import '../../services/connectivity_service.dart';
 import '../../services/data_cache.dart';
 import '../../services/session_service.dart';
 import '../../widgets/mobo_form_fields.dart';
+import '../../widgets/pinned_action_bar.dart';
 import '../../widgets/currency_select_field.dart';
 import '../../theme/form_styles.dart';
 import '../../widgets/connection_status_widget.dart';
@@ -391,13 +392,6 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
     });
   }
 
-  void _clearCustomer() {
-    setState(() {
-      _selectedCustomer = null;
-      _customerSearchController.clear();
-    });
-  }
-
   Future<void> _createPayment() async {
     if (_isOffline) {
       CustomSnackbar.showError(
@@ -666,12 +660,12 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
         appBar: AppBar(
           forceMaterialTransparency: true,
           backgroundColor: backgroundColor,
-          foregroundColor: isDark ? Colors.white : theme.primaryColor,
+          foregroundColor: theme.primaryColor,
           elevation: 0,
           title: Text(
             _isEditing ? 'Edit Payment' : 'Register Payment',
             style: GoogleFonts.manrope(
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w600,
               color: isDark ? Colors.white : Colors.black,
             ),
           ),
@@ -725,22 +719,55 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
                         message: "You're offline — saving is unavailable",
                       ),
                     _buildPaymentDetailsSection(isDark),
-                    const SizedBox(height: 8),
-                    _buildSaveButton(isDark),
-                    const SizedBox(height: 20),
                   ],
                 ),
               ),
             );
           },
         ),
+        // Pinned under the form so saving never needs a scroll.
+        bottomNavigationBar:
+            Consumer2<ConnectivityService, SessionService>(
+              builder: (context, connectivityService, sessionService, child) =>
+                  _isFormShown(connectivityService, sessionService)
+                  ? PinnedActionBar(child: _buildSaveButton(isDark))
+                  : const SizedBox.shrink(),
+            ),
       ),
     );
   }
 
+  /// Whether the form itself is on screen — as opposed to the offline, session,
+  /// error or loading states that replace it — and so whether it has a Save
+  /// button to pin. Mirrors the checks the body makes, in the same order.
+  bool _isFormShown(
+    ConnectivityService connectivityService,
+    SessionService sessionService,
+  ) {
+    if (!connectivityService.isConnected && _journals.isEmpty) return false;
+    if (!sessionService.hasValidSession) return false;
+    if (_errorMessage != null) return false;
+    return !(_isInitLoading || (_isLoading && !_isSaving));
+  }
+
+  /// Brand-coloured ring and dot when selected, soft grey ring otherwise.
+  static final WidgetStateProperty<Color?> _radioFill =
+      WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected)
+            ? AppTheme.primaryColor
+            : Colors.grey.shade400,
+      );
+
+  /// Option labels are regular-weight 14, lighter than the 15/w600 field
+  /// values they sit above.
+  TextStyle _radioLabelStyle(bool isDark) => AppFormTheme.fieldValueStyle(
+    isDark,
+  ).copyWith(fontSize: 14, fontWeight: FontWeight.w500);
+
   Widget _buildPaymentDetailsSection(bool isDark) {
     return MoboFormCard(
       title: 'Payment Details',
+      dividerHeight: 1,
       children: [
         buildFieldLabel(
           'Payment Type',
@@ -751,35 +778,29 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
           children: [
             Expanded(
               child: RadioListTile<String>(
-                title: Text(
-                  'Send',
-                  style: AppFormTheme.fieldValueStyle(isDark),
-                ),
+                title: Text('Send', style: _radioLabelStyle(isDark)),
                 value: 'outbound',
                 groupValue: _paymentType,
                 onChanged: (value) => setState(() => _paymentType = value!),
-                activeColor: AppTheme.primaryColor,
+                fillColor: _radioFill,
                 contentPadding: EdgeInsets.zero,
                 dense: true,
               ),
             ),
             Expanded(
               child: RadioListTile<String>(
-                title: Text(
-                  'Receive',
-                  style: AppFormTheme.fieldValueStyle(isDark),
-                ),
+                title: Text('Receive', style: _radioLabelStyle(isDark)),
                 value: 'inbound',
                 groupValue: _paymentType,
                 onChanged: (value) => setState(() => _paymentType = value!),
-                activeColor: AppTheme.primaryColor,
+                fillColor: _radioFill,
                 contentPadding: EdgeInsets.zero,
                 dense: true,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         MoboInlineDropdown<Contact>(
           label: 'Customer',
           hintText: 'Search customers...',
@@ -795,11 +816,10 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
           isItemSelected: (c) => _selectedCustomer?.id == c.id,
           emptyText: 'No customers found',
           onItemTap: _selectCustomer,
-          onClear: _clearCustomer,
           validator: (value) =>
               _selectedCustomer == null ? 'Please select a customer' : null,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -844,7 +864,7 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
             Expanded(flex: 2, child: _buildCurrencyDropdown(isDark)),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         MoboDateField(
           label: 'Payment Date',
           value: _paymentDate,
@@ -852,15 +872,15 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
           formatter: (d) => DateFormat('MMM dd, yyyy').format(d),
           onTap: _selectPaymentDate,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         _buildJournalDropdown(isDark),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         _buildPaymentMethodDropdown(isDark),
         if (_partnerBanks.isNotEmpty) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           _buildPartnerBankDropdown(isDark),
         ],
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         MoboTextField(
           controller: _memoController,
           label: 'Memo',
@@ -995,14 +1015,25 @@ class _CreatePaymentScreenState extends State<CreatePaymentScreen>
     }
   }
 
+  /// The fields marked required are all filled: customer, a positive amount,
+  /// journal and payment method (the date always has a value).
+  bool get _mandatoryFieldsFilled =>
+      _selectedCustomer != null &&
+      (double.tryParse(_amountController.text.trim()) ?? 0) > 0 &&
+      _selectedJournalId != null &&
+      _selectedPaymentMethodId != null;
+
   Widget _buildSaveButton(bool isDark) {
+    // Nothing is submitted until every required field is filled, and an edit
+    // that changes nothing has nothing to submit.
+    final canSubmit = _mandatoryFieldsFilled && (!_isEditing || _hasEdits);
+
     return MoboSubmitButton(
       label: _isEditing ? 'Save Payment' : 'Create Payment',
       loadingLabel: _isEditing ? 'Saving Payment' : 'Creating Payment',
       isLoading: _isLoading,
-      // An edit that changes nothing has nothing to submit.
-      isReady: _isEditing ? _hasEdits : hasUnsavedData,
-      onPressed: (_isEditing && !_hasEdits) ? null : _createPayment,
+      isReady: canSubmit,
+      onPressed: canSubmit ? _createPayment : null,
     );
   }
 }

@@ -140,9 +140,13 @@ class _MoboSearchFieldState extends State<MoboSearchField> {
           decoration: BoxDecoration(
             color: isDark ? Colors.grey[850] : Colors.white,
             borderRadius: BorderRadius.circular(_fieldRadius),
+            // The drop shadow doesn't show on the dark page, so dark mode
+            // also gets the resting outline the form fields use.
             border: Border.all(
-              color: _hasFocus ? AppTheme.primaryColor : Colors.transparent,
-              width: 2,
+              color: _hasFocus
+                  ? AppTheme.primaryColor
+                  : AppFormTheme.restingBorderColor(isDark),
+              width: _hasFocus ? 2 : 1,
             ),
           ),
           // The icon and the input are laid out by this Row rather than by
@@ -237,7 +241,10 @@ class _MoboSearchFieldState extends State<MoboSearchField> {
       ),
       child: Material(
         color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(_buttonRadius),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(_buttonRadius),
+          side: AppFormTheme.restingBorderSide(isDark),
+        ),
         child: InkWell(
           onTap: widget.enabled ? widget.onFilterTap : null,
           borderRadius: BorderRadius.circular(_buttonRadius),

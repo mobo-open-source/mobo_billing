@@ -31,7 +31,6 @@ class InvoiceListTile extends StatelessWidget {
 
     // A posted invoice is coloured by how much of it has been paid.
     if (status == 'posted') return StatusColors.forState(_postedStatus);
-    if (status == 'cancel') return StatusColors.grey;
     return StatusColors.forState(status);
   }
 
@@ -119,9 +118,7 @@ class InvoiceListTile extends StatelessWidget {
                             style: GoogleFonts.manrope(
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
-                              color: isDark
-                                  ? Colors.white
-                                  : const Color(0xFFB91C5C),
+                              color: AppTheme.primaryColor,
                               letterSpacing: -0.1,
                             ),
                             overflow: TextOverflow.ellipsis,

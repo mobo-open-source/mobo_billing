@@ -79,9 +79,7 @@ class CustomerListTile extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
-                            color: isDark
-                                ? Colors.white
-                                : AppTheme.primaryColor,
+                            color: AppTheme.primaryColor,
                             letterSpacing: -0.1,
                           ),
                           overflow: TextOverflow.ellipsis,

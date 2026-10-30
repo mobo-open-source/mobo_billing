@@ -17,6 +17,7 @@ import '../../widgets/connection_status_widget.dart';
 import '../../widgets/offline_data_banner.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../providers/currency_provider.dart';
+import '../../widgets/group_section_card.dart';
 import '../../widgets/invoice_filter_bottomsheet.dart';
 import 'package:intl/intl.dart';
 import '../../widgets/filter_badges.dart';
@@ -24,6 +25,7 @@ import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../providers/navigation_provider.dart';
 import '../../utils/refresh_on_tab_select.dart';
+import '../../widgets/pagination_bar.dart';
 
 class PaymentRecordsScreen extends StatefulWidget {
   const PaymentRecordsScreen({Key? key}) : super(key: key);
@@ -339,102 +341,22 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
   }
 
   Widget _buildTopPaginationBar(PaymentProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final paginationText = _selectedGroupBy != null
-        ? '${provider.totalCount}/${provider.totalCount}'
-        : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}';
-
-    return Container(
-      padding: const EdgeInsets.only(right: 0, top: 4, bottom: 4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  paginationText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.grey[300] : Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_selectedGroupBy == null) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasPreviousPage && !provider.isLoading)
-                      ? () => provider.goToPreviousPage()
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowLeft01,
-                      size: 20,
-                      color: (provider.hasPreviousPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasNextPage && !provider.isLoading)
-                      ? () => provider.goToNextPage()
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowRight01,
-                      size: 20,
-                      color: (provider.hasNextPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PaginationBar(
+      totalCount: provider.totalCount,
+      rangeText: _selectedGroupBy != null
+          ? '${provider.totalCount}/${provider.totalCount}'
+          : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}',
+      showArrows: _selectedGroupBy == null,
+      hasPrevious: provider.hasPreviousPage,
+      hasNext: provider.hasNextPage,
+      isLoading: provider.isLoading,
+      onPrevious: () => provider.goToPreviousPage(),
+      onNext: () => provider.goToNextPage(),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
@@ -545,19 +467,16 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
                               ? 'Try adjusting your filters'
                               : 'There are no payment records to display',
                           showClearButton: _hasActiveFilters(),
-                          onClearFilters: () {
-                            setState(() {
-                              _activeFilters.clear();
-                              _startDate = null;
-                              _endDate = null;
-                              _selectedGroupBy = null;
-                            });
-                            _applyFilters();
-                          },
+                          onClearFilters: _clearFiltersAndGroupBy,
                         );
                       } else {
                         content = ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.fromLTRB(
+                            16,
+                            0,
+                            16,
+                            AppSpacing.fabClearance,
+                          ),
                           itemCount: provider.payments.length,
                           itemBuilder: (context, index) {
                             final payment = provider.payments[index];
@@ -628,10 +547,10 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
             _applyFilters();
           }
         },
-        backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
+        backgroundColor: AppTheme.primaryColor,
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedWalletAdd02,
-          color: isDark ? Colors.black : Colors.white,
+          color: Colors.white,
         ),
       ),
     );
@@ -661,7 +580,12 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
           child: _selectedGroupBy != null
               ? _buildGroupedContent(provider)
               : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.fromLTRB(
+                    16,
+                    0,
+                    16,
+                    AppSpacing.fabClearance,
+                  ),
                   itemCount: provider.payments.length,
                   itemBuilder: (context, index) =>
                       _buildPaymentCard(provider.payments[index]),
@@ -733,9 +657,7 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
                           style: GoogleFonts.manrope(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
-                            color: isDark
-                                ? Colors.white
-                                : AppTheme.primaryColor,
+                            color: AppTheme.primaryColor,
                             letterSpacing: -0.1,
                           ),
                           overflow: TextOverflow.ellipsis,
@@ -765,17 +687,15 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: isDark
-                          ? Colors.white.withOpacity(0.15)
-                          : statusColor.withOpacity(0.10),
+                      color: statusColor.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       statusText,
                       style: GoogleFonts.manrope(
                         fontSize: 11,
-                        fontWeight: isDark ? FontWeight.bold : FontWeight.w600,
-                        color: isDark ? Colors.white : statusColor,
+                        fontWeight: FontWeight.w600,
+                        color: statusColor,
                         letterSpacing: 0.1,
                       ),
                     ),
@@ -949,28 +869,30 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
     }
   }
 
+  /// Drops every filter and the group-by, then reloads the full list.
+  void _clearFiltersAndGroupBy() {
+    setState(() {
+      _activeFilters.clear();
+      _startDate = null;
+      _endDate = null;
+      _selectedGroupBy = null;
+    });
+    _applyFilters();
+  }
+
   Widget _buildGroupedContent(PaymentProvider provider) {
     if (provider.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (provider.groupSummary.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.folder_open, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'No groups found',
-              style: TextStyle(
-                fontSize: 18,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
+      // The same screen as an empty plain list; clearing resets the filters
+      // and the group-by together.
+      return EmptyStateWidget(
+        title: 'No results found',
+        subtitle: 'Try adjusting your filters or group by',
+        showClearButton: true,
+        onClearFilters: _clearFiltersAndGroupBy,
       );
     }
 
@@ -979,7 +901,7 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
 
     return ListView.builder(
       itemCount: groups.length,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.fabClearance),
       itemBuilder: (context, index) {
         final group = groups[index];
         final groupKey = group.key;
@@ -1007,114 +929,25 @@ class _PaymentRecordsScreenState extends State<PaymentRecordsScreen>
     bool isDark,
     PaymentProvider provider,
   ) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
-        ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.08),
-            ),
-        ],
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () async {
-              setState(() {
-                _expandedGroups[groupKey] = !isExpanded;
-              });
+    return GroupSectionCard(
+      // Grouped by status, the key is Odoo's raw state ("in_process"); label
+      // it like the card badges.
+      title: _selectedGroupBy == 'state' ? _getStateLabel(groupKey) : groupKey,
+      subtitle: '$count Payments',
+      isExpanded: isExpanded,
+      onToggle: () async {
+        setState(() {
+          _expandedGroups[groupKey] = !isExpanded;
+        });
 
-              if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
-                await _loadGroupPayments(provider, groupKey);
-              }
-            },
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          // Grouped by status, the key is Odoo's raw state
-                          // ("in_process"); label it like the card badges.
-                          _selectedGroupBy == 'state'
-                              ? _getStateLabel(groupKey)
-                              : groupKey,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$count Payments',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (isExpanded) ...[
-            if (loadedPayments.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                child: Center(
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Theme.of(context).primaryColor,
-                      ),
-                    ),
-                  ),
-                ),
-              )
-            else
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: loadedPayments.length,
-                padding: EdgeInsets.zero,
-                itemBuilder: (context, index) {
-                  final payment = loadedPayments[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: _buildPaymentCard(payment),
-                  );
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
+        if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
+          await _loadGroupPayments(provider, groupKey);
+        }
+      },
+      isLoading: loadedPayments.isEmpty,
+      body: Column(
+        children: [
+          for (final payment in loadedPayments) _buildPaymentCard(payment),
         ],
       ),
     );

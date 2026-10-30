@@ -86,7 +86,7 @@ class _LocationMapWidgetState extends State<LocationMapWidget> {
               child: Text(
                 'Remove',
                 style: TextStyle(
-                  color: isDark ? Colors.white : primaryColor,
+                  color: primaryColor,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -288,9 +288,7 @@ class _LocationMapWidgetState extends State<LocationMapWidget> {
                             point: LatLng(widget.latitude, widget.longitude),
                             child: Icon(
                               Icons.location_pin,
-                              color: isDark
-                                  ? Colors.grey.shade700
-                                  : primaryColor,
+                              color: primaryColor,
                               size: 40.0,
                             ),
                           ),

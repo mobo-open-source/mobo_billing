@@ -26,7 +26,7 @@ class AppSideRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final selectedColor = isDark ? Colors.white : AppTheme.primaryColor;
+    final selectedColor = AppTheme.primaryColor;
     final unselectedColor = isDark ? Colors.grey[400]! : Colors.black87;
     final showLabels = MediaQuery.sizeOf(context).height >= 560;
 
@@ -42,9 +42,7 @@ class AppSideRail extends StatelessWidget {
         labelType: showLabels
             ? NavigationRailLabelType.all
             : NavigationRailLabelType.none,
-        indicatorColor: isDark
-            ? Colors.white.withValues(alpha: 0.12)
-            : AppTheme.primaryColor.withValues(alpha: 0.12),
+        indicatorColor: AppTheme.primaryColor.withValues(alpha: 0.12),
         indicatorShape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
         ),

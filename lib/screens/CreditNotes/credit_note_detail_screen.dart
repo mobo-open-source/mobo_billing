@@ -840,9 +840,7 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
                     ),
                     padding: const EdgeInsets.all(16),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).primaryColor,
+                      color: Theme.of(context).primaryColor,
                       size: 50,
                     ),
                   ),
@@ -896,9 +894,8 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
           if (creditNote.state == 'draft')
             IconButton(
               icon: HugeIcon(
-                icon: HugeIcons.strokeRoundedEdit02,
-                color: isDark ? Colors.white : Colors.black,
-                size: 20,
+                icon: HugeIcons.strokeRoundedPencilEdit02,
+                color: isDark ? Colors.grey[400]! : Colors.grey[600]!,
               ),
               tooltip: 'Edit Credit Note',
               onPressed: () => _editCreditNote(creditNote),
@@ -1027,23 +1024,10 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
                       color: const Color(0xFFC03355),
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getStateColor(state).withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _getStateLabel(state),
-                      style: TextStyle(
-                        color: _getStateColor(state),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+                  StatusColors.buildStatusBadge(
+                    _getStateLabel(state),
+                    _getStateColor(state),
+                    isDark: isDark,
                   ),
                 ],
               ),
@@ -1982,20 +1966,7 @@ class _CreditNoteDetailScreenState extends State<CreditNoteDetailScreen>
   }
 
   Color _getPaymentStateColor(String? state) {
-    switch (state) {
-      case 'paid':
-        return Colors.green;
-      case 'not_paid':
-        return Colors.orange;
-      case 'partial':
-        return Colors.purple;
-      case 'in_payment':
-        return Colors.blue;
-      case 'reversed':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getPaymentStateLabel(String? state) {

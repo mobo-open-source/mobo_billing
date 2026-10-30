@@ -24,11 +24,13 @@ import 'package:provider/provider.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/data_cache.dart';
 import '../../widgets/mobo_form_fields.dart';
+import '../../widgets/pinned_action_bar.dart';
 import '../../widgets/line_item_inputs.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
 import '../../widgets/offline_data_banner.dart';
 import '../../widgets/circular_image_widget.dart';
+import '../../widgets/remove_product_dialog.dart';
 
 class CreateInvoiceScreen extends StatefulWidget {
   final Map<String, dynamic>? invoiceToEdit;
@@ -66,6 +68,10 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
   bool _isLoadingCustomers = false;
   bool _isSearchingCustomers = false;
   bool _showCustomerDropdown = false;
+
+  /// The customer picker's result panel is open. The selected customer's
+  /// details card stays hidden meanwhile and returns once the panel closes.
+  bool _isCustomerPickerOpen = false;
   String? _errorMessage;
 
   List<Product> _products = [];
@@ -535,10 +541,20 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
     setState(() => _errorMessage = message);
   }
 
-  void _removeInvoiceLine(int index) {
-    setState(() {
-      _invoiceLines.removeAt(index);
-    });
+  /// Asks before dropping a product line, since the quantity and price already
+  /// entered go with it.
+  Future<void> _removeInvoiceLine(int index) async {
+    final line = _invoiceLines[index];
+    final confirmed = await confirmRemoveProduct(
+      context,
+      documentType: 'invoice',
+      productName: line['product_name']?.toString(),
+    );
+
+    if (confirmed && mounted) {
+      // By the line itself rather than the index, which could have shifted.
+      setState(() => _invoiceLines.remove(line));
+    }
   }
 
   void _updateLineSubtotal(int index) {
@@ -797,6 +813,13 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
       }
 
       if (newInvoice != null && mounted) {
+        // The invoice is saved, so stop the Create button spinning behind the
+        // success dialog rather than waiting for `finally`, which only runs
+        // once that dialog has been dismissed.
+        setState(() {
+          _isLoading = false;
+          _isSaving = false;
+        });
         ReviewService().trackSignificantEvent();
         await showInvoiceCreatedConfettiDialog(
           context,
@@ -903,7 +926,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
         appBar: AppBar(
           forceMaterialTransparency: true,
           backgroundColor: backgroundColor,
-          foregroundColor: isDark ? Colors.white : theme.primaryColor,
+          foregroundColor: theme.primaryColor,
           elevation: 0,
           title: Text(
             widget.invoiceToEdit != null ? 'Edit Invoice' : 'Create Invoice',
@@ -966,17 +989,34 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                     _buildInvoiceDetailsSection(isDark),
                     _buildLineItemsSection(isDark),
                     _buildAdditionalNotesSection(isDark),
-                    const SizedBox(height: 8),
-                    _buildSaveButton(isDark),
-                    const SizedBox(height: 20),
                   ],
                 ),
               ),
             );
           },
         ),
+        // Pinned under the form so saving never needs a scroll.
+        bottomNavigationBar: Consumer2<ConnectivityService, SessionService>(
+          builder: (context, connectivityService, sessionService, child) =>
+              _isFormShown(connectivityService, sessionService)
+              ? PinnedActionBar(child: _buildSaveButton(isDark))
+              : const SizedBox.shrink(),
+        ),
       ),
     );
+  }
+
+  /// Whether the form itself is on screen — as opposed to the offline,
+  /// session, error or loading states that replace it — and so whether it has
+  /// a Save button to pin. Mirrors the checks the body makes, in order.
+  bool _isFormShown(
+    ConnectivityService connectivityService,
+    SessionService sessionService,
+  ) {
+    if (!connectivityService.isConnected && _journals.isEmpty) return false;
+    if (!sessionService.hasValidSession) return false;
+    if (_errorMessage != null) return false;
+    return !(_isLoading && !_isSaving);
   }
 
   Widget _buildCustomerSection(bool isDark) {
@@ -984,7 +1024,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
       title: 'Customer Information',
       children: [
         _buildCustomerDropdown(isDark),
-        if (_selectedCustomer != null) ...[
+        if (_selectedCustomer != null && !_isCustomerPickerOpen) ...[
           const SizedBox(height: 16),
           _buildSelectedCustomerTile(isDark),
         ],
@@ -1050,6 +1090,10 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
       ),
       isItemSelected: (c) => _selectedCustomer?.id == c.id,
       emptyText: 'No customers found',
+      onOpenChanged: (isOpen) {
+        if (mounted) setState(() => _isCustomerPickerOpen = isOpen);
+
+      },
       onItemTap: (customer) {
         FocusScope.of(context).unfocus();
         setState(() {
@@ -1058,14 +1102,8 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
         });
         _loadShippingAddresses(customer.id);
       },
-      onClear: () {
-        setState(() {
-          _selectedCustomer = null;
-          _customerSearchController.clear();
-          _shippingAddresses = [];
-          _selectedShippingAddressId = null;
-        });
-      },
+      // No clear (×) here: once a customer is chosen, the card beneath the
+      // field has its own × to remove them.
       validator: (value) =>
           _selectedCustomer == null ? 'Please select a customer' : null,
     );
@@ -1120,9 +1158,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                               child: Text(
                                 'Company',
                                 style: TextStyle(
-                                  color: isDark
-                                      ? Colors.white
-                                      : Theme.of(context).primaryColor,
+                                  color: Theme.of(context).primaryColor,
                                   fontSize: 10,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -1151,6 +1187,8 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                         _selectedCustomer = null;
                         _customerSearchController.clear();
                         _showCustomerDropdown = false;
+                        _shippingAddresses = [];
+                        _selectedShippingAddressId = null;
                       });
                     },
                   ),
@@ -1500,6 +1538,9 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
       key: ObjectKey(line),
       margin: const EdgeInsets.only(bottom: 12),
       child: Card(
+        // The theme gives cards 8px side margins, which left this one
+        // narrower than the search field above it and the totals below.
+        margin: EdgeInsets.zero,
         color: cardColor,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -1587,6 +1628,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                             });
                           },
                           isDark: isDark,
+                          showStepper: true,
                         ),
                       ],
                     ),
@@ -1638,7 +1680,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : theme.primaryColor,
+                        color: theme.primaryColor,
                       ),
                     ),
                   ),
@@ -1655,14 +1697,10 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withOpacity(.1)
-            : Theme.of(context).primaryColor.withOpacity(0.1),
+        color: Theme.of(context).primaryColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(.3)
-              : Theme.of(context).primaryColor.withOpacity(0.3),
+          color: Theme.of(context).primaryColor.withOpacity(0.3),
         ),
       ),
       child: Column(

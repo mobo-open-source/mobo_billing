@@ -214,9 +214,9 @@ class _MainAppScreenState extends State<MainAppScreen> {
       floatingActionButton: currentIndex == 0
           ? SpeedDial(
               animatedIcon: AnimatedIcons.menu_close,
-              animatedIconTheme: IconThemeData(
+              animatedIconTheme: const IconThemeData(
                 size: 22,
-                color: isDark ? Colors.black : Colors.white,
+                color: Colors.white,
               ),
               spacing: 8,
               spaceBetweenChildren: 8,
@@ -227,8 +227,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
               direction: SpeedDialDirection.up,
               onOpen: () => HapticFeedback.lightImpact(),
               onClose: () => HapticFeedback.selectionClick(),
-              backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
-              foregroundColor: isDark ? Colors.black : Colors.white,
+              backgroundColor: AppTheme.primaryColor,
+              foregroundColor: Colors.white,
               overlayColor: Colors.black,
               overlayOpacity: isDark ? 0.30 : 0.20,
               elevation: 0,
@@ -245,9 +245,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
               children: [
                 SpeedDialChild(
                   child: const Icon(Icons.payment, color: Colors.white),
-                  backgroundColor: isDark
-                      ? Colors.grey[800]
-                      : AppTheme.primaryColor,
+                  backgroundColor: AppTheme.primaryColor,
                   label: 'Create Payment',
                   labelStyle: TextStyle(
                     fontSize: 15,
@@ -268,9 +266,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                 ),
                 SpeedDialChild(
                   child: const Icon(Icons.note_add, color: Colors.white),
-                  backgroundColor: isDark
-                      ? Colors.grey[800]
-                      : AppTheme.primaryColor,
+                  backgroundColor: AppTheme.primaryColor,
                   label: 'Create Credit Note',
                   labelStyle: TextStyle(
                     fontSize: 15,
@@ -291,9 +287,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                 ),
                 SpeedDialChild(
                   child: const Icon(Icons.person_add, color: Colors.white),
-                  backgroundColor: isDark
-                      ? Colors.grey[800]
-                      : AppTheme.primaryColor,
+                  backgroundColor: AppTheme.primaryColor,
                   label: 'Create Customer',
                   labelStyle: TextStyle(
                     fontSize: 15,
@@ -314,9 +308,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                 ),
                 SpeedDialChild(
                   child: const Icon(Icons.receipt_long, color: Colors.white),
-                  backgroundColor: isDark
-                      ? Colors.grey[800]
-                      : AppTheme.primaryColor,
+                  backgroundColor: AppTheme.primaryColor,
                   label: 'Create Invoice',
                   labelStyle: TextStyle(
                     fontSize: 15,
@@ -351,9 +343,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                     vertical: 0,
                   ),
                   backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-                  selectedItemColor: isDark
-                      ? Colors.white
-                      : AppTheme.primaryColor,
+                  selectedItemColor: AppTheme.primaryColor,
                   unselectedItemColor: isDark ? Colors.grey[300] : Colors.black,
                   showUnselectedLabels: true,
                   showSelectedLabels: true,
@@ -374,9 +364,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 5.0),
                           child: HugeIcon(
                             icon: tab.icon,
-                            color: isDark
-                                ? Colors.white
-                                : AppTheme.primaryColor,
+                            color: AppTheme.primaryColor,
                           ),
                         ),
                       ),
@@ -384,7 +372,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                   selectedLabelStyle: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white : AppTheme.primaryColor,
+                    color: AppTheme.primaryColor,
                     overflow: TextOverflow.ellipsis,
                   ),
                   unselectedLabelStyle: TextStyle(

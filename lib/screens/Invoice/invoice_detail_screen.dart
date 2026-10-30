@@ -231,9 +231,8 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
               if (invoice.state == 'draft')
                 IconButton(
                   icon: HugeIcon(
-                    icon: HugeIcons.strokeRoundedEdit02,
+                    icon: HugeIcons.strokeRoundedPencilEdit02,
                     color: isDark ? Colors.grey[400]! : Colors.grey[600]!,
-                    size: 20,
                   ),
                   tooltip: 'Edit Invoice',
                   onPressed: () => _editInvoice(invoice),
@@ -637,23 +636,10 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                       color: const Color(0xFFC03355),
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getStateColor(state).withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _getInvoiceState(state),
-                      style: TextStyle(
-                        color: _getStateColor(state),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+                  StatusColors.buildStatusBadge(
+                    _getInvoiceState(state),
+                    _getStateColor(state),
+                    isDark: isDark,
                   ),
                 ],
               ),
@@ -1594,18 +1580,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
   }
 
   Color _getPaymentStateColor(String? state) {
-    switch (state) {
-      case 'paid':
-        return Colors.green;
-      case 'not_paid':
-        return Colors.red;
-      case 'in_payment':
-        return Colors.blue;
-      case 'partial':
-        return Colors.orange;
-      default:
-        return Colors.grey;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getPaymentStateLabel(String? state) {
@@ -1655,10 +1630,10 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
             color: isDark ? Colors.grey[300] : Colors.grey[700],
           ),
         ),
-        actionsPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
-        ),
+        // Same 24px side inset as the title and message, so the buttons'
+        // edges line up with the text; the content's own 24px bottom padding
+        // already sets the gap above them.
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
         actions: [
           Row(
             children: [
@@ -2403,9 +2378,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                     ),
                     padding: const EdgeInsets.all(16),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).primaryColor,
+                      color: Theme.of(context).primaryColor,
                       size: 50,
                     ),
                   ),

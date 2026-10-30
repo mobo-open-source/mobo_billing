@@ -24,6 +24,15 @@ class AppFormTheme {
   static Color cardBorder(bool isDark) =>
       isDark ? Colors.grey[850]! : Colors.grey[200]!;
 
+  /// Outline of a field at rest. Light mode needs none — the grey fill stands
+  /// out on the white card — but the dark fill is the dark card's own colour,
+  /// so there a field would vanish without one.
+  static Color restingBorderColor(bool isDark) =>
+      isDark ? Colors.grey[700]! : Colors.transparent;
+
+  static BorderSide restingBorderSide(bool isDark) =>
+      isDark ? BorderSide(color: restingBorderColor(isDark)) : BorderSide.none;
+
   static Color iconColor(bool isDark) =>
       isDark ? Colors.white : Colors.grey[700]!;
 
@@ -102,11 +111,15 @@ class AppFormTheme {
       fillColor: inputFill(isDark),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        borderSide: BorderSide.none,
+        borderSide: restingBorderSide(isDark),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        borderSide: BorderSide.none,
+        borderSide: restingBorderSide(isDark),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderSide: restingBorderSide(isDark),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),

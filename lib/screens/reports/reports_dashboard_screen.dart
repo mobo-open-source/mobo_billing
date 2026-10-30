@@ -370,83 +370,77 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
             return const ConnectionStatusWidget();
           }
 
-          return RefreshIndicator(
-            onRefresh: _loadAllData,
-            child: Stack(
-              children: [
-                SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_isShowingCachedData)
-                        OfflineDataBanner(
-                          lastUpdated: _cacheUpdatedAt,
-                          onRetry: _loadAllData,
-                          message: connectivity.isConnected
-                              ? "Couldn't refresh reports"
-                              : null,
-                        ),
-                      _buildDateFilter(),
-                      const SizedBox(height: 20),
-                      if (_isLoading &&
-                          _summaryStats['total_invoiced'] == 0.0 &&
-                          _trendData.isEmpty)
-                        const ReportsShimmerLoading()
-                      else if (_error.isNotEmpty)
-                        ConnectionStatusWidget(
-                          serverUnreachable: true,
-                          serverErrorMessage: _error,
-                          onRetry: _loadAllData,
-                        )
-                      else ...[
-                        _buildSectionTitle('Overview', isDark),
-                        const SizedBox(height: 12),
-                        _buildSummaryGrid(),
-                        const SizedBox(height: 24),
-                        _buildSectionTitle('Sales Trend', isDark),
-                        const SizedBox(height: 12),
-                        _buildTrendChart(),
-                        const SizedBox(height: 24),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildSectionTitle('Invoice Status', isDark),
-                                  const SizedBox(height: 12),
-                                  _buildStatusChart(),
-                                ],
+          return Column(
+            children: [
+              // Pinned: the date-range pills stay put while the report below
+              // scrolls, so the range can be changed from anywhere in it.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: _buildDateFilter(),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _loadAllData,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_isShowingCachedData)
+                          OfflineDataBanner(
+                            lastUpdated: _cacheUpdatedAt,
+                            onRetry: _loadAllData,
+                            message: connectivity.isConnected
+                                ? "Couldn't refresh reports"
+                                : null,
+                          ),
+                        if (_isLoading &&
+                            _summaryStats['total_invoiced'] == 0.0 &&
+                            _trendData.isEmpty)
+                          const ReportsShimmerLoading()
+                        else if (_error.isNotEmpty)
+                          ConnectionStatusWidget(
+                            serverUnreachable: true,
+                            serverErrorMessage: _error,
+                            onRetry: _loadAllData,
+                          )
+                        else ...[
+                          _buildSectionTitle('Overview', isDark),
+                          const SizedBox(height: 12),
+                          _buildSummaryGrid(),
+                          const SizedBox(height: 24),
+                          _buildSectionTitle('Sales Trend', isDark),
+                          const SizedBox(height: 12),
+                          _buildTrendChart(),
+                          const SizedBox(height: 24),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildSectionTitle('Invoice Status', isDark),
+                                    const SizedBox(height: 12),
+                                    _buildStatusChart(),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                        _buildSectionTitle('Top Customers', isDark),
-                        const SizedBox(height: 12),
-                        _buildTopCustomersList(isDark),
-                        const SizedBox(height: 40),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          _buildSectionTitle('Top Customers', isDark),
+                          const SizedBox(height: 12),
+                          _buildTopCustomersList(isDark),
+                          const SizedBox(height: 40),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
-                if (_isLoading &&
-                    (_summaryStats['total_invoiced'] != 0.0 ||
-                        _trendData.isNotEmpty))
-                  const Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: LinearProgressIndicator(
-                      minHeight: 2,
-                      backgroundColor: Colors.transparent,
                     ),
                   ),
-              ],
-            ),
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -848,10 +842,13 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
                           value: entry.value,
                           title: '$percentage%',
                           radius: 40,
-                          titleStyle: const TextStyle(
+                          titleStyle: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                            // White washes out on the paler shades.
+                            color: _statusShade(entry.key) > 0.6
+                                ? Colors.white
+                                : AppTheme.textPrimary,
                           ),
                         );
                       }).toList(),
@@ -898,9 +895,24 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
     );
   }
 
-  Color _getStatusColor(String status) {
-    return StatusColors.forState(status);
-  }
+  /// Strength of the Mobo colour per status on the Invoice Status chart: Paid
+  /// at full strength, lighter the further a status is from paid. List badges
+  /// keep their [StatusColors].
+  static const Map<String, double> _statusShades = {
+    'Paid': 1.0,
+    'In Payment': 0.7,
+    'Partial': 0.5,
+    'Unpaid': 0.3,
+  };
+
+  double _statusShade(String status) => _statusShades[status] ?? 0.15;
+
+  /// Mixed into white rather than made translucent, so the lighter shades
+  /// stay light pink on the dark card instead of sinking into it.
+  Color _getStatusColor(String status) => Color.alphaBlend(
+    AppTheme.primaryColor.withValues(alpha: _statusShade(status)),
+    Colors.white,
+  );
 
   Widget _buildTopCustomersList(bool isDark) {
     return Container(
@@ -944,7 +956,7 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
                         '${index + 1}.',
                         style: TextStyle(
                           fontSize: 14,
-                          color: isDark ? Colors.grey[400] : Colors.grey[600],
+                          color: isDark ? Colors.white : AppTheme.textPrimary,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -955,7 +967,7 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
-                            color: isDark ? Colors.white : Colors.black,
+                            color: isDark ? Colors.white : AppTheme.textPrimary,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -968,7 +980,7 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 14,
-                              color: isDark ? Colors.white : Colors.black,
+                              color: AppTheme.primaryColor,
                             ),
                           );
                         },

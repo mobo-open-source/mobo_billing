@@ -12,6 +12,7 @@ import '../../services/session_service.dart';
 import '../../services/odoo_session_manager.dart';
 import '../../widgets/connection_status_widget.dart';
 import '../../widgets/mobo_form_fields.dart';
+import '../../widgets/pinned_action_bar.dart';
 import '../../theme/form_styles.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/custom_snackbar.dart';
@@ -347,10 +348,18 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
           context,
           _nameController.text.trim(),
         );
+        if (mounted) Navigator.pop(context, true);
       } else {
-        CustomSnackbar.showSuccess(context, 'Customer updated successfully');
+        // CustomSnackbar is a dialog route, so popping right after showing it
+        // would close the toast instead of the form. Pop first, then show it
+        // on the navigator's context so it lands on the details page.
+        final navigator = Navigator.of(context);
+        navigator.pop(true);
+        CustomSnackbar.showSuccess(
+          navigator.context,
+          'Customer updated successfully',
+        );
       }
-      if (mounted) Navigator.pop(context, true);
     } else if (mounted && !success) {
       final errorMsg = customerProvider.error ?? 'Failed to save customer';
       final userMessage = OdooErrorHandler.toUserMessage(errorMsg);
@@ -437,7 +446,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                       HugeIcon(
                         icon: HugeIcons.strokeRoundedCamera02,
                         size: 20,
-                        color: isDark ? Colors.white : primaryColor,
+                        color: primaryColor,
                       ),
                       const SizedBox(width: 16),
                       Text(
@@ -474,7 +483,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                       HugeIcon(
                         icon: HugeIcons.strokeRoundedImageCrop,
                         size: 20,
-                        color: isDark ? Colors.white : primaryColor,
+                        color: primaryColor,
                       ),
                       const SizedBox(width: 16),
                       Text(
@@ -502,13 +511,21 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
   }
 
   void _showBusinessCardScanner() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final labelStyle = TextStyle(
+      fontSize: 16,
+      color: isDark ? Colors.white : Colors.black87,
+    );
+
     showModalBottomSheet(
       context: context,
+      // The app theme leaves sheets transparent, so without its own
+      // background the options would sit straight on top of the form.
+      backgroundColor: isDark ? AppTheme.darkSurface : Colors.grey[50],
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
+      builder: (sheetContext) {
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -524,13 +541,9 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                 ),
               ),
               InkWell(
-                onTap: () async {
-                  Navigator.pop(context);
-                  final data = await Provider.of<CustomerFormProvider>(
-                    context,
-                    listen: false,
-                  ).scanBusinessCard(context, ImageSource.camera);
-                  if (data != null) _applyOcrData(data);
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _scanBusinessCard(ImageSource.camera);
                 },
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -545,10 +558,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                         color: isDark ? Colors.white : Colors.black87,
                       ),
                       const SizedBox(width: 16),
-                      const Text(
-                        'Scan with Camera',
-                        style: TextStyle(fontSize: 16),
-                      ),
+                      Text('Scan with Camera', style: labelStyle),
                     ],
                   ),
                 ),
@@ -559,13 +569,9 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                 color: isDark ? Colors.grey[800] : Colors.grey[200],
               ),
               InkWell(
-                onTap: () async {
-                  Navigator.pop(context);
-                  final data = await Provider.of<CustomerFormProvider>(
-                    context,
-                    listen: false,
-                  ).scanBusinessCard(context, ImageSource.gallery);
-                  if (data != null) _applyOcrData(data);
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _scanBusinessCard(ImageSource.gallery);
                 },
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -580,10 +586,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                         color: isDark ? Colors.white : Colors.black87,
                       ),
                       const SizedBox(width: 16),
-                      const Text(
-                        'Scan from Gallery',
-                        style: TextStyle(fontSize: 16),
-                      ),
+                      Text('Scan from Gallery', style: labelStyle),
                     ],
                   ),
                 ),
@@ -594,6 +597,16 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
         );
       },
     );
+  }
+
+  /// Runs the scan on the form's context, not the sheet's: the sheet is gone
+  /// by the time the camera-permission prompts need somewhere to show.
+  Future<void> _scanBusinessCard(ImageSource source) async {
+    final data = await Provider.of<CustomerFormProvider>(
+      context,
+      listen: false,
+    ).scanBusinessCard(context, source);
+    if (data != null && mounted) _applyOcrData(data);
   }
 
   void _applyOcrData(Map<String, dynamic> data) {
@@ -627,7 +640,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                 widget.isEditing ? 'Edit Customer' : 'Create Customer',
               ),
               backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-              foregroundColor: isDark ? Colors.white : primaryColor,
+              foregroundColor: primaryColor,
               elevation: 0,
               leading: IconButton(
                 onPressed: () => Navigator.pop(context),
@@ -656,7 +669,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                 widget.isEditing ? 'Edit Customer' : 'Create Customer',
               ),
               backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-              foregroundColor: isDark ? Colors.white : primaryColor,
+              foregroundColor: primaryColor,
               elevation: 0,
               leading: IconButton(
                 onPressed: () => Navigator.pop(context),
@@ -680,7 +693,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                     widget.isEditing ? 'Edit Customer' : 'Create Customer',
                   ),
                   backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-                  foregroundColor: isDark ? Colors.white : primaryColor,
+                  foregroundColor: primaryColor,
                   elevation: 0,
                   leading: IconButton(
                     onPressed: () => Navigator.pop(context),
@@ -718,7 +731,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                     widget.isEditing ? 'Edit Customer' : 'Create Customer',
                   ),
                   backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-                  foregroundColor: isDark ? Colors.white : primaryColor,
+                  foregroundColor: primaryColor,
                   elevation: 0,
                   leading: IconButton(
                     onPressed: () =>
@@ -811,7 +824,6 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                                 children: [
                                   Checkbox(
                                     value: _isCompany,
-                                    activeColor: AppTheme.primaryColor,
                                     onChanged: (v) =>
                                         setState(() => _isCompany = v ?? false),
                                   ),
@@ -996,46 +1008,21 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
                             ],
                           ),
 
-                          const SizedBox(height: 8),
-                          SafeArea(
-                            child: ListenableBuilder(
-                              listenable: _textFields,
-                              builder: (context, _) => Consumer<CustomerProvider>(
-                                builder: (context, customerProvider, child) {
-                                  final isBusy =
-                                      customerProvider.isLoading ||
-                                      formProvider.isOcrLoading;
-                                  // Already saved, or an edit that changes
-                                  // nothing — there is nothing to submit.
-                                  final nothingToSave =
-                                      _hasBeenSaved ||
-                                      (widget.isEditing &&
-                                          !hasUnsavedData &&
-                                          formProvider.pickedImage == null);
-                                  return MoboSubmitButton(
-                                    label: widget.isEditing
-                                        ? 'Save Changes'
-                                        : 'Create Customer',
-                                    loadingLabel: widget.isEditing
-                                        ? 'Saving Changes'
-                                        : 'Creating Customer',
-                                    isLoading: isBusy,
-                                    isReady:
-                                        !nothingToSave &&
-                                        _nameController.text.trim().isNotEmpty,
-                                    onPressed: nothingToSave ? null : _save,
-                                  );
-                                },
-                              ),
-                            ),
+                          // Room to scroll the last card clear of the Scan Card
+                          // button, which only shows when creating.
+                          SizedBox(
+                            height: widget.isEditing
+                                ? 8
+                                : AppSpacing.fabClearance,
                           ),
-                          // Room to scroll the submit button clear of the
-                          // Scan Card button, which only shows when creating.
-                          SizedBox(height: widget.isEditing ? 40 : 96),
                         ],
                       ),
                     ),
                   ),
+                ),
+                // Pinned under the form so saving never needs a scroll.
+                bottomNavigationBar: PinnedActionBar(
+                  child: _buildSaveButton(formProvider),
                 ),
                 floatingActionButton: widget.isEditing
                     ? null
@@ -1052,6 +1039,35 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
           },
         );
       },
+    );
+  }
+
+  Widget _buildSaveButton(CustomerFormProvider formProvider) {
+    return ListenableBuilder(
+      listenable: _textFields,
+      builder: (context, _) => Consumer<CustomerProvider>(
+        builder: (context, customerProvider, child) {
+          final isBusy =
+              customerProvider.isLoading || formProvider.isOcrLoading;
+          // Already saved, or an edit that changes nothing — there is nothing
+          // to submit.
+          final nothingToSave =
+              _hasBeenSaved ||
+              (widget.isEditing &&
+                  !hasUnsavedData &&
+                  formProvider.pickedImage == null);
+          return MoboSubmitButton(
+            label: widget.isEditing ? 'Save Changes' : 'Create Customer',
+            loadingLabel: widget.isEditing
+                ? 'Saving Changes'
+                : 'Creating Customer',
+            isLoading: isBusy,
+            isReady:
+                !nothingToSave && _nameController.text.trim().isNotEmpty,
+            onPressed: nothingToSave ? null : _save,
+          );
+        },
+      ),
     );
   }
 
@@ -1082,15 +1098,15 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
         backgroundImage: MemoryImage(base64Decode(widget.customer!.image128!)),
       );
     } else {
+      // A neutral grey placeholder, so the brand-coloured add button beside it
+      // is the one thing that draws the eye.
       photoWidget = CircleAvatar(
         radius: 48,
-        backgroundColor: isDark
-            ? Colors.grey.shade200
-            : primaryColor.withOpacity(.1),
+        backgroundColor: Colors.grey.shade200,
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedImage03,
           size: 48,
-          color: isDark ? Colors.grey.shade800 : primaryColor,
+          color: isDark ? Colors.grey.shade800 : Colors.grey.shade500,
         ),
       );
     }
@@ -1108,7 +1124,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
               borderRadius: BorderRadius.circular(24),
               child: CircleAvatar(
                 radius: 18,
-                backgroundColor: isDark ? Colors.grey : primaryColor,
+                backgroundColor: primaryColor,
                 child: const HugeIcon(
                   icon: HugeIcons.strokeRoundedImageAdd01,
                   color: Colors.white,
@@ -1180,7 +1196,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen>
         forceMaterialTransparency: true,
         title: Text(widget.isEditing ? 'Edit Customer' : 'Create Customer'),
         backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-        foregroundColor: isDark ? Colors.white : primaryColor,
+        foregroundColor: primaryColor,
         elevation: 0,
         leading: IconButton(
           onPressed: () => Navigator.pop(context),

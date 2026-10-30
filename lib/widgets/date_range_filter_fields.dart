@@ -33,7 +33,6 @@ class DateRangeFilterFields extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final hasError = !isValid(startDate, endDate);
     final lastDate = DateTime.now().add(const Duration(days: 365));
 
@@ -42,7 +41,6 @@ class DateRangeFilterFields extends StatelessWidget {
       children: [
         _buildField(
           context,
-          isDark: isDark,
           hasError: hasError,
           value: startDate,
           label: 'From',
@@ -61,7 +59,6 @@ class DateRangeFilterFields extends StatelessWidget {
         const SizedBox(height: 8),
         _buildField(
           context,
-          isDark: isDark,
           hasError: hasError,
           value: endDate,
           label: 'To',
@@ -96,7 +93,6 @@ class DateRangeFilterFields extends StatelessWidget {
 
   Widget _buildField(
     BuildContext context, {
-    required bool isDark,
     required bool hasError,
     required DateTime? value,
     required String label,
@@ -104,47 +100,77 @@ class DateRangeFilterFields extends StatelessWidget {
     required VoidCallback onTap,
     required VoidCallback onClear,
   }) {
-    final iconColor = isDark ? Colors.grey[400] : Colors.grey[600];
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final iconColor = isDark ? Colors.white70 : Colors.grey[600];
+    final borderRadius = BorderRadius.circular(8);
+    // A picked date reads like a [FilterActiveChip]: Mobo text and outline.
+    // An empty one, like an unselected option chip.
+    final isSet = value != null;
+    final activeColor = isDark
+        ? AppTheme.darkActiveText
+        : AppTheme.primaryColor;
+    final fill = !isDark
+        ? AppTheme.primaryTintSolid
+        : (isSet ? AppTheme.darkActiveFill : AppTheme.darkOptionFill);
+    final outline = isSet
+        ? (isDark
+              ? AppTheme.darkActiveBorder
+              : AppTheme.primaryColor.withValues(alpha: 0.3))
+        : (isDark ? AppTheme.darkOptionBorder : Colors.grey[300]!);
 
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: isDark ? Colors.grey[850] : Colors.grey[50],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: hasError
-                ? AppTheme.error
-                : (isDark ? Colors.grey[700]! : Colors.grey[300]!),
-          ),
-        ),
-        child: Row(
-          children: [
-            HugeIcon(
-              icon: HugeIcons.strokeRoundedCalendar03,
-              size: 16,
-              color: iconColor,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                value != null
-                    ? '$label: ${DateFormat('MMM dd, yyyy').format(value)}'
-                    : placeholder,
-                style: TextStyle(
-                  color: value != null
-                      ? (isDark ? Colors.white : Colors.grey[800])
-                      : iconColor,
+    // A fixed height, so the field is the same size empty or filled — an
+    // IconButton inside the row would pull it up to its own 48px tap target.
+    return Material(
+      color: fill,
+      shape: RoundedRectangleBorder(
+        borderRadius: borderRadius,
+        side: BorderSide(color: hasError ? AppTheme.error : outline),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: borderRadius,
+        child: SizedBox(
+          height: 44,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 14, right: 6),
+            child: Row(
+              children: [
+                HugeIcon(
+                  icon: HugeIcons.strokeRoundedCalendar03,
+                  size: 16,
+                  color: isSet ? activeColor : iconColor,
                 ),
-              ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    value != null
+                        ? '$label: ${DateFormat('MMM dd, yyyy').format(value)}'
+                        : placeholder,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: isSet ? FontWeight.w500 : FontWeight.w400,
+                      color: isSet ? activeColor : iconColor,
+                    ),
+                  ),
+                ),
+                if (isSet)
+                  InkResponse(
+                    onTap: onClear,
+                    radius: 18,
+                    child: SizedBox.square(
+                      dimension: 32,
+                      child: Icon(
+                        Icons.clear,
+                        size: 16,
+                        color: isDark ? activeColor : iconColor,
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            if (value != null)
-              IconButton(
-                onPressed: onClear,
-                icon: Icon(Icons.clear, size: 16, color: iconColor),
-              ),
-          ],
+          ),
         ),
       ),
     );

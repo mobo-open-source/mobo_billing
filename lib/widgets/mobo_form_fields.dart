@@ -13,8 +13,16 @@ class MoboFormCard extends StatelessWidget {
   final String title;
   final List<Widget> children;
 
-  const MoboFormCard({required this.title, required this.children, Key? key})
-    : super(key: key);
+  /// Height of the divider under the title. Null keeps the theme's 16px
+  /// breathing room; pass 1 for the tight hairline the CRM forms use.
+  final double? dividerHeight;
+
+  const MoboFormCard({
+    required this.title,
+    required this.children,
+    this.dividerHeight,
+    Key? key,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +51,7 @@ class MoboFormCard extends StatelessWidget {
             ),
           ),
           Divider(
+            height: dividerHeight,
             color: isDark ? Colors.grey[700] : Colors.grey.shade200,
             indent: 10,
             endIndent: 10,
@@ -223,14 +232,19 @@ class MoboDateField extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.md),
           child: Container(
             // Same gutter/icon/gap as AppFormTheme.inputDecoration, so a date
-            // field lines up with the text fields and dropdowns above it.
+            // field lines up with the text fields and dropdowns above it. The
+            // Container pads its child by the 1px border, so the padding here
+            // is 1px short of theirs to land on the same size.
             padding: const EdgeInsets.symmetric(
-              vertical: 14,
-              horizontal: AppFormTheme.fieldGutter,
+              vertical: 13,
+              horizontal: AppFormTheme.fieldGutter - 1,
             ),
             decoration: BoxDecoration(
               color: AppFormTheme.inputFill(isDark),
               borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(
+                color: AppFormTheme.restingBorderColor(isDark),
+              ),
             ),
             child: Row(
               children: [
@@ -370,6 +384,11 @@ class MoboInlineDropdown<T> extends StatefulWidget {
   /// Shown as a trailing clear button when there is a selection.
   final VoidCallback? onClear;
 
+  /// Told when the result panel opens (`true`) or closes (`false`), so a form
+  /// can keep content that belongs under the field out of the way while the
+  /// panel is up.
+  final ValueChanged<bool>? onOpenChanged;
+
   final String emptyText;
   final String? Function(String?)? validator;
   final bool enabled;
@@ -386,6 +405,7 @@ class MoboInlineDropdown<T> extends StatefulWidget {
     this.leadingBuilder,
     this.isItemSelected,
     this.onClear,
+    this.onOpenChanged,
     this.leadingIcon,
     this.isRequired = false,
     this.emptyText = 'No records found',
@@ -434,6 +454,13 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>>
 
   @override
   void dispose() {
+    // A parent mirroring the open state would otherwise be left on "open" if
+    // this field is torn down with its panel showing. Deferred, because the
+    // parent can't be rebuilt while the tree is being unmounted.
+    final onOpenChanged = widget.onOpenChanged;
+    if (_isOpen && onOpenChanged != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => onOpenChanged(false));
+    }
     WidgetsBinding.instance.removeObserver(this);
     _debounce?.cancel();
     _controller.dispose();
@@ -453,6 +480,7 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>>
       _isOpen = true;
       _controller.clear();
     });
+    widget.onOpenChanged?.call(true);
     _showKeyboard();
     _search('');
     _revealPanel();
@@ -517,6 +545,7 @@ class _MoboInlineDropdownState<T> extends State<MoboInlineDropdown<T>>
       _controller.text = widget.selectedLabel ?? '';
     });
     _focusNode.unfocus();
+    widget.onOpenChanged?.call(false);
   }
 
   void _onChanged(String query) {
@@ -787,10 +816,8 @@ class MoboSubmitButton extends StatelessWidget {
 
     final background = isFilled
         ? AppTheme.primaryColor
-        : (isDark ? Colors.grey[700]! : Colors.grey[300]!);
-    final foreground = isFilled
-        ? Colors.white
-        : (isDark ? Colors.grey[400]! : Colors.grey[500]!);
+        : (isDark ? Colors.grey[700]! : AppTheme.disabledButtonFill);
+    final foreground = isFilled ? Colors.white : AppTheme.disabledButtonText;
 
     return GestureDetector(
       onTap: isLoading ? null : onPressed,

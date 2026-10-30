@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../providers/customer_provider.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/filter_badges.dart';
-import '../../widgets/filter_chip_button.dart';
+import '../../widgets/filter_sheet.dart';
+import '../../widgets/group_section_card.dart';
 import '../../widgets/mobo_search_field.dart';
 import '../../widgets/customer_list_tile.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
@@ -23,6 +24,7 @@ import '../../models/customer.dart';
 import '../../widgets/custom_snackbar.dart';
 import 'package:intl/intl.dart';
 import '../../widgets/date_range_filter_fields.dart';
+import '../../widgets/pagination_bar.dart';
 
 class CustomersScreen extends StatefulWidget {
   final bool autoFocusSearch;
@@ -117,11 +119,11 @@ class _CustomersScreenState extends State<CustomersScreen> {
             _loadData();
           }
         },
-        backgroundColor: isDark ? Colors.white : Theme.of(context).primaryColor,
+        backgroundColor: Theme.of(context).primaryColor,
         tooltip: 'Create Customer',
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedUserAdd01,
-          color: isDark ? Colors.black : Colors.white,
+          color: Colors.white,
         ),
       ),
       body: Consumer<CustomerProvider>(
@@ -272,95 +274,17 @@ class _CustomersScreenState extends State<CustomersScreen> {
   }
 
   Widget _buildTopPaginationBar(CustomerProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final paginationText = provider.isGrouped
-        ? '${provider.totalCount}/${provider.totalCount}'
-        : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}';
-
-    return Container(
-      padding: const EdgeInsets.only(right: 0, top: 4, bottom: 4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  paginationText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.grey[300] : Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (!provider.isGrouped) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasPreviousPage && !provider.isLoading)
-                      ? provider.goToPreviousPage
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowLeft01,
-                      size: 20,
-                      color: (provider.hasPreviousPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasNextPage && !provider.isLoading)
-                      ? provider.goToNextPage
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowRight01,
-                      size: 20,
-                      color: (provider.hasNextPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PaginationBar(
+      totalCount: provider.totalCount,
+      rangeText: provider.isGrouped
+          ? '${provider.totalCount}/${provider.totalCount}'
+          : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}',
+      showArrows: !provider.isGrouped,
+      hasPrevious: provider.hasPreviousPage,
+      hasNext: provider.hasNextPage,
+      isLoading: provider.isLoading,
+      onPrevious: provider.goToPreviousPage,
+      onNext: provider.goToNextPage,
     );
   }
 
@@ -407,44 +331,20 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
       return ListView.builder(
         controller: _scrollController,
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.fabClearance),
         itemCount: groups.length,
         itemBuilder: (context, index) {
           final group = groups[index];
           final groupKey = group.key;
           final count = group.value;
           final isExpanded = _expandedGroups[groupKey] ?? false;
+          final loadedCustomers = provider.loadedGroups[groupKey];
 
-          Widget? expandedContent;
-          if (isExpanded) {
-            if (provider.loadedGroups.containsKey(groupKey)) {
-              expandedContent = Column(
-                children: provider.loadedGroups[groupKey]!
-                    .map(
-                      (customer) => Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8.0,
-                          vertical: 4.0,
-                        ),
-                        child: _buildCustomerCard(customer),
-                      ),
-                    )
-                    .toList(),
-              );
-            } else {
-              expandedContent = const Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-          }
-
-          return _buildOdooStyleGroupTile(
-            context,
-            groupKey,
-            count,
-            isExpanded,
-            () {
+          return GroupSectionCard(
+            title: groupKey,
+            subtitle: '$count customer${count != 1 ? 's' : ''}',
+            isExpanded: isExpanded,
+            onToggle: () {
               setState(() {
                 _expandedGroups[groupKey] = !isExpanded;
               });
@@ -452,7 +352,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 provider.loadGroupContacts(groupKey);
               }
             },
-            expandedContent: expandedContent,
+            isLoading: loadedCustomers == null,
+            body: Column(
+              children: [
+                for (final customer in loadedCustomers ?? const <Customer>[])
+                  _buildCustomerCard(customer),
+              ],
+            ),
           );
         },
       );
@@ -460,7 +366,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, AppSpacing.fabClearance),
       itemCount: customers.length,
       itemBuilder: (context, index) {
         final customer = customers[index];
@@ -711,7 +617,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
             ListTile(
               leading: HugeIcon(
                 icon: HugeIcons.strokeRoundedMessage01,
-                color: isDark ? Colors.white : primaryColor,
+                color: primaryColor,
               ),
               title: Text(
                 'System Messenger',
@@ -824,446 +730,137 @@ class _CustomersScreenState extends State<CustomersScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      isDismissible: true,
-      enableDrag: true,
-      builder: (context) => DefaultTabController(
-        length: 2,
-        child: StatefulBuilder(
-          builder: (context, setDialogState) {
-            final theme = Theme.of(context);
-            final isDark = theme.brightness == Brightness.dark;
-
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.8,
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF232323) : Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
-                ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Filter & Group By',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                color: isDark ? Colors.white : Colors.black87,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: Icon(
-                              Icons.close,
-                              color: isDark ? Colors.white : Colors.black54,
-                            ),
-                            splashRadius: 20,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.grey[800] : Colors.grey[100],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: TabBar(
-                        indicator: BoxDecoration(
-                          color: theme.primaryColor,
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: theme.primaryColor.withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        indicatorPadding: const EdgeInsets.all(4),
-                        indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor: Colors.transparent,
-                        labelColor: Colors.white,
-                        unselectedLabelColor: isDark
-                            ? Colors.grey[400]
-                            : Colors.grey[600],
-                        labelStyle: GoogleFonts.manrope(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                        unselectedLabelStyle: GoogleFonts.manrope(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                        tabs: const [
-                          Tab(height: 48, text: 'Filter'),
-                          Tab(height: 48, text: 'Group By'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    Expanded(
-                      child: TabBarView(
-                        children: [
-                          _buildCustomerFilterTab(
-                            context,
-                            setDialogState,
-                            isDark,
-                            theme,
-                            provider,
-                            tempState,
-                          ),
-                          _buildCustomerGroupByTab(
-                            context,
-                            setDialogState,
-                            isDark,
-                            theme,
-                            provider,
-                            tempState,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.grey[850] : Colors.grey[50],
-                        border: Border(
-                          top: BorderSide(
-                            color: isDark
-                                ? Colors.grey[700]!
-                                : Colors.grey[200]!,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => _clearAllFilters(
-                                setDialogState,
-                                tempState,
-                                provider,
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: isDark
-                                    ? Colors.white
-                                    : Colors.black87,
-                                side: BorderSide(
-                                  color: isDark
-                                      ? Colors.grey[600]!
-                                      : Colors.grey[300]!,
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                              child: const Text('Clear All'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 2,
-                            child: ElevatedButton(
-                              onPressed: () =>
-                                  _applyFiltersAndGroupBy(tempState, provider),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: theme.primaryColor,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                elevation: 0,
-                                shadowColor: Colors.transparent,
-                              ),
-                              child: const Text('Apply'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => FilterSheetShell(
+          filterTab: _buildCustomerFilterTab(setDialogState, tempState),
+          groupByTab: FilterGroupByTab(
+            heading: 'Group customers by',
+            options: provider.groupByOptions,
+            selected: tempState['selectedGroupBy'],
+            loadingWhenEmpty: true,
+            onChanged: (value) => setDialogState(
+              () => tempState['selectedGroupBy'] = value,
+            ),
+          ),
+          onClear: () => _clearAllFilters(setDialogState, tempState, provider),
+          onApply: () => _applyFiltersAndGroupBy(tempState, provider),
         ),
       ),
     );
   }
 
   Widget _buildCustomerFilterTab(
-    BuildContext context,
     StateSetter setDialogState,
-    bool isDark,
-    ThemeData theme,
-    CustomerProvider provider,
     Map<String, dynamic> tempState,
   ) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (tempState['showActiveOnly'] == false ||
-              tempState['showCompaniesOnly'] == true ||
-              tempState['showIndividualsOnly'] == true ||
-              tempState['showCreditBreachesOnly'] == true ||
-              tempState['startDate'] != null ||
-              tempState['endDate'] != null) ...[
-            Text(
-              'Active Filters',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: isDark ? Colors.white : theme.primaryColor,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                // "Active Only" defaults to ON — hiding archived customers
-                // is the baseline, not something the user applied — so the
-                // deviation worth surfacing (and offering to undo) here is
-                // turning it OFF, i.e. choosing to include archived ones too.
-                if (tempState['showActiveOnly'] == false)
-                  Chip(
-                    label: const Text(
-                      'Including Archived',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showActiveOnly'] = true,
-                    ),
-                  ),
-                if (tempState['showCompaniesOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Companies',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showCompaniesOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showIndividualsOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Individuals',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showIndividualsOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showCreditBreachesOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Credit Breaches',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showCreditBreachesOnly'] = false,
-                    ),
-                  ),
-                if (tempState['startDate'] != null ||
-                    tempState['endDate'] != null)
-                  Chip(
-                    label: Text(
-                      'Date: ${tempState['startDate'] != null ? DateFormat('MMM dd').format(tempState['startDate']) : '...'} - ${tempState['endDate'] != null ? DateFormat('MMM dd, yyyy').format(tempState['endDate']) : '...'}',
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(() {
-                      tempState['startDate'] = null;
-                      tempState['endDate'] = null;
-                    }),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
+    final DateTime? start = tempState['startDate'];
+    final DateTime? end = tempState['endDate'];
 
-          Text(
-            'Status',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilterChipButton(
-                label: 'Active Only',
-                selected: tempState['showActiveOnly'] == true,
-                onTap: () => setDialogState(
-                  () => tempState['showActiveOnly'] =
-                      tempState['showActiveOnly'] != true,
-                ),
+    return FilterTabBody(
+      children: [
+        FilterActiveFilters(
+          chips: [
+            // "Active Only" defaults to ON — hiding archived customers is the
+            // baseline, not something the user applied — so the deviation worth
+            // surfacing (and offering to undo) here is turning it OFF, i.e.
+            // choosing to include archived ones too.
+            if (tempState['showActiveOnly'] == false)
+              FilterActiveChip(
+                label: 'Including Archived',
+                onRemove: () =>
+                    setDialogState(() => tempState['showActiveOnly'] = true),
               ),
-              FilterChipButton(
-                label: 'Credit Breaches',
-                selected: tempState['showCreditBreachesOnly'] == true,
-                onTap: () => setDialogState(
-                  () => tempState['showCreditBreachesOnly'] =
-                      tempState['showCreditBreachesOnly'] != true,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          Text(
-            'Type',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Companies and Individuals exclude each other.
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilterChipButton(
+            if (tempState['showCompaniesOnly'] == true)
+              FilterActiveChip(
                 label: 'Companies',
-                selected: tempState['showCompaniesOnly'] == true,
-                onTap: () => setDialogState(() {
-                  final val = tempState['showCompaniesOnly'] != true;
-                  tempState['showCompaniesOnly'] = val;
-                  if (val) tempState['showIndividualsOnly'] = false;
-                }),
-              ),
-              FilterChipButton(
-                label: 'Individuals',
-                selected: tempState['showIndividualsOnly'] == true,
-                onTap: () => setDialogState(() {
-                  final val = tempState['showIndividualsOnly'] != true;
-                  tempState['showIndividualsOnly'] = val;
-                  if (val) tempState['showCompaniesOnly'] = false;
-                }),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          Text(
-            'Date Range',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          DateRangeFilterFields(
-            startDate: tempState['startDate'],
-            endDate: tempState['endDate'],
-            onStartChanged: (date) =>
-                setDialogState(() => tempState['startDate'] = date),
-            onEndChanged: (date) =>
-                setDialogState(() => tempState['endDate'] = date),
-          ),
-          const SizedBox(height: 20),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCustomerGroupByTab(
-    BuildContext context,
-    StateSetter setDialogState,
-    bool isDark,
-    ThemeData theme,
-    CustomerProvider provider,
-    Map<String, dynamic> tempState,
-  ) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-          Text(
-            'Group customers by',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Single choice: "None" shows a plain list.
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilterChipButton(
-                label: 'None',
-                selected: tempState['selectedGroupBy'] == null,
-                onTap: () =>
-                    setDialogState(() => tempState['selectedGroupBy'] = null),
-              ),
-              for (final entry in provider.groupByOptions.entries)
-                FilterChipButton(
-                  label: entry.value,
-                  selected: tempState['selectedGroupBy'] == entry.key,
-                  onTap: () => setDialogState(
-                    () => tempState['selectedGroupBy'] = entry.key,
-                  ),
+                onRemove: () => setDialogState(
+                  () => tempState['showCompaniesOnly'] = false,
                 ),
-            ],
-          ),
-          if (provider.groupByOptions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Center(child: Text("Loading options...")),
+              ),
+            if (tempState['showIndividualsOnly'] == true)
+              FilterActiveChip(
+                label: 'Individuals',
+                onRemove: () => setDialogState(
+                  () => tempState['showIndividualsOnly'] = false,
+                ),
+              ),
+            if (tempState['showCreditBreachesOnly'] == true)
+              FilterActiveChip(
+                label: 'Credit Breaches',
+                onRemove: () => setDialogState(
+                  () => tempState['showCreditBreachesOnly'] = false,
+                ),
+              ),
+            if (start != null || end != null)
+              FilterActiveChip(
+                label:
+                    'Date: ${start != null ? DateFormat('MMM dd').format(start) : '...'} - ${end != null ? DateFormat('MMM dd, yyyy').format(end) : '...'}',
+                onRemove: () => setDialogState(() {
+                  tempState['startDate'] = null;
+                  tempState['endDate'] = null;
+                }),
+              ),
+          ],
+        ),
+        const FilterSectionTitle('Status'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChoiceChip(
+              label: 'Active Only',
+              selected: tempState['showActiveOnly'] == true,
+              onTap: () => setDialogState(
+                () => tempState['showActiveOnly'] =
+                    tempState['showActiveOnly'] != true,
+              ),
             ),
-          const SizedBox(height: 24),
-        ],
-      ),
+            FilterChoiceChip(
+              label: 'Credit Breaches',
+              selected: tempState['showCreditBreachesOnly'] == true,
+              onTap: () => setDialogState(
+                () => tempState['showCreditBreachesOnly'] =
+                    tempState['showCreditBreachesOnly'] != true,
+              ),
+            ),
+          ],
+        ),
+        const FilterSectionTitle('Type'),
+        // Companies and Individuals exclude each other.
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChoiceChip(
+              label: 'Companies',
+              selected: tempState['showCompaniesOnly'] == true,
+              onTap: () => setDialogState(() {
+                final val = tempState['showCompaniesOnly'] != true;
+                tempState['showCompaniesOnly'] = val;
+                if (val) tempState['showIndividualsOnly'] = false;
+              }),
+            ),
+            FilterChoiceChip(
+              label: 'Individuals',
+              selected: tempState['showIndividualsOnly'] == true,
+              onTap: () => setDialogState(() {
+                final val = tempState['showIndividualsOnly'] != true;
+                tempState['showIndividualsOnly'] = val;
+                if (val) tempState['showCompaniesOnly'] = false;
+              }),
+            ),
+          ],
+        ),
+        const FilterSectionTitle('Date Range'),
+        DateRangeFilterFields(
+          startDate: start,
+          endDate: end,
+          onStartChanged: (date) =>
+              setDialogState(() => tempState['startDate'] = date),
+          onEndChanged: (date) =>
+              setDialogState(() => tempState['endDate'] = date),
+        ),
+      ],
     );
   }
 
@@ -1372,87 +969,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
               color: isDark ? Colors.grey[400] : Colors.grey[600],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOdooStyleGroupTile(
-    BuildContext context,
-    String groupTitle,
-    int count,
-    bool isExpanded,
-    VoidCallback onTap, {
-    Widget? expandedContent,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
-        ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.08),
-            ),
-        ],
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            groupTitle,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: isDark ? Colors.white : Colors.black87,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '$count customer${count != 1 ? 's' : ''}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: isDark
-                                  ? Colors.grey[400]
-                                  : Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (isExpanded && expandedContent != null) expandedContent,
         ],
       ),
     );

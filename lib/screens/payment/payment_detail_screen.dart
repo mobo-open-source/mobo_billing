@@ -185,6 +185,17 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
+          // Odoo only allows an account.payment to be modified while it is
+          // still a draft, so the edit action follows the same rule.
+          if (state == 'draft')
+            IconButton(
+              icon: HugeIcon(
+                icon: HugeIcons.strokeRoundedPencilEdit02,
+                color: isDark ? Colors.grey[400]! : Colors.grey[600]!,
+              ),
+              tooltip: 'Edit Payment',
+              onPressed: () => _editPayment(payment),
+            ),
           PopupMenuButton<String>(
             icon: Icon(
               Icons.more_vert,
@@ -296,15 +307,13 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: isDark
-                          ? Colors.white.withOpacity(.2)
-                          : _getStateColor(state).withOpacity(0.15),
+                      color: _getStateColor(state).withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
                       _getStateLabel(state),
                       style: GoogleFonts.manrope(
-                        color: isDark ? Colors.white : _getStateColor(state),
+                        color: _getStateColor(state),
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -316,7 +325,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
               Text(
                 customerName,
                 style: GoogleFonts.manrope(
-                  fontSize: 18,
+                  fontSize: 15,
                   fontWeight: FontWeight.w600,
                   color: isDark ? Colors.white : Colors.black87,
                 ),
@@ -331,7 +340,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                       Text(
                         'Amount',
                         style: GoogleFonts.manrope(
-                          fontSize: 14,
+                          fontSize: 13,
                           color: isDark ? Colors.grey[400] : Colors.grey[600],
                           fontWeight: FontWeight.w500,
                         ),
@@ -343,7 +352,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                           listen: false,
                         ).formatAmount(amount, currency: currencyCode),
                         style: GoogleFonts.manrope(
-                          fontSize: 20,
+                          fontSize: 17,
                           fontWeight: FontWeight.bold,
                           color: isDark ? Colors.grey[400] : Colors.black,
                         ),
@@ -356,7 +365,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                       Text(
                         'Date',
                         style: GoogleFonts.manrope(
-                          fontSize: 14,
+                          fontSize: 13,
                           color: isDark ? Colors.grey[400] : Colors.grey[600],
                           fontWeight: FontWeight.w500,
                         ),
@@ -367,7 +376,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                             ? DateFormat('dd MMM yyyy').format(payment.date!)
                             : 'N/A',
                         style: GoogleFonts.manrope(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
                           color: isDark ? Colors.white : Colors.black87,
                         ),
@@ -428,7 +437,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
           Text(
             'Payment Information',
             style: GoogleFonts.manrope(
-              fontSize: 16,
+              fontSize: 15,
               fontWeight: FontWeight.bold,
               color: isDark ? Colors.white : Colors.black87,
             ),
@@ -551,9 +560,6 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
         state ==
         (OdooSessionManager.serverMajorVersion >= 20 ? 'paid' : 'in_process');
 
-    // Odoo only allows an account.payment to be modified while it is in draft;
-    // a posted payment must be reset to draft first.
-    final canEdit = state == 'draft';
     final canConfirm = state == 'draft';
     final canMarkAsSent = inProcess && !isSent && paymentMethodCode == 'manual';
     final canUnmarkAsSent =
@@ -565,28 +571,6 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     final canSendEmail = true;
 
     return [
-      if (canEdit)
-        PopupMenuItem<String>(
-          value: 'edit_payment',
-          child: Row(
-            children: [
-              Icon(
-                Icons.edit_outlined,
-                color: isDark ? Colors.grey[300] : Colors.grey[800],
-                size: 20,
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Edit',
-                style: TextStyle(
-                  color: isDark ? Colors.white : Colors.black87,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
-        ),
       if (canConfirm)
         PopupMenuItem<String>(
           value: 'confirm_payment',
@@ -701,9 +685,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
         value: 'print_receipt',
         child: Row(
           children: [
-            Icon(
-              Icons.print,
-              color: isDark ? Colors.grey[300] : Colors.grey[800],
+            HugeIcon(
+              icon: HugeIcons.strokeRoundedPrinter,
+              color: isDark ? Colors.grey[300]! : Colors.grey[800]!,
               size: 20,
             ),
             const SizedBox(width: 12),
@@ -801,9 +785,6 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
 
   void _handleMenuSelection(String value, Payment payment) async {
     switch (value) {
-      case 'edit_payment':
-        await _editPayment(payment);
-        break;
       case 'confirm_payment':
         await _confirmPayment();
         break;
@@ -1343,9 +1324,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   LoadingAnimationWidget.fourRotatingDots(
-                    color: isDark
-                        ? Colors.white
-                        : Theme.of(context).primaryColor,
+                    color: Theme.of(context).primaryColor,
                     size: 50,
                   ),
                   const SizedBox(height: 24),
