@@ -163,7 +163,7 @@ class LoginLayout extends StatelessWidget {
       children: [
         Text(
           title,
-          style: GoogleFonts.montserrat(
+          style: GoogleFonts.manrope(
             fontWeight: FontWeight.w600,
             color: Colors.white,
             fontSize: 22,
@@ -223,6 +223,10 @@ class LoginTextField extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextFormField(
       cursorColor: Colors.black,
+      // The login theme's errorStyle is white (for the message on the dark
+      // background), and Flutter paints the cursor in that colour while the
+      // field shows an error — invisible on the white fill. Keep it black.
+      cursorErrorColor: Colors.black,
       style: GoogleFonts.manrope(
         fontSize: 14,
         fontWeight: FontWeight.w400,
@@ -276,13 +280,27 @@ class LoginTextField extends StatelessWidget {
                     : Colors.black54,
               )
             : null,
+        // Built like the prefix above: a 48x48 box with the glyph centred in
+        // it. Handing `InputDecoration` a bare icon let it size the suffix
+        // from its own constraints, so the error icon came out far larger
+        // than the 20px prefix it sits opposite.
         suffixIcon: hasError
-            ? HugeIcon(
-                icon: HugeIcons.strokeRoundedAlertCircle,
-                color: Colors.red,
-                size: 20,
+            ? SizedBox(
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: HugeIcon(
+                    icon: HugeIcons.strokeRoundedAlertCircle,
+                    color: Colors.red,
+                    size: 20,
+                  ),
+                ),
               )
             : suffixIcon,
+        suffixIconConstraints: const BoxConstraints(
+          minWidth: 48,
+          minHeight: 48,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -436,10 +454,16 @@ class _LoginDropdownFieldState extends State<LoginDropdownField> {
                     ),
                   ),
                   suffixIcon: showErrorIcon
-                      ? HugeIcon(
-                          icon: HugeIcons.strokeRoundedAlertCircle,
-                          color: Colors.red,
-                          size: 20,
+                      ? SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: Center(
+                            child: HugeIcon(
+                              icon: HugeIcons.strokeRoundedAlertCircle,
+                              color: Colors.red,
+                              size: 20,
+                            ),
+                          ),
                         )
                       : SizedBox(
                           width: 48,
@@ -517,8 +541,7 @@ class LoginErrorDisplay extends StatelessWidget {
                     Expanded(
                       child: Text(
                         error!,
-                        style: const TextStyle(
-                          fontFamily: 'Montserrat',
+                        style: GoogleFonts.manrope(
                           color: Colors.white,
                           fontSize: 12,
                           fontWeight: FontWeight.w400,
@@ -629,6 +652,8 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
   Widget build(BuildContext context) {
     return TextFormField(
       cursorColor: Colors.black,
+      // Stay black in error state too — see LoginTextField.
+      cursorErrorColor: Colors.black,
       style: GoogleFonts.manrope(
         fontSize: 14,
         fontWeight: FontWeight.w400,

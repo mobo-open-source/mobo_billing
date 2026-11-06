@@ -29,10 +29,14 @@ import 'package:mobo_billing/screens/payment/payment_records_screen.dart';
 import 'package:mobo_billing/services/connectivity_service.dart';
 import 'package:mobo_billing/services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../providers/currency_provider.dart';
 import '../CreditNotes/credit_notes_screen.dart';
 import 'package:mobo_billing/screens/payment/payment_detail_screen.dart';
+import 'package:mobo_billing/providers/navigation_provider.dart';
+import 'package:mobo_billing/utils/refresh_on_tab_select.dart';
+import 'package:mobo_billing/utils/app_route_observer.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -42,8 +46,21 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, RefreshOnTabSelect, RouteAware {
   late TabController _tabController;
+  PageRoute<dynamic>? _route;
+
+  /// Tab currently shown in Recent Activity, and which way the last switch
+  /// moved (1 = towards the right tab, -1 = towards the left) — the content
+  /// slides in from that side.
+  int _activeTab = 0;
+  int _tabDirection = 1;
+
+  @override
+  int get tabIndex => NavigationProvider.dashboardTab;
+
+  @override
+  Future<void> onTabSelected() => _loadData();
 
   @override
   void initState() {
@@ -56,13 +73,39 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute && route != _route) {
+      if (_route != null) appRouteObserver.unsubscribe(this);
+      _route = route;
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  /// A page opened over the dashboard (invoice, payment, create form…) was
+  /// closed — reload so edits made there show up instead of the old figures.
+  @override
+  void didPopNext() {
+    if (context.read<NavigationProvider>().currentIndex ==
+        NavigationProvider.dashboardTab) {
+      _loadData();
+    }
+  }
+
+  @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _tabController.dispose();
     super.dispose();
   }
 
   void _handleTabSelection() {
-    setState(() {});
+    if (_tabController.index == _activeTab) return;
+    setState(() {
+      _tabDirection = _tabController.index > _activeTab ? 1 : -1;
+      _activeTab = _tabController.index;
+    });
   }
 
   Future<void> _loadData() async {
@@ -73,6 +116,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       await Future.wait([
         invoiceProvider.loadDashboardData(),
         if (profileProvider.profile == null) profileProvider.loadProfile(),
+        _refreshRecentlyOpened(),
       ]).timeout(
         const Duration(seconds: 30),
         onTimeout: () {
@@ -81,7 +125,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           );
         },
       );
-    } on TimeoutException catch (e) {
+    } on TimeoutException {
+      // A timeout keeps whatever the dashboard already shows, with no error.
     } catch (e) {
       if (mounted && invoiceProvider.dashboardLoaded) {
         CustomSnackbar.showError(
@@ -92,6 +137,18 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
       }
     }
+  }
+
+  /// Re-reads the invoices / credit notes in the recently-opened list so their
+  /// titles follow the server (a draft opened earlier may have been posted).
+  Future<void> _refreshRecentlyOpened() async {
+    final lastOpenedProvider = context.read<LastOpenedProvider>();
+    final invoiceProvider = context.read<InvoiceProvider>();
+    await lastOpenedProvider.ensureLoaded();
+    final records = await invoiceProvider.fetchMoveSummaries(
+      lastOpenedProvider.documentIds,
+    );
+    await lastOpenedProvider.refreshDocuments(records);
   }
 
   @override
@@ -113,12 +170,16 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     return Consumer2<ConnectivityService, SessionService>(
       builder: (context, connectivityService, sessionService, child) {
+        // Offline with a cached snapshot: show the dashboard as it last looked
+        // rather than replacing it with a connection error.
         if (!connectivityService.isConnected) {
-          return ConnectionStatusWidget(
-            onRetry: _loadData,
-            customMessage:
-                'No internet connection. Please check your connection and try again.',
-          );
+          if (!provider.dashboardLoaded) {
+            return ConnectionStatusWidget(
+              onRetry: _loadData,
+              customMessage:
+                  'No internet connection. Please check your connection and try again.',
+            );
+          }
         }
 
         if (!sessionService.hasValidSession) {
@@ -165,6 +226,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildHeader(context, profileProvider, isDark),
+                      if (!connectivityService.isConnected ||
+                          provider.isShowingCachedDashboard)
+                        OfflineDataBanner(
+                          lastUpdated: provider.dashboardCacheUpdatedAt,
+                          onRetry: _loadData,
+                          message: connectivityService.isConnected
+                              ? "Couldn't refresh the dashboard"
+                              : null,
+                        ),
                       const SizedBox(height: 32),
                       _buildMetricsGrid(provider, isDark),
                       const SizedBox(height: 16),
@@ -176,7 +246,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                       const SizedBox(height: 16),
                       _buildRecentActivity(provider, isDark),
 
-                      const SizedBox(height: 100),
+                      // Clears the floating quick-actions button (56 + 16 margin)
+                      // with the 16 of screen padding below; the nav bar sits
+                      // outside the scroll view so needs no extra room.
+                      const SizedBox(height: 64),
                     ],
                   ),
                 ),
@@ -285,19 +358,20 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildMetricsGrid(InvoiceProvider provider, bool isDark) {
+    // No left margin, so the first card lines up with the heading above and
+    // the sections below; the 16px on the right keeps the gap between cards.
+    const cardMargin = EdgeInsets.only(top: 8, bottom: 8, right: 16);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4.0),
-          child: Text(
-            'Business Overview',
-            style: TextStyle(
-              fontSize: 18,
-              fontFamily: GoogleFonts.inter().fontFamily,
-              fontWeight: FontWeight.bold,
-              color: isDark ? Colors.white : Colors.black87,
-            ),
+        Text(
+          'Business Overview',
+          style: TextStyle(
+            fontSize: 18,
+            fontFamily: GoogleFonts.inter().fontFamily,
+            fontWeight: FontWeight.bold,
+            color: isDark ? Colors.white : Colors.black87,
           ),
         ),
         const SizedBox(height: 12),
@@ -308,6 +382,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             physics: const BouncingScrollPhysics(),
             children: [
               DashboardMetricCard(
+                margin: cardMargin,
                 title: 'Today\'s Sales',
                 value: context.read<CurrencyProvider>().formatAmount(
                   provider.todaysSales,
@@ -317,6 +392,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 isCompact: false,
               ),
               DashboardMetricCard(
+                margin: cardMargin,
                 title: 'Total Revenue',
                 value: context.read<CurrencyProvider>().formatAmount(
                   provider.totalRevenue,
@@ -326,6 +402,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 isCompact: false,
               ),
               DashboardMetricCard(
+                margin: cardMargin,
                 title: 'Pending',
                 value: context.read<CurrencyProvider>().formatAmount(
                   provider.pendingRevenue,
@@ -335,6 +412,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 isCompact: false,
               ),
               DashboardMetricCard(
+                margin: cardMargin,
                 title: 'Overdue',
                 value: context.read<CurrencyProvider>().formatAmount(
                   provider.overdueAmount,
@@ -344,13 +422,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                 isCompact: false,
               ),
               DashboardMetricCard(
+                margin: cardMargin,
                 title: 'Customers',
                 value: '${provider.totalCustomers}',
                 subtitle: 'Active customers',
                 accentColor: Colors.blue,
                 isCompact: false,
               ),
-              const SizedBox(width: 4),
             ],
           ),
         ),
@@ -437,23 +515,38 @@ class _DashboardScreenState extends State<DashboardScreen>
         const SizedBox(height: 16),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 300),
-          child: _tabController.index == 0
-              ? KeyedSubtree(
-                  key: const ValueKey('payments'),
-                  child: _buildRecentPaymentsList(
-                    provider.recentPayments,
-                    isDark,
-                  ),
-                )
-              : KeyedSubtree(
-                  key: const ValueKey('invoices'),
-                  child: _buildRecentInvoicesList(
-                    provider.recentInvoices,
-                    isDark,
-                  ),
-                ),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: _recentTabTransition,
+          // Top-aligned and unclipped so the lists of different heights don't
+          // jump around and the card shadows aren't cut off at the edges.
+          layoutBuilder: (currentChild, previousChildren) => Stack(
+            alignment: Alignment.topCenter,
+            clipBehavior: Clip.none,
+            children: [...previousChildren, ?currentChild],
+          ),
+          child: KeyedSubtree(
+            key: ValueKey(_activeTab),
+            child: _activeTab == 0
+                ? _buildRecentPaymentsList(provider.recentPayments, isDark)
+                : _buildRecentInvoicesList(provider.recentInvoices, isDark),
+          ),
         ),
       ],
+    );
+  }
+
+  /// Fade + short horizontal slide: the incoming list enters from the side of
+  /// the tab that was tapped while the outgoing one leaves the opposite way.
+  Widget _recentTabTransition(Widget child, Animation<double> animation) {
+    final isIncoming = child.key == ValueKey(_activeTab);
+    final begin = Offset(0.08 * _tabDirection * (isIncoming ? 1 : -1), 0);
+    return FadeTransition(
+      opacity: animation,
+      child: SlideTransition(
+        position: Tween<Offset>(begin: begin, end: Offset.zero).animate(animation),
+        child: child,
+      ),
     );
   }
 
@@ -472,9 +565,10 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     return ListView.separated(
       shrinkWrap: true,
+      clipBehavior: Clip.none,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: payments.length,
-      separatorBuilder: (context, index) => const SizedBox(height: 16),
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final payment = payments[index];
         final amount = (payment['amount'] as num?)?.toDouble() ?? 0.0;
@@ -500,17 +594,8 @@ class _DashboardScreenState extends State<DashboardScreen>
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
               color: isDark ? Colors.grey[850] : Colors.white,
-              borderRadius: BorderRadius.circular(16),
-
-              boxShadow: [
-                BoxShadow(
-                  color: isDark
-                      ? Colors.black26
-                      : Colors.black.withOpacity(0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: AppShadows.card,
             ),
             child: Row(
               children: [
@@ -522,8 +607,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                       Text(
                         _getValidTitle(payment['name']?.toString()),
                         style: TextStyle(
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white : Colors.black87,
+                          color: AppTheme.primaryColor,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -565,9 +651,10 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     return ListView.separated(
       shrinkWrap: true,
+      clipBehavior: Clip.none,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: invoices.length,
-      separatorBuilder: (context, index) => const SizedBox(height: 16),
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final invoice = invoices[index];
         final amount = invoice.amountTotal;
@@ -594,10 +681,11 @@ class _DashboardScreenState extends State<DashboardScreen>
             );
           },
           child: Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
               color: isDark ? Colors.grey[850] : Colors.white,
               borderRadius: BorderRadius.circular(12),
+              boxShadow: AppShadows.card,
             ),
             child: Row(
               children: [
@@ -607,10 +695,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _getValidTitle(invoice.name),
+                        invoice.displayName,
                         style: TextStyle(
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white : Colors.black87,
+                          color: AppTheme.primaryColor,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -618,7 +707,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                         children: [
                           Expanded(
                             child: Text(
-                              '$partnerName • $date',
+                              [
+                                partnerName,
+                                date,
+                              ].where((part) => part.isNotEmpty).join(' • '),
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isDark
@@ -930,7 +1022,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
         default:
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   void _navigateToPage(String route) {

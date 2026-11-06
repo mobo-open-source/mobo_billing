@@ -41,7 +41,7 @@ class DataLossWarningDialog extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               child: HugeIcon(
                 icon: HugeIcons.strokeRoundedAlert02,
-                color: isDark ? Colors.white : primaryColor,
+                color: primaryColor,
                 size: 32,
               ),
             ),

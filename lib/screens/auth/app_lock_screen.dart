@@ -59,7 +59,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
           });
         }
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _isAuthenticating = false;

@@ -21,19 +21,20 @@ import 'package:mobo_billing/providers/company_provider.dart';
 import 'package:mobo_billing/screens/login/server_setup_screen.dart';
 import 'package:mobo_billing/screens/main_app_screen.dart';
 import 'package:mobo_billing/theme/app_theme.dart';
+import 'package:mobo_billing/utils/app_route_observer.dart';
 import 'package:mobo_billing/services/biometric_service.dart';
-import 'package:mobo_billing/services/review_service.dart';
 import 'package:mobo_billing/screens/auth/app_lock_screen.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobo_billing/screens/others/get_started_screen.dart';
+import 'package:mobo_billing/widgets/module_missing_dialog.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   await BiometricService.initialize();
 
   runApp(const BillingApp());
@@ -73,11 +74,22 @@ class BillingApp extends StatelessWidget {
           return MaterialApp(
             title: 'Odoo Billing App',
             navigatorKey: navigatorKey,
+            navigatorObservers: [appRouteObserver],
             scaffoldMessengerKey: scaffoldMessengerKey,
             debugShowCheckedModeBanner: false,
             theme: themeProvider.lightTheme,
             darkTheme: themeProvider.darkTheme,
             themeMode: themeProvider.themeMode,
+            // A tap on anything that isn't itself tappable dismisses the
+            // keyboard. Flutter only does this for mouse taps, so on a phone
+            // the keyboard otherwise stays up — over the submit button —
+            // until the system back key. Buttons, fields and list tiles win
+            // the tap first, so they keep working as before.
+            builder: (context, child) => GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+              child: child,
+            ),
             home: const SplashScreen(),
             routes: {
               '/login': (context) => const ServerSetupScreen(),
@@ -154,7 +166,7 @@ class _SplashScreenState extends State<SplashScreen> {
           _proceedNext();
         }
       });
-    } catch (e) {
+    } catch (_) {
       await Future.delayed(const Duration(seconds: 1));
       if (mounted) _proceedNext();
     }
@@ -177,6 +189,17 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
 
     if (isLoggedIn) {
+      final isBillingInstalled = await authProvider.checkRequiredModules();
+
+      if (!isBillingInstalled) {
+        await authProvider.logout();
+        if (mounted) {
+          Navigator.of(context).pushReplacementNamed('/login');
+          showModuleMissingDialog(context);
+        }
+        return;
+      }
+
       final shouldPromptBiometric =
           await BiometricService.shouldPromptBiometric();
 

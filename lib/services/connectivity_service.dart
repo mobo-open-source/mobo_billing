@@ -43,7 +43,7 @@ class ConnectivityService extends ChangeNotifier {
     try {
       final results = await _connectivity.checkConnectivity();
       _updateConnectivityStatus(results);
-    } catch (e) {
+    } catch (_) {
       _isConnected = false;
       notifyListeners();
     }
@@ -63,7 +63,7 @@ class ConnectivityService extends ChangeNotifier {
     try {
       final results = await _connectivity.checkConnectivity();
       return !results.contains(ConnectivityResult.none);
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }

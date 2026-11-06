@@ -66,7 +66,7 @@ class RuntimePermissionService {
       }
 
       return true;
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         CustomSnackbar.showError(
           context,
@@ -120,7 +120,7 @@ class RuntimePermissionService {
       }
 
       return true;
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         CustomSnackbar.showError(
           context,
@@ -175,7 +175,7 @@ class RuntimePermissionService {
       }
 
       return true;
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         CustomSnackbar.showError(
           context,
@@ -229,7 +229,7 @@ class RuntimePermissionService {
       }
 
       return true;
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         CustomSnackbar.showError(context, 'Failed to request phone permission');
       }
@@ -294,7 +294,7 @@ class RuntimePermissionService {
       }
 
       return true;
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         CustomSnackbar.showError(
           context,

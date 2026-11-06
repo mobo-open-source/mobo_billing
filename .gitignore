@@ -84,3 +84,5 @@ shorebird_*.log
 sonar-project.properties
 sonar-flutter-plugin-*.jar
 
+# Local AI-assistant instructions (kept on disk, not published)
+CLAUDE.md

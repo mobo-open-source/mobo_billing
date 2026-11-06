@@ -6,8 +6,12 @@ import 'package:hugeicons/hugeicons.dart';
 import 'package:provider/provider.dart';
 import '../../models/product.dart';
 import '../../providers/product_provider.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/filter_sheet.dart';
+import '../../widgets/group_section_card.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../widgets/product_list_tile.dart';
 import 'product_details_screen.dart';
@@ -17,6 +21,7 @@ import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
 import '../../widgets/empty_state_widget.dart';
+import '../../widgets/pagination_bar.dart';
 
 class ProductsScreen extends StatefulWidget {
   final bool autoFocusSearch;
@@ -56,11 +61,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
     super.dispose();
   }
 
+  /// Loads (or, after a create/edit/archive, reloads) the list for whatever
+  /// is in the search box — reloading unfiltered would leave the box showing
+  /// a query the list no longer matches.
   Future<void> _loadData() async {
     final provider = Provider.of<ProductProvider>(context, listen: false);
-    await provider.loadProducts();
+    await _runSearch(_searchController.text);
     await provider.fetchGroupByOptions();
     if (mounted) setState(() => _isFirstLoad = false);
+  }
+
+  Future<void> _runSearch(String query) {
+    _searchDebounce?.cancel();
+    final provider = Provider.of<ProductProvider>(context, listen: false);
+    // Groups are re-read for the new query; open tiles would otherwise spin
+    // on data that was just cleared.
+    if (provider.isGrouped && _expandedGroups.isNotEmpty) {
+      setState(() => _expandedGroups.clear());
+    }
+    return provider.searchProducts(query);
   }
 
   void _onSearchChanged(String query) {
@@ -68,12 +87,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 350), () {
       if (!mounted) return;
-      final provider = Provider.of<ProductProvider>(context, listen: false);
-      if (query.isEmpty) {
-        provider.loadProducts();
-      } else {
-        provider.searchProducts(query);
-      }
+      _runSearch(query);
     });
   }
 
@@ -86,6 +100,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor:
             Theme.of(context).appBarTheme.backgroundColor ??
             Theme.of(context).colorScheme.surface,
@@ -117,7 +132,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
             }
           }
         },
-        backgroundColor: isDark ? Colors.white : Theme.of(context).primaryColor,
+        backgroundColor: Theme.of(context).primaryColor,
         tooltip: 'Create Product',
         elevation: 0,
         focusElevation: 0,
@@ -125,7 +140,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
         highlightElevation: 0,
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedPackageAdd,
-          color: isDark ? Colors.black : Colors.white,
+          color: Colors.white,
         ),
       ),
       body: Consumer<ProductProvider>(
@@ -236,196 +251,37 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Widget _buildSearchField() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final provider = Provider.of<ProductProvider>(context, listen: false);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
-      child: Container(
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF000000).withOpacity(0.05),
-              offset: const Offset(0, 6),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          onChanged: _onSearchChanged,
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xff1E1E1E),
-            fontWeight: FontWeight.w400,
-            fontStyle: FontStyle.normal,
-            fontSize: 15,
-            height: 1.0,
-            letterSpacing: 0.0,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Search products...',
-            hintStyle: TextStyle(
-              color: isDark ? Colors.white : const Color(0xff1E1E1E),
-              fontWeight: FontWeight.w400,
-              fontStyle: FontStyle.normal,
-              fontSize: 15,
-              height: 1.0,
-              letterSpacing: 0.0,
-            ),
-            prefixIcon: IconButton(
-              icon: HugeIcon(
-                icon: HugeIcons.strokeRoundedFilterHorizontal,
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                size: 18,
-              ),
-              onPressed: _showFilterBottomSheet,
-            ),
-            suffixIcon: _searchController.text.isNotEmpty
-                ? IconButton(
-                    icon: Icon(
-                      Icons.clear,
-                      color: isDark ? Colors.grey[400] : Colors.grey,
-                      size: 20,
-                    ),
-                    onPressed: () {
-                      _searchController.clear();
-                      _searchDebounce?.cancel();
-                      Provider.of<ProductProvider>(
-                        context,
-                        listen: false,
-                      ).loadProducts();
-                      setState(() {});
-                    },
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                  )
-                : null,
-            filled: true,
-            fillColor: isDark ? Colors.grey[850] : Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1.5,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            isDense: true,
-            alignLabelWithHint: true,
-          ),
-        ),
+      child: MoboSearchField(
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        hintText: 'Search products...',
+        hasActiveFilters: _hasActiveFilters(provider),
+        onFilterTap: _showFilterBottomSheet,
+        onChanged: _onSearchChanged,
+        // Lets the keyboard's search key re-run the same text (onChanged
+        // only fires when the text changes).
+        onSubmitted: _runSearch,
+        onClear: () => _runSearch(''),
       ),
     );
   }
 
   Widget _buildTopPaginationBar(ProductProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final paginationText = provider.isGrouped
-        ? '${provider.totalCount}/${provider.totalCount}'
-        : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}';
-
-    return Container(
-      padding: const EdgeInsets.only(right: 0, top: 4, bottom: 4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  paginationText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.grey[300] : Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (!provider.isGrouped) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasPreviousPage && !provider.isLoading)
-                      ? provider.goToPreviousPage
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowLeft01,
-                      size: 20,
-                      color: (provider.hasPreviousPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasNextPage && !provider.isLoading)
-                      ? provider.goToNextPage
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowRight01,
-                      size: 20,
-                      color: (provider.hasNextPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PaginationBar(
+      totalCount: provider.totalCount,
+      rangeText: provider.isGrouped
+          ? '${provider.totalCount}/${provider.totalCount}'
+          : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}',
+      showArrows: !provider.isGrouped,
+      hasPrevious: provider.hasPreviousPage,
+      hasNext: provider.hasNextPage,
+      isLoading: provider.isLoading,
+      onPrevious: provider.goToPreviousPage,
+      onNext: provider.goToNextPage,
     );
   }
 
@@ -454,45 +310,20 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
       return ListView.builder(
         controller: _scrollController,
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.fabClearance),
         itemCount: groups.length,
         itemBuilder: (context, index) {
           final group = groups[index];
           final groupKey = group.key;
           final count = group.value;
           final isExpanded = _expandedGroups[groupKey] ?? false;
+          final groupProducts = provider.loadedGroups[groupKey];
 
-          Widget? expandedContent;
-          if (isExpanded) {
-            if (provider.loadedGroups.containsKey(groupKey)) {
-              final groupProducts = provider.loadedGroups[groupKey]!;
-              expandedContent = Column(
-                children: groupProducts
-                    .map(
-                      (product) => Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8.0,
-                          vertical: 4.0,
-                        ),
-                        child: _buildProductCard(product),
-                      ),
-                    )
-                    .toList(),
-              );
-            } else {
-              expandedContent = const Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-          }
-
-          return _buildOdooStyleGroupTile(
-            groupKey,
-            count,
-            isExpanded,
-            provider,
-            () {
+          return GroupSectionCard(
+            title: groupKey,
+            subtitle: '$count product${count != 1 ? 's' : ''}',
+            isExpanded: isExpanded,
+            onToggle: () {
               setState(() {
                 _expandedGroups[groupKey] = !isExpanded;
               });
@@ -500,7 +331,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 provider.loadGroupProducts({'key': groupKey});
               }
             },
-            expandedContent: expandedContent,
+            isLoading: groupProducts == null,
+            body: Column(
+              children: [
+                for (final product in groupProducts ?? const <Product>[])
+                  _buildProductCard(product),
+              ],
+            ),
           );
         },
       );
@@ -508,7 +345,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, AppSpacing.fabClearance),
       itemCount: products.length,
       itemBuilder: (context, index) {
         final product = products[index];
@@ -554,8 +391,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
   void _navigateToDetails(Product product) async {
     try {
       final id = product.id.toString();
-      final name = product.name;
-      final category = product.categoryName;
       if (id.isNotEmpty) {
         await Provider.of<LastOpenedProvider>(
           context,
@@ -803,547 +638,102 @@ class _ProductsScreenState extends State<ProductsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      isDismissible: true,
-      enableDrag: true,
-      builder: (context) => DefaultTabController(
-        length: 2,
-        child: StatefulBuilder(
-          builder: (context, setDialogState) {
-            final theme = Theme.of(context);
-            final isDark = theme.brightness == Brightness.dark;
-
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.8,
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF232323) : Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
-                ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Filter & Group By',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                color: isDark ? Colors.white : Colors.black87,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: Icon(
-                              Icons.close,
-                              color: isDark ? Colors.white : Colors.black54,
-                            ),
-                            splashRadius: 20,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.grey[800] : Colors.grey[100],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: TabBar(
-                        indicator: BoxDecoration(
-                          color: theme.primaryColor,
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: theme.primaryColor.withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        indicatorPadding: const EdgeInsets.all(4),
-                        indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor: Colors.transparent,
-                        labelColor: Colors.white,
-                        unselectedLabelColor: isDark
-                            ? Colors.grey[400]
-                            : Colors.grey[600],
-                        labelStyle: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                        unselectedLabelStyle: const TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                        tabs: const [
-                          Tab(height: 48, text: 'Filter'),
-                          Tab(height: 48, text: 'Group By'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    Expanded(
-                      child: TabBarView(
-                        children: [
-                          _buildProductFilterTab(
-                            context,
-                            setDialogState,
-                            isDark,
-                            theme,
-                            provider,
-                            tempState,
-                          ),
-                          _buildProductGroupByTab(
-                            context,
-                            setDialogState,
-                            isDark,
-                            theme,
-                            provider,
-                            tempState,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.grey[850] : Colors.grey[50],
-                        border: Border(
-                          top: BorderSide(
-                            color: isDark
-                                ? Colors.grey[700]!
-                                : Colors.grey[200]!,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => _clearAllFilters(
-                                setDialogState,
-                                tempState,
-                                provider,
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: isDark
-                                    ? Colors.white
-                                    : Colors.black87,
-                                side: BorderSide(
-                                  color: isDark
-                                      ? Colors.grey[600]!
-                                      : Colors.grey[300]!,
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                              child: const Text('Clear All'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 2,
-                            child: ElevatedButton(
-                              onPressed: () =>
-                                  _applyFiltersAndGroupBy(tempState, provider),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: theme.primaryColor,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                elevation: 0,
-                                shadowColor: Colors.transparent,
-                              ),
-                              child: const Text('Apply'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => FilterSheetShell(
+          filterTab: _buildProductFilterTab(setDialogState, tempState),
+          groupByTab: FilterGroupByTab(
+            heading: 'Group products by',
+            options: provider.groupByOptions,
+            selected: tempState['selectedGroupBy'],
+            loadingWhenEmpty: true,
+            onChanged: (value) => setDialogState(
+              () => tempState['selectedGroupBy'] = value,
+            ),
+          ),
+          onClear: () => _clearAllFilters(setDialogState, tempState, provider),
+          onApply: () => _applyFiltersAndGroupBy(tempState, provider),
         ),
       ),
     );
   }
 
   Widget _buildProductFilterTab(
-    BuildContext context,
     StateSetter setDialogState,
-    bool isDark,
-    ThemeData theme,
-    ProductProvider provider,
     Map<String, dynamic> tempState,
   ) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (tempState['showServicesOnly'] == true ||
-              tempState['showConsumablesOnly'] == true ||
-              tempState['showStorableOnly'] == true ||
-              tempState['showAvailableOnly'] == true) ...[
-            Text(
-              'Active Filters',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: isDark ? Colors.white : theme.primaryColor,
-                fontWeight: FontWeight.w600,
+    return FilterTabBody(
+      children: [
+        FilterActiveFilters(
+          chips: [
+            if (tempState['showServicesOnly'] == true)
+              FilterActiveChip(
+                label: 'Services',
+                onRemove: () =>
+                    setDialogState(() => tempState['showServicesOnly'] = false),
               ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                if (tempState['showServicesOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Services',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showServicesOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showConsumablesOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Consumables',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showConsumablesOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showStorableOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Storable',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showStorableOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showAvailableOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Available Only',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showAvailableOnly'] = false,
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
+            if (tempState['showConsumablesOnly'] == true)
+              FilterActiveChip(
+                label: 'Consumables',
+                onRemove: () => setDialogState(
+                  () => tempState['showConsumablesOnly'] = false,
+                ),
+              ),
+            if (tempState['showStorableOnly'] == true)
+              FilterActiveChip(
+                label: 'Storable',
+                onRemove: () => setDialogState(
+                  () => tempState['showStorableOnly'] = false,
+                ),
+              ),
+            if (tempState['showAvailableOnly'] == true)
+              FilterActiveChip(
+                label: 'Available Only',
+                onRemove: () => setDialogState(
+                  () => tempState['showAvailableOnly'] = false,
+                ),
+              ),
           ],
-
-          Text(
-            'Product Type',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              ChoiceChip(
-                label: Text(
-                  'Services',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showServicesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showServicesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showServicesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showServicesOnly'] = val;
-                    if (val) {
-                      tempState['showConsumablesOnly'] = false;
-                      tempState['showStorableOnly'] = false;
-                    }
-                  });
-                },
+        ),
+        const FilterSectionTitle('Product Type'),
+        // One product type at a time.
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (key, label) in const [
+              ('showServicesOnly', 'Services'),
+              ('showConsumablesOnly', 'Consumables'),
+              ('showStorableOnly', 'Storable'),
+            ])
+              FilterChoiceChip(
+                label: label,
+                selected: tempState[key] == true,
+                onTap: () => setDialogState(() {
+                  final val = tempState[key] != true;
+                  tempState['showServicesOnly'] = false;
+                  tempState['showConsumablesOnly'] = false;
+                  tempState['showStorableOnly'] = false;
+                  tempState[key] = val;
+                }),
               ),
-              ChoiceChip(
-                label: Text(
-                  'Consumables',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showConsumablesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showConsumablesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showConsumablesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showConsumablesOnly'] = val;
-                    if (val) {
-                      tempState['showServicesOnly'] = false;
-                      tempState['showStorableOnly'] = false;
-                    }
-                  });
-                },
-              ),
-              ChoiceChip(
-                label: Text(
-                  'Storable',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showStorableOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showStorableOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showStorableOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showStorableOnly'] = val;
-                    if (val) {
-                      tempState['showServicesOnly'] = false;
-                      tempState['showConsumablesOnly'] = false;
-                    }
-                  });
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          Text(
-            'Availability',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              ChoiceChip(
-                label: Text(
-                  'Available Only',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showAvailableOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showAvailableOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showAvailableOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) =>
-                    setDialogState(() => tempState['showAvailableOnly'] = val),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProductGroupByTab(
-    BuildContext context,
-    StateSetter setDialogState,
-    bool isDark,
-    ThemeData theme,
-    ProductProvider provider,
-    Map<String, dynamic> tempState,
-  ) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-          Text(
-            'Group products by',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          RadioListTile<String?>(
-            title: Text(
-              'None',
-              style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            subtitle: Text(
-              'Display as a simple list',
-              style: TextStyle(
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 12,
-              ),
-            ),
-            value: null,
-            groupValue: tempState['selectedGroupBy'],
-            onChanged: (value) {
-              setDialogState(() {
-                tempState['selectedGroupBy'] = value;
-              });
-            },
-            activeColor: theme.primaryColor,
-            contentPadding: EdgeInsets.zero,
-          ),
-          const Divider(),
-          if (provider.groupByOptions.isEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Center(child: Text("Loading options...")),
-            ),
-          ] else ...[
-            ...provider.groupByOptions.entries.map((entry) {
-              String description = '';
-              switch (entry.key) {
-                case 'categ_id':
-                  description = 'Group by product category';
-                  break;
-                case 'type':
-                  description = 'Group by product type';
-                  break;
-                case 'uom_id':
-                  description = 'Group by unit of measure';
-                  break;
-                default:
-                  description = 'Group by ${entry.value.toLowerCase()}';
-              }
-              return RadioListTile<String>(
-                title: Text(
-                  entry.value,
-                  style: TextStyle(
-                    color: isDark ? Colors.white : Colors.black87,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                subtitle: Text(
-                  description,
-                  style: TextStyle(
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    fontSize: 12,
-                  ),
-                ),
-                value: entry.key,
-                groupValue: tempState['selectedGroupBy'],
-                onChanged: (value) {
-                  setDialogState(() {
-                    tempState['selectedGroupBy'] = value;
-                  });
-                },
-                activeColor: theme.primaryColor,
-                contentPadding: EdgeInsets.zero,
-              );
-            }).toList(),
           ],
-          const SizedBox(height: 24),
-        ],
-      ),
+        ),
+        const FilterSectionTitle('Availability'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChoiceChip(
+              label: 'Available Only',
+              selected: tempState['showAvailableOnly'] == true,
+              onTap: () => setDialogState(
+                () => tempState['showAvailableOnly'] =
+                    tempState['showAvailableOnly'] != true,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -1524,87 +914,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
             onPressed: () => provider.clearFilters(),
             child: const Text('Clear All', style: TextStyle(fontSize: 12)),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOdooStyleGroupTile(
-    String groupTitle,
-    int count,
-    bool isExpanded,
-    ProductProvider provider,
-    VoidCallback onTap, {
-    Widget? expandedContent,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
-        ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.08),
-            ),
-        ],
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            groupTitle,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: isDark ? Colors.white : Colors.black87,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '$count product${count != 1 ? 's' : ''}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: isDark
-                                  ? Colors.grey[400]
-                                  : Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (isExpanded && expandedContent != null) expandedContent,
         ],
       ),
     );

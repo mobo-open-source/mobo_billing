@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:provider/provider.dart';
@@ -176,7 +175,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _authStatusDescription = description;
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _authStatusDescription = 'Authentication status unavailable';
@@ -256,6 +255,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: const Text('Settings'),
         backgroundColor: cardColor,
         elevation: 0,
@@ -990,8 +990,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final textPrimary = isDark ? Colors.white : Colors.black87;
     final textSecondary = isDark ? Colors.grey[400] : Colors.grey[600];
 
+    // No side padding here: each tile carries its own 16px inset, which puts
+    // these icons in line with those of the rows in the cards above. The block
+    // under the tiles is inset separately, to stay in line with the tile text.
     return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
+      padding: const EdgeInsets.only(bottom: 16),
       child: Column(
         children: [
           _buildActionTile(
@@ -1035,69 +1038,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
 
-          const SizedBox(height: 16),
-          Divider(color: isDark ? Colors.grey[800] : Colors.grey[200]),
-          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                const SizedBox(height: 16),
+                Divider(color: isDark ? Colors.grey[800] : Colors.grey[200]),
+                const SizedBox(height: 16),
 
-          Text(
-            'Follow Us',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: textPrimary,
+                Text(
+                  'Follow Us',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildSocialButton(
+                      context,
+                      'assets/facebook.png',
+                      const Color(0xFF1877F2),
+                      'Facebook',
+                      () => _launchUrlSmart(
+                        'https://www.facebook.com/cybrosystechnologies',
+                        title: 'Facebook',
+                      ),
+                    ),
+                    _buildSocialButton(
+                      context,
+                      'assets/linkedin.png',
+                      const Color(0xFF0077B5),
+                      'LinkedIn',
+                      () => _launchUrlSmart(
+                        'https://www.linkedin.com/company/cybrosys/',
+                        title: 'LinkedIn',
+                      ),
+                    ),
+                    _buildSocialButton(
+                      context,
+                      'assets/instagram.png',
+                      const Color(0xFFE4405F),
+                      'Instagram',
+                      () => _launchUrlSmart(
+                        'https://www.instagram.com/cybrosystech/',
+                        title: 'Instagram',
+                      ),
+                    ),
+                    _buildSocialButton(
+                      context,
+                      'assets/youtube.png',
+                      const Color(0xFFFF0000),
+                      'YouTube',
+                      () => _launchUrlSmart(
+                        'https://www.youtube.com/channel/UCKjWLm7iCyOYINVspCSanjg',
+                        title: 'YouTube',
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 24),
+                Text(
+                  '© ${DateTime.now().year} Cybrosys Technologies',
+                  style: TextStyle(fontSize: 12, color: textSecondary),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildSocialButton(
-                context,
-                'assets/facebook.png',
-                const Color(0xFF1877F2),
-                'Facebook',
-                () => _launchUrlSmart(
-                  'https://www.facebook.com/cybrosystechnologies',
-                  title: 'Facebook',
-                ),
-              ),
-              _buildSocialButton(
-                context,
-                'assets/linkedin.png',
-                const Color(0xFF0077B5),
-                'LinkedIn',
-                () => _launchUrlSmart(
-                  'https://www.linkedin.com/company/cybrosys/',
-                  title: 'LinkedIn',
-                ),
-              ),
-              _buildSocialButton(
-                context,
-                'assets/instagram.png',
-                const Color(0xFFE4405F),
-                'Instagram',
-                () => _launchUrlSmart(
-                  'https://www.instagram.com/cybrosystech/',
-                  title: 'Instagram',
-                ),
-              ),
-              _buildSocialButton(
-                context,
-                'assets/youtube.png',
-                const Color(0xFFFF0000),
-                'YouTube',
-                () => _launchUrlSmart(
-                  'https://www.youtube.com/channel/UCKjWLm7iCyOYINVspCSanjg',
-                  title: 'YouTube',
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-          Text(
-            '© ${DateTime.now().year} Cybrosys Technologies',
-            style: TextStyle(fontSize: 12, color: textSecondary),
           ),
         ],
       ),

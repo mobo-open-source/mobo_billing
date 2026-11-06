@@ -86,7 +86,7 @@ class OdooImageWidget extends StatelessWidget {
       }
 
       return imageWidget;
-    } catch (e) {
+    } catch (_) {
       return placeholder ?? _buildDefaultPlaceholder(context);
     }
   }

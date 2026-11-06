@@ -385,7 +385,7 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
       }
 
       return true;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
@@ -612,7 +612,7 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
           ),
         );
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to proceed to login. Please try again.';

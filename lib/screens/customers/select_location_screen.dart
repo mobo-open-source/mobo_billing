@@ -183,7 +183,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
     bool success = false;
     try {
       success = await widget.onSaveLocation!(_selectedLocation!);
-    } catch (e) {
+    } catch (_) {
       success = false;
     }
     if (!mounted) return;
@@ -255,6 +255,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
     return Scaffold(
       backgroundColor: colorScheme.surface,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor: colorScheme.surface,
         foregroundColor: colorScheme.onSurface,
         elevation: 0,
@@ -281,7 +282,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark ? Colors.white : theme.primaryColor,
+                      color: theme.primaryColor,
                       size: 50,
                     ),
                     const SizedBox(height: 24),
@@ -361,7 +362,7 @@ class _SelectLocationScreenState extends State<SelectLocationScreen> {
                         height: 50,
                         child: Container(
                           decoration: BoxDecoration(
-                            color: isDark ? Colors.white : theme.primaryColor,
+                            color: theme.primaryColor,
                             shape: BoxShape.circle,
                             border: Border.all(
                               color: colorScheme.surface,

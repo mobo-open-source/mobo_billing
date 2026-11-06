@@ -7,8 +7,13 @@ import 'package:intl/intl.dart';
 import '../../providers/currency_provider.dart';
 import '../../providers/payment_provider.dart';
 import '../../services/payment_rpc_service.dart';
+import '../../services/odoo_session_manager.dart';
 import '../../widgets/pdf_widget.dart';
+import '../../services/connectivity_service.dart';
+import '../../services/data_cache.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../widgets/offline_data_banner.dart';
+import 'create_payment_screen.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../../providers/last_opened_provider.dart';
 import '../../widgets/shimmer_loading.dart';
@@ -30,6 +35,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
   late Animation<double> _fadeAnimation;
   Payment? _detailedPayment;
   bool _isLoading = false;
+
+  /// True when the record on screen came from the offline cache.
+  bool _isShowingCachedData = false;
 
   @override
   void initState() {
@@ -94,10 +102,12 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
           });
         }
       }
-    } catch (e) {
-    } finally {
+    } catch (_) {} finally {
       if (mounted) {
         setState(() {
+          // Offline reads come from the cache, so the record still renders —
+          // the banner explains where it came from.
+          _isShowingCachedData = !ConnectivityService.instance.isConnected;
           _isLoading = false;
         });
       }
@@ -109,25 +119,13 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     try {
       final date = DateTime.parse(dateStr);
       return DateFormat('dd MMM yyyy').format(date);
-    } catch (e) {
+    } catch (_) {
       return dateStr;
     }
   }
 
   Color _getStateColor(String? state) {
-    switch (state?.toLowerCase()) {
-      case 'posted':
-        return Colors.green;
-      case 'draft':
-        return Colors.orange;
-      case 'cancel':
-        return Colors.red;
-      case 'in_progress':
-      case 'in_process':
-        return Colors.blue;
-      default:
-        return Colors.blue;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getStateLabel(String? state) {
@@ -175,6 +173,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor: backgroundColor,
         title: const Text('Payment Details'),
         leading: IconButton(
@@ -185,6 +184,17 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
+          // Odoo only allows an account.payment to be modified while it is
+          // still a draft, so the edit action follows the same rule.
+          if (state == 'draft')
+            IconButton(
+              icon: HugeIcon(
+                icon: HugeIcons.strokeRoundedPencilEdit02,
+                color: isDark ? Colors.grey[400]! : Colors.grey[600]!,
+              ),
+              tooltip: 'Edit Payment',
+              onPressed: () => _editPayment(payment),
+            ),
           PopupMenuButton<String>(
             icon: Icon(
               Icons.more_vert,
@@ -204,33 +214,41 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
       ),
       body: _isLoading
           ? const PaymentDetailShimmer()
-          : RefreshIndicator(
-              onRefresh: _loadPaymentDetails,
-              color: primaryColor,
-              child: FadeTransition(
-                opacity: _fadeAnimation,
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(20.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildTopSection(
-                        payment,
-                        name,
-                        customerName,
-                        amount,
-                        currencyCode,
-                        state,
-                        isDark,
-                        primaryColor,
+          : Column(
+              children: [
+                if (_isShowingCachedData)
+                  OfflineDataBanner(onRetry: _loadPaymentDetails),
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _loadPaymentDetails,
+                    color: primaryColor,
+                    child: FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(20.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildTopSection(
+                              payment,
+                              name,
+                              customerName,
+                              amount,
+                              currencyCode,
+                              state,
+                              isDark,
+                              primaryColor,
+                            ),
+                            const SizedBox(height: 24),
+                            _buildDetailsSection(payment, isDark),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 24),
-                      _buildDetailsSection(payment, isDark),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+              ],
             ),
     );
   }
@@ -288,15 +306,13 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: isDark
-                          ? Colors.white.withOpacity(.2)
-                          : _getStateColor(state).withOpacity(0.15),
+                      color: _getStateColor(state).withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
                       _getStateLabel(state),
                       style: GoogleFonts.manrope(
-                        color: isDark ? Colors.white : _getStateColor(state),
+                        color: _getStateColor(state),
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -308,7 +324,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
               Text(
                 customerName,
                 style: GoogleFonts.manrope(
-                  fontSize: 18,
+                  fontSize: 15,
                   fontWeight: FontWeight.w600,
                   color: isDark ? Colors.white : Colors.black87,
                 ),
@@ -323,7 +339,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                       Text(
                         'Amount',
                         style: GoogleFonts.manrope(
-                          fontSize: 14,
+                          fontSize: 13,
                           color: isDark ? Colors.grey[400] : Colors.grey[600],
                           fontWeight: FontWeight.w500,
                         ),
@@ -335,7 +351,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                           listen: false,
                         ).formatAmount(amount, currency: currencyCode),
                         style: GoogleFonts.manrope(
-                          fontSize: 20,
+                          fontSize: 17,
                           fontWeight: FontWeight.bold,
                           color: isDark ? Colors.grey[400] : Colors.black,
                         ),
@@ -348,7 +364,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                       Text(
                         'Date',
                         style: GoogleFonts.manrope(
-                          fontSize: 14,
+                          fontSize: 13,
                           color: isDark ? Colors.grey[400] : Colors.grey[600],
                           fontWeight: FontWeight.w500,
                         ),
@@ -359,7 +375,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                             ? DateFormat('dd MMM yyyy').format(payment.date!)
                             : 'N/A',
                         style: GoogleFonts.manrope(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
                           color: isDark ? Colors.white : Colors.black87,
                         ),
@@ -420,7 +436,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
           Text(
             'Payment Information',
             style: GoogleFonts.manrope(
-              fontSize: 16,
+              fontSize: 15,
               fontWeight: FontWeight.bold,
               color: isDark ? Colors.white : Colors.black87,
             ),
@@ -536,15 +552,21 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
     final isSent = false;
     final paymentMethodCode = '';
 
+    // A posted payment not yet matched with the bank is `in_process` on Odoo
+    // 18/19; Odoo 20 renamed the lifecycle to draft → paid → reconciled, so
+    // there that same state is `paid`.
+    final inProcess =
+        state ==
+        (OdooSessionManager.serverMajorVersion >= 20 ? 'paid' : 'in_process');
+
     final canConfirm = state == 'draft';
-    final canMarkAsSent =
-        state == 'in_process' && !isSent && paymentMethodCode == 'manual';
+    final canMarkAsSent = inProcess && !isSent && paymentMethodCode == 'manual';
     final canUnmarkAsSent =
-        state == 'in_process' && isSent && paymentMethodCode == 'manual';
+        inProcess && isSent && paymentMethodCode == 'manual';
     final canResetToDraft = state != 'draft';
-    final canValidate = state == 'in_process';
-    final canReject = state == 'in_process' && isSent;
-    final canCancel = state == 'draft' || (state == 'in_process' && isSent);
+    final canValidate = inProcess;
+    final canReject = inProcess && isSent;
+    final canCancel = state == 'draft' || (inProcess && isSent);
     final canSendEmail = true;
 
     return [
@@ -662,9 +684,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
         value: 'print_receipt',
         child: Row(
           children: [
-            Icon(
-              Icons.print,
-              color: isDark ? Colors.grey[300] : Colors.grey[800],
+            HugeIcon(
+              icon: HugeIcons.strokeRoundedPrinter,
+              color: isDark ? Colors.grey[300]! : Colors.grey[800]!,
               size: 20,
             ),
             const SizedBox(width: 12),
@@ -795,6 +817,39 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
       case 'send_email':
         await _sendReceiptByEmail();
         break;
+    }
+  }
+
+  /// Opens the payment in the form for editing.
+  ///
+  /// Odoo rejects a write to a posted `account.payment`, so this refuses
+  /// anything that is no longer a draft and points at Reset to Draft instead.
+  Future<void> _editPayment(Payment payment) async {
+    final current = _detailedPayment ?? payment;
+
+    if (current.state != 'draft') {
+      CustomSnackbar.showError(
+        context,
+        'Only draft payments can be edited. Reset this payment to draft first.',
+      );
+      return;
+    }
+
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => CreatePaymentScreen(paymentToEdit: current),
+      ),
+    );
+
+    if (!mounted) return;
+    if (updated == true) {
+      // The edited record is stale in the cache and the list.
+      DataCache.invalidatePrefix(DataCache.paymentPrefix);
+      await _loadPaymentDetails();
+      if (mounted) {
+        // Same page, search and filters the list was showing.
+        await Provider.of<PaymentProvider>(context, listen: false).refresh();
+      }
     }
   }
 
@@ -1096,8 +1151,17 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
         if (mounted) Navigator.of(context, rootNavigator: true).pop();
 
         if (success) {
-          CustomSnackbar.showSuccess(context, 'Payment deleted successfully');
-          if (mounted) Navigator.of(context).pop();
+          // Pop before the toast: CustomSnackbar is a dialog route, so the
+          // reverse order makes this pop close the toast and leave the deleted
+          // payment on screen.
+          if (mounted) {
+            final navigator = Navigator.of(context);
+            navigator.pop(true);
+            CustomSnackbar.showSuccess(
+              navigator.context,
+              'Payment deleted successfully',
+            );
+          }
         }
       } catch (e) {
         if (mounted) Navigator.of(context, rootNavigator: true).pop();
@@ -1108,29 +1172,34 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
 
   Future<void> _printPaymentReceipt() async {
     bool isDialogOpen = true;
+
+    void closeDialog() {
+      if (isDialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isDialogOpen = false;
+      }
+    }
+
     _showLoadingDialog(context, 'Generating PDF', 'Please wait...');
     try {
       final payment = _detailedPayment ?? widget.payment;
-      await PDFGenerator.generatePaymentPdf(
+      // Opens the system print dialog (same as Print Invoice). The share sheet
+      // this used to open throws on iOS without a source rectangle.
+      await PDFGenerator.printPaymentPdf(
         context,
         payment,
-        onPdfGenerated: () {
-          if (isDialogOpen && mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-            isDialogOpen = false;
-          }
-        },
+        onPdfGenerated: closeDialog,
       );
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
-      }
     } catch (e) {
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
+      if (mounted) {
+        CustomSnackbar.showError(
+          context,
+          e.toString().replaceFirst('Exception: ', ''),
+        );
       }
-      CustomSnackbar.showError(context, 'Failed to generate PDF: $e');
+    } finally {
+      // Runs on every path — success, failure, or a dismissed print sheet.
+      closeDialog();
     }
   }
 
@@ -1254,9 +1323,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   LoadingAnimationWidget.fourRotatingDots(
-                    color: isDark
-                        ? Colors.white
-                        : Theme.of(context).primaryColor,
+                    color: Theme.of(context).primaryColor,
                     size: 50,
                   ),
                   const SizedBox(height: 24),

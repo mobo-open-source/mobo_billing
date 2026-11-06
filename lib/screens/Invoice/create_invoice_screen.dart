@@ -5,7 +5,6 @@ import 'invoice_detail_screen.dart';
 import 'package:hugeicons/hugeicons.dart';
 import '../../services/review_service.dart';
 import 'package:intl/intl.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../providers/currency_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../services/odoo_api_service.dart';
@@ -19,14 +18,19 @@ import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../../widgets/confetti_dialog.dart';
 import '../../services/odoo_error_handler.dart';
 import '../../utils/data_loss_warning_mixin.dart';
-import '../../widgets/product_typeahead.dart';
-import '../../widgets/customer_typeahead.dart';
+import '../../utils/form_snapshot.dart';
+import '../../utils/invoice_narration.dart';
 import 'package:provider/provider.dart';
 import '../../services/connectivity_service.dart';
-import '../../widgets/custom_text_field.dart';
+import '../../services/data_cache.dart';
+import '../../widgets/mobo_form_fields.dart';
+import '../../widgets/pinned_action_bar.dart';
+import '../../widgets/line_item_inputs.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/circular_image_widget.dart';
+import '../../widgets/remove_product_dialog.dart';
 
 class CreateInvoiceScreen extends StatefulWidget {
   final Map<String, dynamic>? invoiceToEdit;
@@ -57,9 +61,17 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   bool _isLoading = false;
   bool _isSaving = false;
+
+  /// Whether the device currently has no connection. Reference data is then
+  /// served from the cache so the form's pickers still have options.
+  bool get _isOffline => !ConnectivityService.instance.isConnected;
   bool _isLoadingCustomers = false;
   bool _isSearchingCustomers = false;
   bool _showCustomerDropdown = false;
+
+  /// The customer picker's result panel is open. The selected customer's
+  /// details card stays hidden meanwhile and returns once the panel closes.
+  bool _isCustomerPickerOpen = false;
   String? _errorMessage;
 
   List<Product> _products = [];
@@ -80,12 +92,64 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   List<Map<String, dynamic>> _invoiceLines = [];
 
+  /// IDs of the `account.move.line` records loaded when editing an existing
+  /// draft invoice. Used to build the Odoo `2` (delete) commands on save.
+  final Set<int> _originalLineIds = {};
+
+  /// How the invoice being edited looked once loaded. The Update button stays
+  /// disabled until the form differs from it.
+  final _editSnapshot = FormSnapshot();
+
+  /// Text fields don't rebuild the screen, so the Update button listens to
+  /// the ones that are saved.
+  late final Listenable _savedTextFields = Listenable.merge([
+    _referenceController,
+    _notesController,
+    _termsController,
+  ]);
+
+  /// The values [_saveInvoice] writes, in a form [_editSnapshot] can compare.
+  Map<String, dynamic> get _editableValues => {
+    'partner_id': _selectedCustomer?.id,
+    'partner_shipping_id': _selectedShippingAddressId,
+    'invoice_date': DateFormat('yyyy-MM-dd').format(_invoiceDate),
+    'invoice_date_due': _selectedPaymentTerm == null
+        ? DateFormat('yyyy-MM-dd').format(_dueDate)
+        : null,
+    'invoice_payment_term_id': _selectedPaymentTerm?.id,
+    'journal_id': _selectedJournalId,
+    'currency_id': _selectedCurrencyId,
+    'ref': _referenceController.text.trim(),
+    'narration': _narration,
+    'lines': [
+      for (final line in _invoiceLines)
+        {
+          'id': line['id'],
+          'product_id': line['product_id'],
+          'name': line['name'],
+          'product_name': line['product_name'],
+          'quantity': line['quantity'],
+          'unit_price': line['unit_price'],
+          'discount': line['discount'],
+          'tax_ids': line['tax_ids'],
+          'product_uom_id': line['product_uom_id'],
+        },
+    ],
+  };
+
+  bool get _hasEdits => _editSnapshot.hasChanges(_editableValues);
+
+  /// The notes and terms fields, as the `narration` HTML Odoo stores.
+  String get _narration =>
+      joinInvoiceNarration(_notesController.text, _termsController.text);
+
   @override
   bool get hasUnsavedData {
     if (widget.invoiceToEdit != null || _isSaving) return false;
     return _selectedCustomer != null ||
         _invoiceLines.isNotEmpty ||
         _notesController.text.isNotEmpty ||
+        _termsController.text.isNotEmpty ||
         _referenceController.text.isNotEmpty;
   }
 
@@ -156,13 +220,19 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   Future<void> _loadPaymentTerms() async {
     try {
-      final result = await _apiService.searchRead(
-        'account.payment.term',
-        [],
-        ['id', 'name'],
-        0,
-        50,
-      );
+      final result =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('payment_terms'),
+            () => _apiService.searchRead(
+              'account.payment.term',
+              [],
+              ['id', 'name'],
+              0,
+              50,
+            ),
+            isOffline: _isOffline,
+          ) ??
+          [];
 
       _paymentTerms = result
           .map(
@@ -179,11 +249,13 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   Future<void> _loadTaxes(int? companyId) async {
     try {
-      final result = await _apiService.getTaxes(
-        taxType: 'sale',
-        companyId: companyId,
-      );
-      _taxes = result;
+      _taxes =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('taxes:sale:${companyId ?? 'all'}'),
+            () => _apiService.getTaxes(taxType: 'sale', companyId: companyId),
+            isOffline: _isOffline,
+          ) ??
+          [];
     } catch (e) {
       _showError('Failed to load taxes: $e');
     }
@@ -191,10 +263,16 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   Future<void> _loadJournals(int? companyId) async {
     try {
-      _journals = await _apiService.getJournals(
-        journalType: 'sale',
-        companyId: companyId,
-      );
+      _journals =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('journals:sale:${companyId ?? 'all'}'),
+            () => _apiService.getJournals(
+              journalType: 'sale',
+              companyId: companyId,
+            ),
+            isOffline: _isOffline,
+          ) ??
+          [];
       if (_journals.isNotEmpty && _selectedJournalId == null) {
         _selectedJournalId = _journals.first['id'];
       }
@@ -205,13 +283,19 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   Future<void> _loadCurrencies() async {
     try {
-      _currencies = await _apiService.searchRead(
-        'res.currency',
-        [
-          ['active', '=', true],
-        ],
-        ['id', 'name', 'symbol'],
-      );
+      _currencies =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('currencies'),
+            () => _apiService.searchRead(
+              'res.currency',
+              [
+                ['active', '=', true],
+              ],
+              ['id', 'name', 'symbol'],
+            ),
+            isOffline: _isOffline,
+          ) ??
+          [];
       if (_currencies.isNotEmpty && _selectedCurrencyId == null) {
         final usd = _currencies.firstWhere(
           (c) => c['name'] == 'USD',
@@ -226,14 +310,20 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   Future<void> _loadUoMs() async {
     try {
-      _uoms = await _apiService.searchRead(
-        'uom.uom',
-        [
-          ['active', '=', true],
-        ],
-        ['id', 'name'],
-      );
-    } catch (e) {}
+      _uoms =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('uoms'),
+            () => _apiService.searchRead(
+              'uom.uom',
+              [
+                ['active', '=', true],
+              ],
+              ['id', 'name'],
+            ),
+            isOffline: _isOffline,
+          ) ??
+          [];
+    } catch (_) {}
   }
 
   Future<void> _loadShippingAddresses(int partnerId) async {
@@ -252,19 +342,219 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
         _selectedShippingAddressId = null;
       }
       setState(() {});
-    } catch (e) {}
+    } catch (_) {}
   }
 
-  Future<void> _loadInvoiceForEditing() async {}
+  /// Loads an existing draft invoice into the form so it can be edited.
+  ///
+  /// Mirrors Odoo: only a move in the `draft` state may be modified, so the
+  /// screen bails out (and pops) for any other state.
+  Future<void> _loadInvoiceForEditing() async {
+    final invoiceId = widget.invoiceToEdit?['id'] as int?;
+    if (invoiceId == null) return;
+
+    final records = await _apiService.read(
+      'account.move',
+      [invoiceId],
+      [
+        'state',
+        'partner_id',
+        'partner_shipping_id',
+        'invoice_date',
+        'invoice_date_due',
+        'invoice_payment_term_id',
+        'journal_id',
+        'currency_id',
+        'ref',
+        'narration',
+        'invoice_line_ids',
+      ],
+    );
+
+    if (records.isEmpty) {
+      throw Exception('Invoice not found. It may have been deleted.');
+    }
+    final data = records.first;
+
+    if (data['state']?.toString() != 'draft') {
+      _exitBecauseNotDraft();
+      return;
+    }
+
+    final partner = data['partner_id'];
+    if (partner is List && partner.isNotEmpty) {
+      final partnerId = partner[0] as int;
+      final partnerName = partner.length > 1
+          ? partner[1]?.toString() ?? ''
+          : '';
+      _selectedCustomer = Contact(id: partnerId, name: partnerName);
+      _customerSearchController.text = partnerName;
+      await _loadShippingAddresses(partnerId);
+    }
+
+    final shipping = data['partner_shipping_id'];
+    if (shipping is List && shipping.isNotEmpty) {
+      final shippingId = shipping[0] as int?;
+      if (_shippingAddresses.any((a) => a['id'] == shippingId)) {
+        _selectedShippingAddressId = shippingId;
+      }
+    }
+
+    final invoiceDate = DateTime.tryParse(
+      data['invoice_date']?.toString() ?? '',
+    );
+    if (invoiceDate != null) _invoiceDate = invoiceDate;
+
+    final dueDate = DateTime.tryParse(
+      data['invoice_date_due']?.toString() ?? '',
+    );
+    if (dueDate != null) _dueDate = dueDate;
+
+    final paymentTerm = data['invoice_payment_term_id'];
+    if (paymentTerm is List && paymentTerm.isNotEmpty) {
+      final termId = paymentTerm[0] as int?;
+      final match = _paymentTerms.where((t) => t.id == termId).toList();
+      if (match.isNotEmpty) {
+        _selectedPaymentTerm = match.first;
+      } else if (termId != null) {
+        _selectedPaymentTerm = PaymentTerm(
+          id: termId,
+          name: paymentTerm.length > 1 ? paymentTerm[1]?.toString() ?? '' : '',
+        );
+        _paymentTerms.add(_selectedPaymentTerm!);
+      }
+    } else {
+      _selectedPaymentTerm = null;
+    }
+
+    _selectedJournalId = _adoptRelation(
+      data['journal_id'],
+      _journals,
+      (id, name) => {'id': id, 'name': name},
+    );
+
+    _selectedCurrencyId = _adoptRelation(
+      data['currency_id'],
+      _currencies,
+      (id, name) => {'id': id, 'name': name, 'symbol': ''},
+    );
+
+    _referenceController.text = _stringOrEmpty(data['ref']);
+    final narration = splitInvoiceNarration(data['narration']);
+    _notesController.text = narration.notes;
+    _termsController.text = narration.terms;
+
+    await _loadInvoiceLinesForEditing(data['invoice_line_ids']);
+
+    _editSnapshot.capture(_editableValues);
+  }
+
+  Future<void> _loadInvoiceLinesForEditing(dynamic rawLineIds) async {
+    final lineIds = rawLineIds is List ? List<int>.from(rawLineIds) : <int>[];
+    _originalLineIds.clear();
+    _invoiceLines = [];
+    if (lineIds.isEmpty) return;
+
+    final lines = await _apiService.read('account.move.line', lineIds, [
+      'product_id',
+      'name',
+      'quantity',
+      'price_unit',
+      'discount',
+      'tax_ids',
+      'product_uom_id',
+      'price_subtotal',
+      'display_type',
+    ]);
+
+    for (final line in lines) {
+      final displayType = line['display_type'];
+      // Section / note lines have no product and are left untouched on save.
+      if (displayType is String && displayType != 'product') continue;
+
+      final lineId = line['id'] as int?;
+      if (lineId != null) _originalLineIds.add(lineId);
+
+      final product = line['product_id'];
+      final uom = line['product_uom_id'];
+
+      _invoiceLines.add({
+        'id': lineId,
+        'product_id': product is List && product.isNotEmpty
+            ? product[0] as int?
+            : null,
+        'product_name': product is List && product.length > 1
+            ? product[1]?.toString() ?? ''
+            : _stringOrEmpty(line['name']),
+        'name': _stringOrEmpty(line['name']),
+        'quantity': (line['quantity'] as num?)?.toDouble() ?? 0.0,
+        'unit_price': (line['price_unit'] as num?)?.toDouble() ?? 0.0,
+        'discount': (line['discount'] as num?)?.toDouble() ?? 0.0,
+        'tax_ids': line['tax_ids'] is List
+            ? List<int>.from(line['tax_ids'])
+            : <int>[],
+        'product_uom_id': uom is List && uom.isNotEmpty ? uom[0] as int? : null,
+        'subtotal': (line['price_subtotal'] as num?)?.toDouble() ?? 0.0,
+      });
+    }
+  }
+
+  /// Returns the id of an Odoo `[id, name]` pair, adding it to [options] when
+  /// that record is missing so the dropdown can still show the saved value.
+  int? _adoptRelation(
+    dynamic relation,
+    List<Map<String, dynamic>> options,
+    Map<String, dynamic> Function(int id, String name) build,
+  ) {
+    if (relation is! List || relation.isEmpty) return null;
+    final id = relation[0] as int?;
+    if (id == null) return null;
+    if (!options.any((o) => o['id'] == id)) {
+      options.add(
+        build(id, relation.length > 1 ? relation[1]?.toString() ?? '' : ''),
+      );
+    }
+    return id;
+  }
+
+  String _stringOrEmpty(dynamic value) {
+    if (value == null || value == false || value.toString() == 'false') {
+      return '';
+    }
+    return value.toString();
+  }
+
+  /// Leaves the screen when the invoice is no longer editable on the server.
+  void _exitBecauseNotDraft() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      CustomSnackbar.showError(
+        context,
+        'Only draft invoices can be edited. Reset this invoice to draft first.',
+      );
+      Navigator.of(context).pop();
+    });
+  }
 
   void _showError(String message) {
     setState(() => _errorMessage = message);
   }
 
-  void _removeInvoiceLine(int index) {
-    setState(() {
-      _invoiceLines.removeAt(index);
-    });
+  /// Asks before dropping a product line, since the quantity and price already
+  /// entered go with it.
+  Future<void> _removeInvoiceLine(int index) async {
+    final line = _invoiceLines[index];
+    final confirmed = await confirmRemoveProduct(
+      context,
+      documentType: 'invoice',
+      productName: line['product_name']?.toString(),
+    );
+
+    if (confirmed && mounted) {
+      // By the line itself rather than the index, which could have shifted.
+      setState(() => _invoiceLines.remove(line));
+    }
   }
 
   void _updateLineSubtotal(int index) {
@@ -317,7 +607,70 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
         context.read<CurrencyProvider>().symbol;
   }
 
+  /// Builds the Odoo `invoice_line_ids` write commands for an edited invoice:
+  /// `1` to update a kept line, `0` to create a new one and `2` to drop a line
+  /// the user removed from the form.
+  List<List<dynamic>> _buildLineUpdateCommands() {
+    final commands = <List<dynamic>>[];
+    final keptIds = <int>{};
+
+    for (final line in _invoiceLines) {
+      final values = {
+        'product_id': line['product_id'],
+        'name': (line['name'] as String?)?.isNotEmpty == true
+            ? line['name']
+            : line['product_name'],
+        'quantity': line['quantity'],
+        'price_unit': line['unit_price'],
+        'discount': line['discount'],
+        'tax_ids': [
+          [6, 0, line['tax_ids'] ?? <int>[]],
+        ],
+        'product_uom_id': line['product_uom_id'],
+      };
+
+      final lineId = line['id'] as int?;
+      if (lineId != null && _originalLineIds.contains(lineId)) {
+        keptIds.add(lineId);
+        commands.add([1, lineId, values]);
+      } else {
+        commands.add([0, 0, values]);
+      }
+    }
+
+    for (final id in _originalLineIds) {
+      if (!keptIds.contains(id)) commands.add([2, id]);
+    }
+
+    return commands;
+  }
+
+  /// Re-checks the server state right before writing, so an invoice confirmed
+  /// elsewhere in the meantime is not silently modified.
+  Future<void> _ensureStillDraft(int invoiceId) async {
+    final records = await _apiService.read(
+      'account.move',
+      [invoiceId],
+      ['state'],
+    );
+    if (records.isEmpty) {
+      throw Exception('Invoice not found. It may have been deleted.');
+    }
+    if (records.first['state']?.toString() != 'draft') {
+      throw Exception(
+        'This invoice is no longer a draft and can no longer be edited.',
+      );
+    }
+  }
+
   Future<void> _saveInvoice() async {
+    if (_isOffline) {
+      CustomSnackbar.showError(
+        context,
+        "You're offline. Reconnect to save this invoice.",
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCustomer == null) {
       CustomSnackbar.showError(context, 'Please select a customer');
@@ -393,48 +746,66 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
       },
     );
 
+    final editingInvoiceId = widget.invoiceToEdit?['id'] as int?;
+
     try {
       final invoiceData = {
         'partner_id': _selectedCustomer!.id,
         'partner_shipping_id': _selectedShippingAddressId,
-        'move_type': 'out_invoice',
+        if (editingInvoiceId == null) 'move_type': 'out_invoice',
         'invoice_date': DateFormat('yyyy-MM-dd').format(_invoiceDate),
-
         if (_selectedPaymentTerm == null)
           'invoice_date_due': DateFormat('yyyy-MM-dd').format(_dueDate),
         'ref': _referenceController.text.trim().isNotEmpty
             ? _referenceController.text.trim()
             : false,
-        'narration': _notesController.text.trim().isNotEmpty
-            ? _notesController.text.trim()
-            : false,
+        'narration': _narration.isNotEmpty ? _narration : false,
         if (_selectedPaymentTerm != null)
-          'invoice_payment_term_id': _selectedPaymentTerm!.id,
+          'invoice_payment_term_id': _selectedPaymentTerm!.id
+        else if (editingInvoiceId != null)
+          'invoice_payment_term_id': false,
         if (_selectedJournalId != null) 'journal_id': _selectedJournalId,
         if (_selectedCurrencyId != null) 'currency_id': _selectedCurrencyId,
-        'invoice_line_ids': _invoiceLines.map((line) {
-          return [
-            0,
-            0,
-            {
-              'product_id': line['product_id'],
-              'name': line['product_name'],
-              'quantity': line['quantity'],
-              'price_unit': line['unit_price'],
-              'discount': line['discount'],
-              'tax_ids': [
-                [6, 0, line['tax_ids']],
-              ],
-              'product_uom_id': line['product_uom_id'],
-            },
-          ];
-        }).toList(),
+        'invoice_line_ids': editingInvoiceId != null
+            ? _buildLineUpdateCommands()
+            : _invoiceLines.map((line) {
+                return [
+                  0,
+                  0,
+                  {
+                    'product_id': line['product_id'],
+                    'name': line['product_name'],
+                    'quantity': line['quantity'],
+                    'price_unit': line['unit_price'],
+                    'discount': line['discount'],
+                    'tax_ids': [
+                      [6, 0, line['tax_ids']],
+                    ],
+                    'product_uom_id': line['product_uom_id'],
+                  },
+                ];
+              }).toList(),
       };
 
       final invoiceProvider = Provider.of<InvoiceProvider>(
         context,
         listen: false,
       );
+
+      if (editingInvoiceId != null) {
+        await _ensureStillDraft(editingInvoiceId);
+        await invoiceProvider.updateInvoice(editingInvoiceId, invoiceData);
+
+        if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
+          Navigator.of(dialogContext!).pop();
+        }
+
+        if (mounted) {
+          Navigator.of(context).pop(true);
+        }
+        return;
+      }
+
       final newInvoice = await invoiceProvider.createInvoice(invoiceData);
 
       if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
@@ -442,6 +813,13 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
       }
 
       if (newInvoice != null && mounted) {
+        // The invoice is saved, so stop the Create button spinning behind the
+        // success dialog rather than waiting for `finally`, which only runs
+        // once that dialog has been dismissed.
+        setState(() {
+          _isLoading = false;
+          _isSaving = false;
+        });
         ReviewService().trackSignificantEvent();
         await showInvoiceCreatedConfettiDialog(
           context,
@@ -475,7 +853,9 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
               borderRadius: BorderRadius.circular(20),
             ),
             title: Text(
-              'Failed to Create Invoice',
+              editingInvoiceId != null
+                  ? 'Failed to Update Invoice'
+                  : 'Failed to Create Invoice',
               style: TextStyle(
                 fontWeight: FontWeight.w700,
                 color: isDark ? Colors.white : Colors.black87,
@@ -526,9 +906,11 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final backgroundColor = isDark ? Colors.grey[900]! : Colors.grey[50]!;
 
     return PopScope(
       canPop: !hasUnsavedData,
@@ -540,26 +922,36 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
         }
       },
       child: Scaffold(
+        backgroundColor: backgroundColor,
         appBar: AppBar(
+          forceMaterialTransparency: true,
+          backgroundColor: backgroundColor,
+          foregroundColor: theme.primaryColor,
+          elevation: 0,
           title: Text(
             widget.invoiceToEdit != null ? 'Edit Invoice' : 'Create Invoice',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white : Colors.black,
+            ),
           ),
           leading: IconButton(
-            icon: const HugeIcon(icon: HugeIcons.strokeRoundedArrowLeft01),
             onPressed: () =>
                 handleNavigation(() => Navigator.of(context).pop()),
+            icon: HugeIcon(
+              icon: HugeIcons.strokeRoundedArrowLeft01,
+              color: isDark ? Colors.white : Colors.black,
+            ),
           ),
         ),
         body: Consumer2<ConnectivityService, SessionService>(
           builder: (context, connectivityService, sessionService, child) {
-            if (!connectivityService.isConnected) {
+            // Offline: the form still opens on cached reference data so an
+            // existing invoice can be reviewed; saving is blocked in
+            // _saveInvoice with a clear message.
+            if (!connectivityService.isConnected && _journals.isEmpty) {
               return ConnectionStatusWidget(
-                onRetry: () {
-                  if (connectivityService.isConnected &&
-                      sessionService.hasValidSession) {
-                    _loadInitialData();
-                  }
-                },
+                onRetry: _loadInitialData,
                 customMessage:
                     'No internet connection. Please check your connection and try again.',
               );
@@ -581,113 +973,137 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
               return const Center(child: CircularProgressIndicator());
             }
 
-            return Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildCustomerSection(isDark),
-                          const SizedBox(height: 24),
-                          _buildInvoiceDetailsSection(isDark),
-                          const SizedBox(height: 24),
-                          _buildLineItemsSection(isDark),
-                          const SizedBox(height: 24),
-                          _buildAdditionalNotesSection(isDark),
-                          const SizedBox(height: 8),
-                        ],
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!connectivityService.isConnected)
+                      OfflineDataBanner(
+                        onRetry: _loadInitialData,
+                        message: "You're offline — saving is unavailable",
                       ),
-                    ),
-                  ),
-                  _buildBottomActionBar(isDark),
-                ],
+                    _buildCustomerSection(isDark),
+                    _buildInvoiceDetailsSection(isDark),
+                    _buildLineItemsSection(isDark),
+                    _buildAdditionalNotesSection(isDark),
+                  ],
+                ),
               ),
             );
           },
+        ),
+        // Pinned under the form so saving never needs a scroll.
+        bottomNavigationBar: Consumer2<ConnectivityService, SessionService>(
+          builder: (context, connectivityService, sessionService, child) =>
+              _isFormShown(connectivityService, sessionService)
+              ? PinnedActionBar(child: _buildSaveButton(isDark))
+              : const SizedBox.shrink(),
         ),
       ),
     );
   }
 
+  /// Whether the form itself is on screen — as opposed to the offline,
+  /// session, error or loading states that replace it — and so whether it has
+  /// a Save button to pin. Mirrors the checks the body makes, in order.
+  bool _isFormShown(
+    ConnectivityService connectivityService,
+    SessionService sessionService,
+  ) {
+    if (!connectivityService.isConnected && _journals.isEmpty) return false;
+    if (!sessionService.hasValidSession) return false;
+    if (_errorMessage != null) return false;
+    return !(_isLoading && !_isSaving);
+  }
+
   Widget _buildCustomerSection(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark
-                ? Colors.black.withOpacity(0.18)
-                : Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
+    return MoboFormCard(
+      title: 'Customer Information',
+      children: [
+        _buildCustomerDropdown(isDark),
+        if (_selectedCustomer != null && !_isCustomerPickerOpen) ...[
+          const SizedBox(height: 16),
+          _buildSelectedCustomerTile(isDark),
         ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
-              ),
-            ),
-            child: Text(
-              'Customer',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : Colors.grey[900],
-                letterSpacing: -0.3,
-              ),
-            ),
-          ),
-          Divider(
-            height: 1,
-            color: isDark ? Colors.grey[700] : Colors.grey[200],
-          ),
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              children: [
-                _selectedCustomer != null
-                    ? _buildSelectedCustomerTile(isDark)
-                    : _buildCustomerDropdown(isDark),
-                if (_selectedCustomer != null &&
-                    _shippingAddresses.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _buildShippingAddressDropdown(isDark),
-                ],
-              ],
-            ),
-          ),
+        if (_selectedCustomer != null && _shippingAddresses.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _buildShippingAddressDropdown(isDark),
         ],
-      ),
+      ],
     );
   }
 
-  Widget _buildCustomerDropdown(bool isDark) {
-    return CustomerTypeAhead(
-      controller: _customerSearchController,
-      labelText: 'Customer',
-      hintText: 'Search customers...',
-      isDark: isDark,
-      onCustomerSelected: (customer) {
-        FocusScope.of(context).unfocus();
+  /// Looks products up on the server for the inline dropdown panel.
+  Future<List<Product>> _searchProducts(String query) async {
+    // The line-item dropdown shows no thumbnails, so skip the images.
+    final results = await _apiService.searchProducts(
+      query,
+      limit: query.isEmpty ? 20 : 100,
+      withImages: false,
+    );
+    return results.map((data) => Product.fromJson(data)).toList();
+  }
 
+  /// Looks customers up on the server for the inline dropdown panel.
+  Future<List<Contact>> _searchCustomers(String query) async {
+    final results = await _apiService.searchCustomers(
+      query,
+      limit: query.isEmpty ? 20 : 100,
+    );
+    return results
+        .map(
+          (data) => Contact(
+            id: data['id'] ?? 0,
+            name: data['name']?.toString() ?? 'Unknown',
+            email: data['email']?.toString(),
+            phone: data['phone']?.toString(),
+            mobile: data['mobile']?.toString(),
+            imageUrl: data['image_128'] is String
+                ? data['image_128'] as String
+                : null,
+            isCompany: data['is_company'] == true,
+          ),
+        )
+        .toList();
+  }
+
+  Widget _buildCustomerDropdown(bool isDark) {
+    return MoboInlineDropdown<Contact>(
+      label: 'Customer',
+      hintText: 'Search customers...',
+      isRequired: true,
+      leadingIcon: HugeIcons.strokeRoundedUser,
+      selectedLabel: _selectedCustomer?.name,
+      asyncSearch: _searchCustomers,
+      titleBuilder: (c) => c.name,
+      subtitleBuilder: (c) =>
+          (c.email != null && c.email!.isNotEmpty && c.email != 'false')
+          ? c.email
+          : null,
+      leadingBuilder: (c) => CircularImageWidget(
+        base64Image: c.imageUrl,
+        radius: 18,
+        fallbackText: c.name,
+      ),
+      isItemSelected: (c) => _selectedCustomer?.id == c.id,
+      emptyText: 'No customers found',
+      onOpenChanged: (isOpen) {
+        if (mounted) setState(() => _isCustomerPickerOpen = isOpen);
+
+      },
+      onItemTap: (customer) {
+        FocusScope.of(context).unfocus();
         setState(() {
           _selectedCustomer = customer;
           _customerSearchController.text = customer.name;
         });
         _loadShippingAddresses(customer.id);
       },
+      // No clear (×) here: once a customer is chosen, the card beneath the
+      // field has its own × to remove them.
       validator: (value) =>
           _selectedCustomer == null ? 'Please select a customer' : null,
     );
@@ -742,9 +1158,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                               child: Text(
                                 'Company',
                                 style: TextStyle(
-                                  color: isDark
-                                      ? Colors.white
-                                      : Theme.of(context).primaryColor,
+                                  color: Theme.of(context).primaryColor,
                                   fontSize: 10,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -773,6 +1187,8 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                         _selectedCustomer = null;
                         _customerSearchController.clear();
                         _showCustomerDropdown = false;
+                        _shippingAddresses = [];
+                        _selectedShippingAddressId = null;
                       });
                     },
                   ),
@@ -871,694 +1287,260 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
   }
 
   Widget _buildInvoiceDetailsSection(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark
-                ? Colors.black.withOpacity(0.18)
-                : Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+    return MoboFormCard(
+      title: 'Invoice Details',
+      children: [
+        MoboDateField(
+          label: 'Invoice Date',
+          value: _invoiceDate,
+          isRequired: true,
+          formatter: (d) => DateFormat('MMM dd, yyyy').format(d),
+          onTap: () => _selectDate(
+            initialDate: _invoiceDate,
+            helpText: 'Select Invoice Date',
+            onConfirm: (date) => setState(() => _invoiceDate = date),
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            child: Text(
-              'Invoice Details',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : Colors.grey[900],
-                letterSpacing: -0.3,
-              ),
-            ),
+        ),
+        const SizedBox(height: 16),
+        MoboDateField(
+          label: 'Due Date',
+          value: _dueDate,
+          formatter: (d) => DateFormat('MMM dd, yyyy').format(d),
+          onTap: () => _selectDate(
+            initialDate: _dueDate,
+            helpText: 'Select Due Date',
+            onConfirm: (date) => setState(() => _dueDate = date),
           ),
-          Divider(
-            height: 1,
-            color: isDark ? Colors.grey[700] : Colors.grey[200],
-          ),
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              children: [
-                _buildDatePicker(
-                  label: 'Invoice Date',
-                  selectedDate: _invoiceDate,
-                  onConfirm: (date) {
-                    setState(() => _invoiceDate = date);
-                  },
-                  isDark: isDark,
-                ),
-                const SizedBox(height: 16),
-                _buildDatePicker(
-                  label: 'Due Date',
-                  selectedDate: _dueDate,
-                  onConfirm: (date) {
-                    setState(() => _dueDate = date);
-                  },
-                  isDark: isDark,
-                ),
-                const SizedBox(height: 16),
-                _buildPaymentTermDropdown(isDark),
-                const SizedBox(height: 16),
-                _buildJournalDropdown(isDark),
-                const SizedBox(height: 16),
-                _buildCurrencyDropdown(isDark),
-                const SizedBox(height: 16),
-                CustomTextField(
-                  name: 'reference',
-                  controller: _referenceController,
-                  labelText: 'Reference (Optional)',
-                  hintText: 'Enter reference number',
-                  validator: (v) => null,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 16),
+        _buildPaymentTermDropdown(isDark),
+        const SizedBox(height: 16),
+        _buildJournalDropdown(isDark),
+        const SizedBox(height: 16),
+        _buildCurrencyDropdown(isDark),
+        const SizedBox(height: 16),
+        MoboTextField(
+          controller: _referenceController,
+          label: 'Reference',
+          hintText: 'Enter reference number',
+          leadingIcon: HugeIcons.strokeRoundedTag01,
+        ),
+      ],
     );
   }
 
-  Widget _buildDatePicker({
-    required String label,
-    required DateTime selectedDate,
-    required Function(DateTime) onConfirm,
-    required bool isDark,
-  }) {
-    return InkWell(
-      onTap: () async {
-        final date = await DatePickerUtils.showStandardDatePicker(
-          context: context,
-          initialDate: selectedDate,
-          firstDate: DateTime(2000),
-          lastDate: DateTime(2100),
-        );
-        if (date != null) {
-          onConfirm(date);
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-          ),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            HugeIcon(
-              icon: HugeIcons.strokeRoundedCalendar03,
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    DateFormat('MMM dd, yyyy').format(selectedDate),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+  Future<void> _selectDate({
+    required DateTime initialDate,
+    required String helpText,
+    required ValueChanged<DateTime> onConfirm,
+  }) async {
+    final date = await DatePickerUtils.showStandardDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      helpText: helpText,
+      cancelText: 'Cancel',
+      confirmText: 'Select',
     );
+
+    if (date != null && mounted) onConfirm(date);
   }
 
   Widget _buildPaymentTermDropdown(bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Payment Terms',
-          style: TextStyle(
-            color: isDark ? Colors.white70 : const Color(0xff7F7F7F),
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-        const SizedBox(height: 8),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return PopupMenuButton<PaymentTerm>(
-              initialValue: _selectedPaymentTerm,
-              constraints: BoxConstraints(
-                minWidth: constraints.maxWidth,
-                maxWidth: constraints.maxWidth,
-                maxHeight: 400,
-              ),
-              offset: const Offset(0, 56),
-              color: isDark ? Colors.grey[850] : Colors.white,
-              surfaceTintColor: Colors.transparent,
-              onSelected: (value) {
-                setState(() => _selectedPaymentTerm = value);
-              },
-              itemBuilder: (context) => _paymentTerms.isEmpty
-                  ? [
-                      PopupMenuItem<PaymentTerm>(
-                        enabled: false,
-                        child: Text(
-                          'No records found',
-                          style: GoogleFonts.manrope(
-                            color: isDark ? Colors.white54 : Colors.grey[600],
-                          ),
-                        ),
-                      ),
-                    ]
-                  : _paymentTerms
-                        .map(
-                          (term) => PopupMenuItem<PaymentTerm>(
-                            value: term,
-                            child: Text(
-                              term.name,
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w500,
-                                color: isDark ? Colors.white : Colors.black87,
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 16,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: isDark
-                      ? const Color(0xFF2A2A2A)
-                      : const Color(0xffF8FAFB),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _paymentTerms.isEmpty
-                            ? 'No records found'
-                            : (_selectedPaymentTerm?.name ??
-                                  'Select payment term'),
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDark
-                              ? Colors.white70
-                              : (_paymentTerms.isEmpty
-                                    ? Colors.grey
-                                    : const Color(0xff000000)),
-                        ),
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_drop_down,
-                      color: isDark ? Colors.white70 : Colors.grey[700],
-                      size: 24,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
+    final selected = _paymentTerms
+        .where((t) => t.id == _selectedPaymentTerm?.id)
+        .toList();
+
+    return MoboInlineDropdown<PaymentTerm>(
+      label: 'Payment Terms',
+      hintText: 'Select payment terms',
+      leadingIcon: HugeIcons.strokeRoundedCalendarCheckIn01,
+      selectedLabel: selected.isNotEmpty ? selected.first.name : null,
+      items: _paymentTerms,
+      titleBuilder: (term) => term.name,
+      isItemSelected: (term) => term.id == _selectedPaymentTerm?.id,
+      emptyText: 'No payment terms found',
+      onItemTap: (term) => setState(() => _selectedPaymentTerm = term),
+      onClear: () => setState(() => _selectedPaymentTerm = null),
     );
   }
 
   Widget _buildJournalDropdown(bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Journal',
-          style: TextStyle(
-            color: isDark ? Colors.white70 : const Color(0xff7F7F7F),
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-        const SizedBox(height: 8),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return PopupMenuButton<int>(
-              initialValue: _selectedJournalId,
-              constraints: BoxConstraints(
-                minWidth: constraints.maxWidth,
-                maxWidth: constraints.maxWidth,
-                maxHeight: 400,
-              ),
-              offset: const Offset(0, 56),
-              color: isDark ? Colors.grey[850] : Colors.white,
-              surfaceTintColor: Colors.transparent,
-              onSelected: (value) {
-                setState(() => _selectedJournalId = value);
-              },
-              itemBuilder: (context) => _journals.isEmpty
-                  ? [
-                      PopupMenuItem<int>(
-                        enabled: false,
-                        child: Text(
-                          'No records found',
-                          style: GoogleFonts.manrope(
-                            color: isDark ? Colors.white54 : Colors.grey[600],
-                          ),
-                        ),
-                      ),
-                    ]
-                  : _journals
-                        .map(
-                          (j) => PopupMenuItem<int>(
-                            value: j['id'] as int,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  j['name'] ?? 'Unknown',
-                                  style: GoogleFonts.manrope(
-                                    fontWeight: FontWeight.w500,
-                                    color: isDark
-                                        ? Colors.white
-                                        : Colors.black87,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '${j['type']?.toString().toUpperCase() ?? ''} • ${j['code'] ?? ''}',
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 12,
-                                    color: isDark
-                                        ? Colors.grey[400]
-                                        : Colors.grey[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                        .toList(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 16,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: isDark
-                      ? const Color(0xFF2A2A2A)
-                      : const Color(0xffF8FAFB),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        (() {
-                          if (_journals.isEmpty) return 'No records found';
-                          final j = _journals.firstWhere(
-                            (j) => j['id'] == _selectedJournalId,
-                            orElse: () => {'name': ''},
-                          );
-                          return '${j['name']} ${j['code'] != null ? '(${j['code']})' : ''}';
-                        })(),
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDark
-                              ? Colors.white70
-                              : (_journals.isEmpty
-                                    ? Colors.grey
-                                    : const Color(0xff000000)),
-                        ),
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_drop_down,
-                      color: isDark ? Colors.white70 : Colors.grey[700],
-                      size: 24,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
+    return MoboInlineDropdown<Map<String, dynamic>>(
+      label: 'Journal',
+      hintText: 'Select journal',
+      leadingIcon: HugeIcons.strokeRoundedBook02,
+      selectedLabel: _labelFor(_journals, _selectedJournalId, 'name'),
+      items: _journals,
+      titleBuilder: (j) => j['name']?.toString() ?? 'Unknown',
+      subtitleBuilder: (j) =>
+          (j['code'] != null && j['code'] != false) ? '${j['code']}' : null,
+      isItemSelected: (j) => j['id'] == _selectedJournalId,
+      emptyText: 'No journals found',
+      onItemTap: (j) => setState(() => _selectedJournalId = j['id'] as int?),
     );
   }
 
+  /// Display label for the record with [id] inside [options].
+  String? _labelFor(List<Map<String, dynamic>> options, int? id, String field) {
+    if (id == null) return null;
+    final match = options.where((o) => o['id'] == id).toList();
+    return match.isEmpty ? null : match.first[field]?.toString();
+  }
+
   Widget _buildCurrencyDropdown(bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Currency',
-          style: TextStyle(
-            color: isDark ? Colors.white70 : const Color(0xff7F7F7F),
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-        const SizedBox(height: 8),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return PopupMenuButton<int>(
-              initialValue: _selectedCurrencyId,
-              constraints: BoxConstraints(
-                minWidth: constraints.maxWidth,
-                maxWidth: constraints.maxWidth,
-                maxHeight: 400,
-              ),
-              offset: const Offset(0, 56),
-              color: isDark ? Colors.grey[850] : Colors.white,
-              surfaceTintColor: Colors.transparent,
-              onSelected: (value) {
-                setState(() => _selectedCurrencyId = value);
-              },
-              itemBuilder: (context) => _currencies.isEmpty
-                  ? [
-                      PopupMenuItem<int>(
-                        enabled: false,
-                        child: Text(
-                          'No records found',
-                          style: GoogleFonts.manrope(
-                            color: isDark ? Colors.white54 : Colors.grey[600],
-                          ),
-                        ),
-                      ),
-                    ]
-                  : _currencies
-                        .map(
-                          (c) => PopupMenuItem<int>(
-                            value: c['id'] as int,
-                            child: Text(
-                              '${c['name']} (${c['symbol']})',
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w500,
-                                color: isDark ? Colors.white : Colors.black87,
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 16,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: isDark
-                      ? const Color(0xFF2A2A2A)
-                      : const Color(0xffF8FAFB),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        (() {
-                          if (_currencies.isEmpty) return 'No records found';
-                          final c = _currencies.firstWhere(
-                            (c) => c['id'] == _selectedCurrencyId,
-                            orElse: () => {'name': '', 'symbol': ''},
-                          );
-                          return '${c['name']} (${c['symbol']})';
-                        })(),
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDark
-                              ? Colors.white70
-                              : (_currencies.isEmpty
-                                    ? Colors.grey
-                                    : const Color(0xff000000)),
-                        ),
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_drop_down,
-                      color: isDark ? Colors.white70 : Colors.grey[700],
-                      size: 24,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
+    final selected = _currencies
+        .where((c) => c['id'] == _selectedCurrencyId)
+        .toList();
+
+    return MoboInlineDropdown<Map<String, dynamic>>(
+      label: 'Currency',
+      hintText: 'Select currency',
+      leadingIcon: HugeIcons.strokeRoundedDollarCircle,
+      selectedLabel: selected.isEmpty
+          ? null
+          : '${selected.first['name'] ?? ''} (${selected.first['symbol'] ?? ''})',
+      items: _currencies,
+      titleBuilder: (c) => '${c['name'] ?? ''} (${c['symbol'] ?? ''})',
+      isItemSelected: (c) => c['id'] == _selectedCurrencyId,
+      emptyText: 'No currencies found',
+      onItemTap: (c) => setState(() => _selectedCurrencyId = c['id'] as int?),
     );
   }
 
   Widget _buildShippingAddressDropdown(bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Shipping Address',
-          style: TextStyle(
-            color: isDark ? Colors.white70 : const Color(0xff7F7F7F),
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-        const SizedBox(height: 8),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return PopupMenuButton<int>(
-              initialValue: _selectedShippingAddressId,
-              constraints: BoxConstraints(
-                minWidth: constraints.maxWidth,
-                maxWidth: constraints.maxWidth,
-                maxHeight: 400,
-              ),
-              offset: const Offset(0, 56),
-              color: isDark ? Colors.grey[850] : Colors.white,
-              surfaceTintColor: Colors.transparent,
-              onSelected: (value) {
-                setState(() => _selectedShippingAddressId = value);
-              },
-              itemBuilder: (context) => _shippingAddresses.isEmpty
-                  ? [
-                      PopupMenuItem<int>(
-                        enabled: false,
-                        child: Text(
-                          'No records found',
-                          style: GoogleFonts.manrope(
-                            color: isDark ? Colors.white54 : Colors.grey[600],
-                          ),
-                        ),
-                      ),
-                    ]
-                  : _shippingAddresses
-                        .map(
-                          (addr) => PopupMenuItem<int>(
-                            value: addr['id'] as int,
-                            child: Text(
-                              addr['name'] ?? 'Unknown',
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w500,
-                                color: isDark ? Colors.white : Colors.black87,
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 16,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: isDark
-                      ? const Color(0xFF2A2A2A)
-                      : const Color(0xffF8FAFB),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _shippingAddresses.isEmpty
-                            ? 'No records found'
-                            : (_shippingAddresses.firstWhere(
-                                    (addr) =>
-                                        addr['id'] ==
-                                        _selectedShippingAddressId,
-                                    orElse: () => {'name': ''},
-                                  )['name'] ??
-                                  ''),
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDark
-                              ? Colors.white70
-                              : (_shippingAddresses.isEmpty
-                                    ? Colors.grey
-                                    : const Color(0xff000000)),
-                        ),
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_drop_down,
-                      color: isDark ? Colors.white70 : Colors.grey[700],
-                      size: 24,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
+    return MoboInlineDropdown<Map<String, dynamic>>(
+      label: 'Delivery Address',
+      hintText: 'Select delivery address',
+      leadingIcon: HugeIcons.strokeRoundedLocation01,
+      selectedLabel: _addressLabel(
+        _shippingAddresses
+            .where((a) => a['id'] == _selectedShippingAddressId)
+            .firstOrNull,
+      ),
+      items: _shippingAddresses,
+      titleBuilder: (a) => a['name']?.toString() ?? 'Address',
+      subtitleBuilder: _addressLabel,
+      isItemSelected: (a) => a['id'] == _selectedShippingAddressId,
+      emptyText: 'No delivery addresses found',
+      onItemTap: (a) =>
+          setState(() => _selectedShippingAddressId = a['id'] as int?),
     );
   }
 
+  String? _addressLabel(Map<String, dynamic>? address) {
+    if (address == null) return null;
+    final parts = [
+      address['street'],
+      address['city'],
+    ].where((e) => e != null && e != false && '$e'.isNotEmpty).join(', ');
+    return parts.isEmpty ? address['name']?.toString() : parts;
+  }
+
   Widget _buildLineItemsSection(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark
-                ? Colors.black.withOpacity(0.18)
-                : Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return MoboFormCard(
+      title: 'Products',
+      children: [
+        MoboInlineDropdown<Product>(
+          label: 'Add Product',
+          hintText: 'Search products...',
+          leadingIcon: HugeIcons.strokeRoundedPackage,
+          asyncSearch: _searchProducts,
+          titleBuilder: (p) => p.name,
+          subtitleBuilder: (p) =>
+              (p.defaultCode != null && p.defaultCode!.isNotEmpty)
+              ? 'SKU: ${p.defaultCode}'
+              : null,
+          emptyText: 'No products found',
+          onItemTap: (product) {
+            setState(() {
+              _invoiceLines.insert(0, {
+                'product_id': product.id,
+                'product_name': product.name,
+                'product_default_code': product.defaultCode,
+                'quantity': 1.0,
+                'unit_price': product.listPrice ?? 0.0,
+                'discount': 0.0,
+                'tax_ids': <int>[],
+                'product_uom_id': product.uomId,
+                'subtotal': product.listPrice ?? 0.0,
+              });
+              _productSearchController.clear();
+            });
+          },
+        ),
+        const SizedBox(height: 20),
+        if (_invoiceLines.isEmpty)
           Container(
-            padding: const EdgeInsets.all(18),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            width: double.infinity,
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.grey[800] : Colors.grey[100],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isDark ? Colors.grey[700]! : Colors.grey[200]!,
+              ),
+            ),
+            child: Column(
               children: [
+                HugeIcon(
+                  icon: HugeIcons.strokeRoundedShoppingBasket01,
+                  size: 48,
+                  color: (isDark ? Colors.grey[600] : Colors.grey[400])!,
+                ),
+                const SizedBox(height: 16),
                 Text(
-                  'Line Items',
+                  'No products added yet',
                   style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white : Colors.grey[900],
-                    letterSpacing: -0.3,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Search above to add your first product',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: isDark ? Colors.grey[500] : Colors.grey[500],
                   ),
                 ),
               ],
             ),
+          )
+        else
+          Column(
+            children: [
+              ...List.generate(_invoiceLines.length, (index) {
+                return _buildInvoiceLineCard(index, isDark);
+              }),
+              const SizedBox(height: 16),
+              _buildTotalSection(isDark),
+            ],
           ),
-          Divider(
-            height: 1,
-            color: isDark ? Colors.grey[700] : Colors.grey[200],
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 24.0,
-              vertical: 16.0,
-            ),
-            child: ProductTypeAhead(
-              controller: _productSearchController,
-              labelText: 'Search Product to Add',
-              isDark: isDark,
-              onProductSelected: (product) {
-                setState(() {
-                  _invoiceLines.insert(0, {
-                    'product_id': product.id,
-                    'product_name': product.name,
-                    'product_default_code': product.defaultCode,
-                    'quantity': 1.0,
-                    'unit_price': product.listPrice ?? 0.0,
-                    'discount': 0.0,
-                    'tax_ids': <int>[],
-                    'product_uom_id': product.uomId,
-                    'subtotal': product.listPrice ?? 0.0,
-                  });
-                  _productSearchController.clear();
-                });
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              children: [
-                if (_invoiceLines.isEmpty)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32.0),
-                      child: Column(
-                        children: [
-                          HugeIcon(
-                            icon: HugeIcons.strokeRoundedInvoice03,
-                            size: 48,
-                            color: isDark ? Colors.grey[600] : Colors.grey[400],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No line items added yet',
-                            style: TextStyle(
-                              color: isDark
-                                  ? Colors.grey[400]
-                                  : Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  ...List.generate(_invoiceLines.length, (index) {
-                    return _buildInvoiceLineCard(index, isDark);
-                  }),
-                if (_invoiceLines.isNotEmpty) ...[
-                  const SizedBox(height: 24),
-                  _buildTotalSection(isDark),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
+      ],
     );
   }
 
   Widget _buildInvoiceLineCard(int index, bool isDark) {
     final line = _invoiceLines[index];
+    final theme = Theme.of(context);
     final cardColor = isDark ? Colors.grey[850] : Colors.white;
     final borderColor = isDark ? Colors.grey[700]! : Colors.grey[200]!;
     final textColor = isDark ? Colors.white : Colors.black87;
     final secondaryTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
 
     return Container(
+      // Lines are inserted at the top; keyed by the line itself so each
+      // card keeps its own quantity/price inputs instead of inheriting the
+      // state of whichever line used to sit at this index.
+      key: ObjectKey(line),
       margin: const EdgeInsets.only(bottom: 12),
       child: Card(
+        // The theme gives cards 8px side margins, which left this one
+        // narrower than the search field above it and the totals below.
+        margin: EdgeInsets.zero,
         color: cardColor,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -1579,9 +1561,8 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                       children: [
                         Text(
                           line['product_name']?.toString() ?? 'Unnamed Product',
-                          style: TextStyle(
+                          style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w600,
-                            fontSize: 15,
                             color: textColor,
                           ),
                           maxLines: 2,
@@ -1600,8 +1581,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
                                 'SKU: $sku',
-                                style: TextStyle(
-                                  fontSize: 12,
+                                style: theme.textTheme.bodySmall?.copyWith(
                                   color: secondaryTextColor,
                                 ),
                               ),
@@ -1623,7 +1603,10 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                 ],
               ),
               const SizedBox(height: 12),
+              // Quantity and price share the full row; the line total gets a
+              // row of its own so neither input is squeezed by it.
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: Column(
@@ -1631,13 +1614,12 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                       children: [
                         Text(
                           'Quantity',
-                          style: TextStyle(
-                            fontSize: 11,
+                          style: theme.textTheme.labelSmall?.copyWith(
                             color: secondaryTextColor,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        _InvoiceQuantityInput(
+                        const SizedBox(height: 6),
+                        LineQuantityInput(
                           initialValue: (line['quantity'] as num).toDouble(),
                           onChanged: (value) {
                             setState(() {
@@ -1646,24 +1628,24 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                             });
                           },
                           isDark: isDark,
+                          showStepper: true,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Unit Price',
-                          style: TextStyle(
-                            fontSize: 11,
+                          style: theme.textTheme.labelSmall?.copyWith(
                             color: secondaryTextColor,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        _InvoicePriceInput(
+                        const SizedBox(height: 6),
+                        LinePriceInput(
                           initialValue: (line['unit_price'] as num).toDouble(),
                           onChanged: (value) {
                             setState(() {
@@ -1677,27 +1659,30 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
                       ],
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Total',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: secondaryTextColor,
-                        ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Text(
+                    'Total',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: secondaryTextColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '$_currentCurrencySymbol${(line['subtotal'] as double).toStringAsFixed(2)}',
+                      textAlign: TextAlign.right,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.primaryColor,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '$_currentCurrencySymbol${(line['subtotal'] as double).toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).primaryColor,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -1710,18 +1695,21 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
 
   Widget _buildTotalSection(bool isDark) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: isDark ? Colors.grey[700] : Colors.grey[50],
+        color: Theme.of(context).primaryColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).primaryColor.withOpacity(0.3),
+        ),
       ),
       child: Column(
         children: [
-          _buildTotalRow('Subtotal', _subtotal, isDark, false),
+          _buildTotalRow('Subtotal:', _subtotal, isDark, false),
           const SizedBox(height: 8),
-          _buildTotalRow('Tax', _taxAmount, isDark, false),
-          const Divider(),
-          _buildTotalRow('Total', _total, isDark, true),
+          _buildTotalRow('Tax:', _taxAmount, isDark, false),
+          const SizedBox(height: 12),
+          _buildTotalRow('Total Amount:', _total, isDark, true),
         ],
       ),
     );
@@ -1752,377 +1740,44 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen>
   }
 
   Widget _buildAdditionalNotesSection(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark
-                ? Colors.black.withOpacity(0.18)
-                : Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            child: Text(
-              'Additional Notes',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : Colors.grey[900],
-                letterSpacing: -0.3,
-              ),
-            ),
-          ),
-          Divider(
-            height: 1,
-            color: isDark ? Colors.grey[700] : Colors.grey[200],
-          ),
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              children: [
-                CustomTextField(
-                  name: 'notes',
-                  controller: _notesController,
-                  labelText: 'Customer Notes',
-                  hintText: 'Add any notes for the customer...',
-                  maxLines: 4,
-                  validator: (v) => null,
-                ),
-                const SizedBox(height: 16),
-                CustomTextField(
-                  name: 'terms',
-                  controller: _termsController,
-                  labelText: 'Terms & Conditions',
-                  hintText:
-                      'Add terms and conditions (e.g., https://example.com/terms)',
-                  maxLines: 4,
-                  validator: (v) => null,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBottomActionBar(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Container(
-          width: double.infinity,
-          height: 56,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
-          child: ElevatedButton.icon(
-            onPressed: (_isLoading || _invoiceLines.isEmpty)
-                ? null
-                : _saveInvoice,
-            icon: _isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  )
-                : const HugeIcon(
-                    icon: HugeIcons.strokeRoundedFileAdd,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-            label: Text(
-              _isLoading
-                  ? (widget.invoiceToEdit != null
-                        ? 'Updating Invoice...'
-                        : 'Creating Invoice...')
-                  : (widget.invoiceToEdit != null
-                        ? 'Update Invoice'
-                        : 'Create Invoice'),
-              style: GoogleFonts.manrope(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryColor,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              shadowColor: Colors.transparent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-              disabledBackgroundColor: isDark
-                  ? Colors.grey[700]
-                  : Colors.grey[400],
-            ),
-          ),
+    return MoboFormCard(
+      title: 'Additional Information',
+      children: [
+        MoboTextField(
+          controller: _notesController,
+          label: 'Customer Notes',
+          hintText: 'Add any notes for the customer...',
+          maxLines: 4,
         ),
-      ),
-    );
-  }
-}
-
-class _InvoiceQuantityInput extends StatefulWidget {
-  final double initialValue;
-  final Function(double) onChanged;
-  final bool isDark;
-
-  const _InvoiceQuantityInput({
-    required this.initialValue,
-    required this.onChanged,
-    required this.isDark,
-  });
-
-  @override
-  _InvoiceQuantityInputState createState() => _InvoiceQuantityInputState();
-}
-
-class _InvoiceQuantityInputState extends State<_InvoiceQuantityInput> {
-  late TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(
-      text: widget.initialValue.toStringAsFixed(0),
-    );
-    _controller.addListener(_onQuantityChanged);
-  }
-
-  @override
-  void dispose() {
-    _controller.removeListener(_onQuantityChanged);
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onQuantityChanged() {
-    final value = double.tryParse(_controller.text) ?? 0.0;
-    widget.onChanged(value > 0 ? value : 1.0);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = widget.isDark;
-
-    return SizedBox(
-      height: 40,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1F1F1F) : Colors.white,
-          border: Border.all(
-            color: isDark ? Colors.grey[800]! : theme.dividerColor,
-          ),
-          borderRadius: BorderRadius.circular(8),
+        const SizedBox(height: 16),
+        MoboTextField(
+          controller: _termsController,
+          label: 'Terms & Conditions',
+          hintText: 'Add terms and conditions',
+          maxLines: 4,
         ),
-        child: Row(
-          children: [
-            IconButton(
-              icon: Icon(
-                Icons.remove,
-                size: 18,
-                color: isDark ? Colors.white : Colors.black38,
-              ),
-              onPressed: () {
-                final currentValue = double.tryParse(_controller.text) ?? 1.0;
-                if (currentValue > 1) {
-                  _controller.text = (currentValue - 1).toInt().toString();
-                }
-              },
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(),
-              style: IconButton.styleFrom(
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.horizontal(
-                    left: Radius.circular(6),
-                  ),
-                ),
-              ),
-            ),
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                textAlign: TextAlign.center,
-                keyboardType: TextInputType.number,
-                style: TextStyle(color: isDark ? Colors.white : null),
-                decoration: InputDecoration(
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  errorBorder: InputBorder.none,
-                  disabledBorder: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 8,
-                    horizontal: 4,
-                  ),
-                  isDense: true,
-                  counterText: '',
-                  filled: true,
-                  fillColor: Colors.transparent,
-                ),
-              ),
-            ),
-            IconButton(
-              icon: Icon(
-                Icons.add,
-                size: 18,
-                color: isDark ? Colors.white : Colors.black38,
-              ),
-              onPressed: () {
-                final currentValue = double.tryParse(_controller.text) ?? 0.0;
-                _controller.text = (currentValue + 1).toInt().toString();
-              },
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(),
-              style: IconButton.styleFrom(
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.horizontal(
-                    right: Radius.circular(6),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      ],
     );
   }
-}
 
-class _InvoicePriceInput extends StatefulWidget {
-  final double initialValue;
-  final Function(double) onChanged;
-  final bool isDark;
-  final String currencySymbol;
-
-  const _InvoicePriceInput({
-    required this.initialValue,
-    required this.onChanged,
-    required this.isDark,
-    required this.currencySymbol,
-  });
-
-  @override
-  _InvoicePriceInputState createState() => _InvoicePriceInputState();
-}
-
-class _InvoicePriceInputState extends State<_InvoicePriceInput> {
-  late TextEditingController _controller;
-  final _focusNode = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(
-      text: widget.initialValue.toStringAsFixed(2),
-    );
-    _controller.addListener(_onPriceChanged);
-  }
-
-  @override
-  void dispose() {
-    _controller.removeListener(_onPriceChanged);
-    _controller.dispose();
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  void _onPriceChanged() {
-    final cleanText = _controller.text.replaceAll(RegExp(r'[^\d.]'), '');
-    final value = double.tryParse(cleanText) ?? 0.0;
-    widget.onChanged(value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = widget.isDark;
-
-    return SizedBox(
-      height: 40,
-      child: TextField(
-        controller: _controller,
-        focusNode: _focusNode,
-        textAlign: TextAlign.right,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        style: TextStyle(color: isDark ? Colors.white : null),
-        decoration: InputDecoration(
-          prefixIcon: Padding(
-            padding: const EdgeInsets.only(
-              left: 12,
-              right: 8,
-              top: 12,
-              bottom: 12,
-            ),
-            child: Text(
-              widget.currencySymbol,
-              style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey),
-            ),
-          ),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 0,
-            minHeight: 0,
-          ),
-          filled: true,
-          fillColor: isDark ? const Color(0xFF1F1F1F) : Colors.white,
-          contentPadding: const EdgeInsets.symmetric(
-            vertical: 8,
-            horizontal: 12,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.grey[800]! : theme.dividerColor,
-            ),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.grey[800]! : theme.dividerColor,
-            ),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(
-              color: isDark ? Colors.blue[300]! : theme.primaryColor,
-              width: 1.5,
-            ),
-          ),
-          isDense: true,
-        ),
-        onTap: () {
-          _controller.selection = TextSelection(
-            baseOffset: 0,
-            extentOffset: _controller.text.length,
-          );
-        },
-      ),
+  Widget _buildSaveButton(bool isDark) {
+    final isEditing = widget.invoiceToEdit != null;
+    return ListenableBuilder(
+      listenable: _savedTextFields,
+      builder: (context, _) {
+        // An edit that changes nothing has nothing to submit.
+        final nothingToSave = isEditing && !_hasEdits;
+        return MoboSubmitButton(
+          label: isEditing ? 'Update Invoice' : 'Create Invoice',
+          loadingLabel: isEditing ? 'Updating Invoice' : 'Creating Invoice',
+          isLoading: _isLoading,
+          isReady:
+              !nothingToSave &&
+              _selectedCustomer != null &&
+              _invoiceLines.isNotEmpty,
+          onPressed: nothingToSave ? null : _saveInvoice,
+        );
+      },
     );
   }
 }

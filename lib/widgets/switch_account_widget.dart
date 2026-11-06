@@ -19,39 +19,39 @@ class SwitchAccountWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final iconColor = isDark ? Colors.white70 : Colors.black54;
-    final subtitleColor = isDark ? Colors.white38 : Colors.black38;
+    final secondary = isDark ? Colors.grey[400]! : Colors.grey[600]!;
 
     return Consumer<SessionService>(
       builder: (context, sessionService, child) {
-        final currentSession = sessionService.currentSession;
-
         final otherAccounts = sessionService.storedAccounts.where((account) {
           return !_isCurrentAccount(account, sessionService);
         }).toList();
         final accountCount = otherAccounts.length;
 
         return ExpansionTile(
+          // Without these, an expanded ExpansionTile draws divider-coloured
+          // lines above and below itself.
           shape: const Border(),
           collapsedShape: const Border(),
+          // The chevron turns brand-coloured while the row is open.
+          iconColor: AppTheme.primaryColor,
+          collapsedIconColor: secondary,
           leading: HugeIcon(
             icon: HugeIcons.strokeRoundedUserSwitch,
-            color: iconColor,
+            color: secondary,
           ),
-          trailing: HugeIcon(
-            icon: HugeIcons.strokeRoundedArrowDown01,
-            color: iconColor,
-            size: 20,
-          ),
-          title: const Text(
+          title: Text(
             'Switch Accounts',
-            style: TextStyle(fontWeight: FontWeight.w500),
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black87,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           subtitle: Text(
             accountCount > 0
                 ? '$accountCount other account${accountCount != 1 ? 's' : ''} available'
                 : 'Add multiple accounts to switch quickly',
-            style: TextStyle(color: subtitleColor, fontSize: 12),
+            style: TextStyle(color: secondary),
           ),
           children: [
             if (accountCount == 0)
@@ -107,21 +107,40 @@ class SwitchAccountWidget extends StatelessWidget {
   Widget _buildEmptyState(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 24.0, horizontal: 24.0),
+      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          HugeIcon(
-            icon: HugeIcons.strokeRoundedUserSwitch,
-            color: isDark ? Colors.white10 : Colors.black12,
-            size: 48,
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Center(
+              child: HugeIcon(
+                icon: HugeIcons.strokeRoundedUserAdd01,
+                size: 30,
+                color: AppTheme.primaryColor,
+              ),
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Text(
-            'No other accounts stored. Add another account to quickly switch between them.',
+            'No Other Accounts',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white : Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Add multiple accounts to switch between them quickly',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: isDark ? Colors.white38 : Colors.black38,
-              fontSize: 13,
+              fontSize: 14,
+              color: isDark ? Colors.grey[400] : Colors.grey[600],
             ),
           ),
         ],
@@ -139,83 +158,86 @@ class SwitchAccountWidget extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: isDark ? Colors.grey[850] : Colors.grey[50],
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        color: isDark ? Colors.grey[800] : Colors.grey[50],
         border: Border.all(
-          color: isDark ? Colors.grey[800]! : Colors.grey[200]!,
+          color: isDark ? Colors.grey[700]! : Colors.grey[200]!,
         ),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: _buildUserAvatar(account, isDark),
-        title: Text(
-          account['userName'] ?? account['userLogin'] ?? 'Unknown User',
-          style: TextStyle(
-            color: isDark ? Colors.white : Colors.black87,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 8,
           ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${account['userLogin']} @ ${account['database']}',
-              style: TextStyle(
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 12,
-              ),
+          leading: _buildUserAvatar(account, isDark),
+          title: Text(
+            account['userName'] ?? account['userLogin'] ?? 'Unknown User',
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black87,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
             ),
-            if (account['needsReauth']?.toString() == 'true' ||
-                account['password']?.toString().isEmpty == true)
-              Row(
-                children: [
-                  Icon(
-                    Icons.warning_amber_rounded,
-                    size: 12,
-                    color: Colors.orange[600],
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Needs re-authentication',
-                    style: TextStyle(
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${account['userLogin']} @ ${account['database']}',
+                style: TextStyle(
+                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  fontSize: 12,
+                ),
+              ),
+              if (account['needsReauth']?.toString() == 'true' ||
+                  account['password']?.toString().isEmpty == true)
+                Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      size: 12,
                       color: Colors.orange[600],
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
                     ),
-                  ),
-                ],
-              ),
-          ],
-        ),
-        trailing: PopupMenuButton<String>(
-          icon: Icon(
-            Icons.more_vert,
-            color: isDark ? Colors.grey[400] : Colors.grey[600],
-            size: 18,
+                    const SizedBox(width: 4),
+                    Text(
+                      'Needs re-authentication',
+                      style: TextStyle(
+                        color: Colors.orange[600],
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+            ],
           ),
-          onSelected: (value) async {
-            if (value == 'remove') {
-              await _confirmRemoveAccount(context, account, sessionService);
-            }
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem<String>(
-              value: 'remove',
-              child: Row(
-                children: [
-                  Icon(Icons.delete_outline, size: 18, color: Colors.red[600]),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Remove',
-                    style: TextStyle(color: Colors.red[600], fontSize: 14),
-                  ),
-                ],
-              ),
+          trailing: PopupMenuButton<String>(
+            position: PopupMenuPosition.under,
+            icon: Icon(
+              Icons.more_vert,
+              color: isDark ? Colors.white : Colors.black,
+              size: 20,
             ),
-          ],
+            onSelected: (value) async {
+              if (value == 'remove') {
+                await _confirmRemoveAccount(context, account, sessionService);
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                value: 'remove',
+                child: Text(
+                  'Remove',
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                ),
+              ),
+            ],
+          ),
+          onTap: () => _switchAccount(context, account, sessionService),
         ),
-        onTap: () => _switchAccount(context, account, sessionService),
       ),
     );
   }
@@ -233,8 +255,8 @@ class SwitchAccountWidget extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
-          color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-          width: 1,
+          color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
+          width: 2,
         ),
       ),
       child: ClipOval(
@@ -312,37 +334,31 @@ class SwitchAccountWidget extends StatelessWidget {
   }
 
   Widget _buildAddAccountButton(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(
-        left: 16.0,
-        right: 16.0,
-        bottom: 16,
-        top: 8,
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const AddAccountScreen()),
-            );
-          },
-          icon: const HugeIcon(
-            icon: HugeIcons.strokeRoundedUserAdd01,
-            size: 18,
+    return Container(
+      margin: const EdgeInsets.all(16),
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton.icon(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddAccountScreen()),
+          );
+        },
+        icon: const HugeIcon(icon: HugeIcons.strokeRoundedUserAdd01, size: 18),
+        label: const Text(
+          'Add Account',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.primaryColor,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.md),
           ),
-          label: const Text('Add Account'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primaryColor,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            elevation: 0,
-            shadowColor: Colors.transparent,
-          ),
+          elevation: 0,
+          shadowColor: Colors.transparent,
         ),
       ),
     );
@@ -355,10 +371,15 @@ class SwitchAccountWidget extends StatelessWidget {
   ) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final password = await sessionService.getStoredPassword(account);
+    final storedSessionId = (account['sessionId'] ?? '').toString();
+    final hasStoredSession = storedSessionId.isNotEmpty;
 
-    if (password == null ||
-        account['needsReauth']?.toString() == 'true' ||
-        account['password']?.toString().isEmpty == true) {
+    // A stored session id is what actually re-authenticates the account, so a
+    // missing password only forces a fresh login when there is no session to
+    // reuse. Requiring both sent 2FA accounts back through the TOTP page even
+    // though they were already signed in.
+    if ((password == null && !hasStoredSession) ||
+        account['needsReauth']?.toString() == 'true') {
       if (context.mounted) {
         Navigator.push(
           context,
@@ -405,16 +426,15 @@ class SwitchAccountWidget extends StatelessWidget {
     }
 
     try {
-      final storedSessionId = account['sessionId']?.toString();
-      if (storedSessionId != null &&
-          storedSessionId.isNotEmpty &&
-          password != null &&
-          password.isNotEmpty) {
+      if (hasStoredSession) {
+        // The password is only carried into the session model here; the
+        // session cookie is what authenticates, so an account with 2FA and no
+        // stored password still switches without a new TOTP code.
         final reused = await OdooSessionManager.loginWithSessionId(
           serverUrl: (account['serverUrl'] ?? '').toString(),
           database: (account['database'] ?? '').toString(),
           userLogin: (account['userLogin'] ?? '').toString(),
-          password: password,
+          password: password ?? '',
           sessionId: storedSessionId,
         );
         if (reused) {
@@ -424,6 +444,20 @@ class SwitchAccountWidget extends StatelessWidget {
               context,
               listen: false,
             );
+
+            // The reused session is already current, so — as for a missing
+            // module below — sign out rather than leave it in place.
+            if (await authProvider.isDatabaseExpired()) {
+              await authProvider.logout();
+              if (context.mounted) {
+                if (Navigator.of(context).canPop()) {
+                  Navigator.pop(context);
+                }
+                showDatabaseExpiredDialog(context);
+              }
+              return;
+            }
+
             final isBillingInstalled = await authProvider
                 .checkRequiredModules();
 
@@ -444,6 +478,27 @@ class SwitchAccountWidget extends StatelessWidget {
         }
       }
 
+      // The stored session is gone or no longer accepted, so the account has
+      // to sign in again. Without a stored password there is nothing to send,
+      // so hand over to the login screen instead of a doomed RPC call.
+      if (password == null || password.isEmpty) {
+        if (context.mounted && Navigator.of(context).canPop()) {
+          Navigator.pop(context);
+        }
+        if (context.mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LoginScreen(
+                serverUrl: account['serverUrl'],
+                database: account['database'],
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
       final newSession = await OdooSessionManager.authenticate(
         serverUrl: account['serverUrl'],
         database: account['database'],
@@ -456,7 +511,22 @@ class SwitchAccountWidget extends StatelessWidget {
       }
 
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      final isBillingInstalled = await authProvider.checkRequiredModules();
+
+      // The new session isn't current yet, so the active account stays
+      // signed in; just don't switch to the expired one.
+      if (await authProvider.isDatabaseExpired(session: newSession)) {
+        if (context.mounted) {
+          if (Navigator.of(context).canPop()) {
+            Navigator.pop(context);
+          }
+          showDatabaseExpiredDialog(context);
+        }
+        return;
+      }
+
+      final isBillingInstalled = await authProvider.checkRequiredModules(
+        session: newSession,
+      );
 
       if (!isBillingInstalled) {
         await authProvider.logout();

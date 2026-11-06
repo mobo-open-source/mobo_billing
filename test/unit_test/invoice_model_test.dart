@@ -66,5 +66,18 @@ void main() {
       expect(json['partner_id'], [50, 'Export Target']);
       expect(json['amount_total'], 115.0);
     });
+
+    test('displayName labels unnumbered drafts by type', () {
+      Invoice move(String name, String type) =>
+          Invoice.fromJson({'id': 1, 'name': name, 'move_type': type});
+
+      expect(
+        move('INV/2026/00013', 'out_invoice').displayName,
+        'INV/2026/00013',
+      );
+      expect(move('', 'out_invoice').displayName, 'Draft Invoice');
+      expect(move('/', 'out_invoice').displayName, 'Draft Invoice');
+      expect(move('false', 'out_refund').displayName, 'Draft Credit Note');
+    });
   });
 }

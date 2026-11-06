@@ -12,10 +12,13 @@ import '../../providers/invoice_provider.dart';
 import '../../models/invoice.dart';
 import '../../models/invoice_line.dart';
 import '../../services/invoice_service.dart';
+import '../../services/connectivity_service.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/pdf_widget.dart';
 import '../../widgets/custom_snackbar.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../payment/payment_screen.dart';
+import 'create_invoice_screen.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
 import '../../models/customer.dart';
 
@@ -39,6 +42,9 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
     with TickerProviderStateMixin {
   Invoice? _detailedInvoice;
   bool _isLoading = false;
+
+  /// True when the record on screen came from the offline cache.
+  bool _isShowingCachedData = false;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late TabController _tabController;
@@ -64,10 +70,6 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
 
       try {
         final inv = widget.invoice;
-        final partner = inv.customerName.isNotEmpty
-            ? inv.customerName
-            : 'Customer';
-        final invName = inv.name.isEmpty ? 'Draft Invoice' : inv.name;
         final invId = inv.id.toString();
 
         if (invId.isNotEmpty) {
@@ -96,6 +98,10 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
       _isLoading = true;
     });
 
+    // Offline reads are served from the cache, so the screen shows the record
+    // as it last looked instead of an error.
+    final isOffline = !ConnectivityService.instance.isConnected;
+
     try {
       final invoiceProvider = Provider.of<InvoiceProvider>(
         context,
@@ -107,23 +113,35 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
         setState(() {
           _detailedInvoice = details;
           _invoiceLines = details.invoiceLines;
+          _isShowingCachedData = isOffline;
           _isLoading = false;
         });
+        // The recently-opened entry was saved from the record as it was
+        // opened; relabel it now that the number/state is known (e.g. after
+        // posting a draft).
+        context.read<LastOpenedProvider>().refreshDocuments([details.toJson()]);
         _animationController.forward();
         await _fetchCustomerDetails();
         await _fetchPayments();
       } else if (mounted) {
         setState(() {
+          // Nothing cached either — the list record is all there is to show.
+          _isShowingCachedData = isOffline;
           _isLoading = false;
         });
-        _showSnackBar('Failed to load invoice details', isError: true);
+        if (!isOffline) {
+          _showSnackBar('Failed to load invoice details', isError: true);
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
+          _isShowingCachedData = isOffline;
           _isLoading = false;
         });
-        _showSnackBar('Error loading invoice: $e', isError: true);
+        if (!isOffline) {
+          _showSnackBar('Error loading invoice: $e', isError: true);
+        }
       }
     }
   }
@@ -146,7 +164,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
           });
         }
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   Future<void> _fetchPayments() async {
@@ -163,7 +181,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
           _payments = paymentData;
         });
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -186,13 +204,12 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
         ? invoice.customerName
         : 'Unknown Customer';
 
-    final invoiceNumber = invoice.name.isEmpty ? 'Draft Invoice' : invoice.name;
-
     return Stack(
       children: [
         Scaffold(
           backgroundColor: backgroundColor,
           appBar: AppBar(
+            forceMaterialTransparency: true,
             backgroundColor: backgroundColor,
             title: const Text('Invoice Details'),
             leading: IconButton(
@@ -203,6 +220,17 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
               onPressed: () => Navigator.of(context).pop(),
             ),
             actions: [
+              // Odoo only allows an account.move to be modified while it is
+              // still a draft, so the edit action follows the same rule.
+              if (invoice.state == 'draft')
+                IconButton(
+                  icon: HugeIcon(
+                    icon: HugeIcons.strokeRoundedPencilEdit02,
+                    color: isDark ? Colors.grey[400]! : Colors.grey[600]!,
+                  ),
+                  tooltip: 'Edit Invoice',
+                  onPressed: () => _editInvoice(invoice),
+                ),
               PopupMenuButton<String>(
                 icon: Icon(
                   Icons.more_vert,
@@ -224,6 +252,8 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
               ? const InvoiceDetailShimmer()
               : Column(
                   children: [
+                    if (_isShowingCachedData)
+                      OfflineDataBanner(onRetry: _loadInvoiceDetails),
                     Expanded(
                       child: RefreshIndicator(
                         color: primaryColor,
@@ -272,10 +302,16 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
     final isCancelled = status == 'cancel';
     final isPosted = status == 'posted';
     final canConfirm = isDraft;
-    final canCancel = ['draft', 'posted'].contains(status);
+    // Odoo only exposes "Cancel" on a draft entry — a posted invoice must be
+    // reset to draft first (see the posted invoice form: Send / Print / Pay /
+    // Preview / Credit Note / Reset to Draft, with no Cancel button).
+    final canCancel = isDraft;
     final canResetToDraft = isCancelled || isPosted;
+    // `account.move.unlink` refuses any entry that has been posted once, so
+    // deletion is offered on draft/cancelled invoices only.
+    final canDelete = isDraft || isCancelled;
     final isPaid = paymentState == 'paid';
-    final canRecordPayment = !isDraft && !isCancelled && !isPaid;
+    final canRecordPayment = isPosted && !isPaid;
 
     return [
       if (canConfirm)
@@ -365,6 +401,28 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
           ],
         ),
       ),
+      if (canDelete)
+        PopupMenuItem<String>(
+          value: 'delete_invoice',
+          child: Row(
+            children: [
+              const Icon(
+                Icons.delete_outline,
+                color: StatusColors.red,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Delete Invoice',
+                style: TextStyle(
+                  color: StatusColors.red,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+        ),
       if (canRecordPayment)
         PopupMenuItem<String>(
           value: 'record_payment',
@@ -433,7 +491,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
         value: 'send_whatsapp',
         child: Row(
           children: [
-            Icon(
+            FaIcon(
               FontAwesomeIcons.whatsapp,
               color: isDark ? Colors.grey[300] : Colors.grey[800],
               size: 20,
@@ -453,6 +511,32 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
     ];
   }
 
+  /// Opens the invoice in the create/edit form. Odoo only permits changes to a
+  /// move while it is in the `draft` state, so posted or cancelled invoices
+  /// must be reset to draft first.
+  Future<void> _editInvoice(Invoice invoice) async {
+    if (invoice.state != 'draft') {
+      _showSnackBar(
+        'Only draft invoices can be edited. Reset this invoice to draft first.',
+        isError: true,
+      );
+      return;
+    }
+
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) =>
+            CreateInvoiceScreen(invoiceToEdit: {'id': widget.invoiceId}),
+      ),
+    );
+
+    if (updated == true && mounted) {
+      await _loadInvoiceDetails();
+      widget.onInvoiceUpdated?.call();
+      if (mounted) _showSnackBar('Invoice updated successfully');
+    }
+  }
+
   void _handleMenuSelection(String value, Invoice invoice) async {
     switch (value) {
       case 'confirm_invoice':
@@ -466,6 +550,9 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
         break;
       case 'duplicate_invoice':
         await _duplicateInvoice();
+        break;
+      case 'delete_invoice':
+        await _deleteInvoice();
         break;
       case 'record_payment':
         await _registerPayment();
@@ -543,23 +630,10 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                       color: const Color(0xFFC03355),
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getStateColor(state).withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _getInvoiceState(state),
-                      style: TextStyle(
-                        color: _getStateColor(state),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+                  StatusColors.buildStatusBadge(
+                    _getInvoiceState(state),
+                    _getStateColor(state),
+                    isDark: isDark,
                   ),
                 ],
               ),
@@ -584,7 +658,6 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-
               const SizedBox(height: 8),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1208,8 +1281,8 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
     bool isDark, {
     bool isLast = false,
   }) {
-    final displayValue = value.isEmpty ? 'Not specified' : value;
-    final isNotSpecified = value.isEmpty;
+    final isNotSpecified = value.trim().isEmpty || value.trim() == 'false';
+    final displayValue = isNotSpecified ? 'Not specified' : value;
 
     return InkWell(
       onTap: () {
@@ -1482,16 +1555,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
   }
 
   Color _getStateColor(String? state) {
-    switch (state) {
-      case 'posted':
-        return Colors.green;
-      case 'draft':
-        return Colors.blue;
-      case 'cancel':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getPaymentTerms(Invoice invoice) {
@@ -1504,24 +1568,13 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
     try {
       final date = DateTime.parse(parsed);
       return DateFormat('MMM dd, yyyy').format(date);
-    } catch (e) {
+    } catch (_) {
       return 'Not specified';
     }
   }
 
   Color _getPaymentStateColor(String? state) {
-    switch (state) {
-      case 'paid':
-        return Colors.green;
-      case 'not_paid':
-        return Colors.red;
-      case 'in_payment':
-        return Colors.blue;
-      case 'partial':
-        return Colors.orange;
-      default:
-        return Colors.grey;
-    }
+    return StatusColors.forState(state);
   }
 
   String _getPaymentStateLabel(String? state) {
@@ -1571,10 +1624,10 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
             color: isDark ? Colors.grey[300] : Colors.grey[700],
           ),
         ),
-        actionsPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
-        ),
+        // Same 24px side inset as the title and message, so the buttons'
+        // edges line up with the text; the content's own 24px bottom padding
+        // already sets the gap above them.
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
         actions: [
           Row(
             children: [
@@ -1730,7 +1783,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                     backgroundColor: AppTheme.primaryColor,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
+                      horizontal: 12,
                       vertical: 12,
                     ),
                     shape: RoundedRectangleBorder(
@@ -1738,9 +1791,14 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                     ),
                     elevation: isDark ? 0 : 3,
                   ),
-                  child: const Text(
-                    'Cancel Invoice',
-                    style: TextStyle(fontWeight: FontWeight.w600),
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'Cancel Invoice',
+                      maxLines: 1,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
               ),
@@ -1792,16 +1850,148 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
     }
   }
 
+  /// Deletes the invoice and pops back to the list.
+  ///
+  /// Only reachable for draft/cancelled invoices (§ `_buildPopupMenuItems`);
+  /// Odoo still refuses an entry that was posted at some point, and that error
+  /// is surfaced as-is.
+  Future<void> _deleteInvoice() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: isDark ? 0 : 8,
+        backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+        title: Text(
+          'Delete Invoice',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: isDark ? Colors.white : Colors.black,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to delete this invoice? This action cannot be undone.',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: isDark ? Colors.grey[300] : Colors.grey[700],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 12,
+        ),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.primaryColor,
+                    side: const BorderSide(
+                      color: AppTheme.primaryColor,
+                      width: 1.5,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: StatusColors.red,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    elevation: isDark ? 0 : 3,
+                  ),
+                  child: const Text(
+                    'Delete',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      if (!mounted) return;
+      _showLoadingDialog(
+        context,
+        'Deleting Invoice',
+        'Please wait while we delete your invoice...',
+      );
+
+      try {
+        final invoiceProvider = Provider.of<InvoiceProvider>(
+          context,
+          listen: false,
+        );
+        final success = await invoiceProvider.deleteInvoice(widget.invoiceId);
+
+        if (mounted) Navigator.of(context).pop();
+
+        if (success) {
+          if (mounted) {
+            // Pop first: CustomSnackbar is a dialog route, so showing it before
+            // popping would make this pop close the toast instead of the screen.
+            final navigator = Navigator.of(context);
+            navigator.pop(true);
+            CustomSnackbar.showSuccess(
+              navigator.context,
+              'Invoice deleted successfully',
+            );
+          }
+        } else {
+          if (mounted) {
+            CustomSnackbar.showError(
+              context,
+              invoiceProvider.error ?? 'Failed to delete invoice',
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) Navigator.of(context).pop();
+        if (mounted) {
+          CustomSnackbar.showError(context, 'Error: $e');
+        }
+      }
+    }
+  }
+
   Future<void> _registerPayment() async {
     final invoice = _detailedInvoice ?? widget.invoice;
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (context) =>
-                PaymentScreen(invoiceId: widget.invoiceId, invoice: invoice),
-          ),
-        )
-        .then((_) => _loadInvoiceDetails());
+    // PaymentScreen pops `true` once the payment is registered; either way the
+    // invoice is reloaded so the totals/status reflect the server.
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) =>
+            PaymentScreen(invoiceId: widget.invoiceId, invoice: invoice),
+      ),
+    );
+
+    if (!mounted) return;
+    await _loadInvoiceDetails();
   }
 
   Future<void> _duplicateInvoice() async {
@@ -1953,46 +2143,57 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
           Row(
             children: [
               Expanded(
-                child: TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  style: TextButton.styleFrom(
-                    foregroundColor: isDark
-                        ? Colors.grey[400]
-                        : Colors.grey[700],
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primaryColor,
+                      side: const BorderSide(
+                        color: AppTheme.primaryColor,
+                        width: 1.5,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    child: const Text(
+                      'Cancel',
+                      maxLines: 1,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w600),
                     ),
-                  ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(fontWeight: FontWeight.w500),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Expanded(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                      shadowColor: Colors.transparent,
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    // Scale the label down on narrow screens instead of
+                    // letting it wrap onto a second, left-hugging line.
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'Reset to Draft',
+                        maxLines: 1,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                    elevation: 0,
-                    shadowColor: Colors.transparent,
-                  ),
-                  child: const Text(
-                    'Reset to Draft',
-                    style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ),
@@ -2046,36 +2247,39 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
 
   Future<void> _directPrint() async {
     bool isDialogOpen = true;
+
+    void closeDialog() {
+      if (isDialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        isDialogOpen = false;
+      }
+    }
+
     _showLoadingDialog(
       context,
       'Generating PDF',
       'Please wait while we generate your invoice PDF...',
     );
+
     try {
       final invoice = _detailedInvoice ?? widget.invoice;
-      await PDFGenerator.generateInvoicePdf(
+      // Opens the system print dialog. The generation itself is bounded by
+      // PDFGenerator's overall deadline, so this cannot hang indefinitely.
+      await PDFGenerator.printInvoicePdf(
         context,
         invoice,
-        onPdfGenerated: () {
-          if (isDialogOpen && mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-            isDialogOpen = false;
-          }
-        },
+        onPdfGenerated: closeDialog,
       );
-
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
-      }
     } catch (e) {
-      if (isDialogOpen && mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        isDialogOpen = false;
-      }
       if (mounted) {
-        CustomSnackbar.showError(context, 'Failed to generate PDF: $e');
+        CustomSnackbar.showError(
+          context,
+          e.toString().replaceFirst('Exception: ', ''),
+        );
       }
+    } finally {
+      // Runs on every path — success, failure, or a dismissed print sheet.
+      closeDialog();
     }
   }
 
@@ -2168,9 +2372,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen>
                     ),
                     padding: const EdgeInsets.all(16),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).primaryColor,
+                      color: Theme.of(context).primaryColor,
                       size: 50,
                     ),
                   ),

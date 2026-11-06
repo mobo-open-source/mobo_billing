@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/runtime_permission_service.dart';
+import '../services/connectivity_service.dart';
+import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 import '../models/customer.dart';
 
@@ -60,6 +62,10 @@ class CustomerFormProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether the device currently has no connection. Dropdown data is then
+  /// served from the cache so the form still has options to pick from.
+  bool get _isOffline => !ConnectivityService.instance.isConnected;
+
   /// Loads countries, titles, currencies, and languages for form dropdowns.
   Future<void> loadDropdownData() async {
     _isDropdownLoading = true;
@@ -82,14 +88,20 @@ class CustomerFormProvider extends ChangeNotifier {
   }
 
   Future<void> _fetchCountries() async {
-    final result = await _apiService.searchRead(
-      'res.country',
-      [],
-      ['id', 'name', 'code'],
-      0,
-      300,
-      'name ASC',
-    );
+    final result =
+        await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+          DataCache.referenceKey('countries'),
+          () => _apiService.searchRead(
+            'res.country',
+            [],
+            ['id', 'name', 'code'],
+            0,
+            300,
+            'name ASC',
+          ),
+          isOffline: _isOffline,
+        ) ??
+        [];
     _countryOptions = List<Map<String, dynamic>>.from(result);
   }
 
@@ -97,44 +109,60 @@ class CustomerFormProvider extends ChangeNotifier {
   Future<void> fetchStates(int countryId) async {
     _stateOptions = [];
     notifyListeners();
-    final result = await _apiService.searchRead(
-      'res.country.state',
-      [
-        ['country_id', '=', countryId],
-      ],
-      ['id', 'name', 'code'],
-      0,
-      300,
-      'name ASC',
-    );
+    final result =
+        await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+          DataCache.referenceKey('states:$countryId'),
+          () => _apiService.searchRead(
+            'res.country.state',
+            [
+              ['country_id', '=', countryId],
+            ],
+            ['id', 'name', 'code'],
+            0,
+            300,
+            'name ASC',
+          ),
+          isOffline: _isOffline,
+        ) ??
+        [];
     _stateOptions = List<Map<String, dynamic>>.from(result);
     notifyListeners();
   }
 
   Future<void> _fetchTitles() async {
     try {
-      final result = await _apiService.searchRead('res.partner.title', [], [
-        'id',
-        'name',
-      ]);
+      final result =
+          await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+            DataCache.referenceKey('partner_titles'),
+            () =>
+                _apiService.searchRead('res.partner.title', [], ['id', 'name']),
+            isOffline: _isOffline,
+          ) ??
+          [];
       _titleOptions = result
           .map(
             (e) => {'value': e['id'].toString(), 'label': e['name'].toString()},
           )
           .toList();
-    } catch (e) {
+    } catch (_) {
       _titleOptions = [];
     }
   }
 
   Future<void> _fetchCurrencies() async {
-    final result = await _apiService.searchRead(
-      'res.currency',
-      [
-        ['active', '=', true],
-      ],
-      ['id', 'name'],
-    );
+    final result =
+        await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+          DataCache.referenceKey('currency_options'),
+          () => _apiService.searchRead(
+            'res.currency',
+            [
+              ['active', '=', true],
+            ],
+            ['id', 'name'],
+          ),
+          isOffline: _isOffline,
+        ) ??
+        [];
     _currencyOptions = result
         .map(
           (e) => {'value': e['id'].toString(), 'label': e['name'].toString()},
@@ -143,13 +171,19 @@ class CustomerFormProvider extends ChangeNotifier {
   }
 
   Future<void> _fetchLanguages() async {
-    final result = await _apiService.searchRead(
-      'res.lang',
-      [
-        ['active', '=', true],
-      ],
-      ['code', 'name'],
-    );
+    final result =
+        await DataCache.cachedFetch<List<Map<String, dynamic>>>(
+          DataCache.referenceKey('languages'),
+          () => _apiService.searchRead(
+            'res.lang',
+            [
+              ['active', '=', true],
+            ],
+            ['code', 'name'],
+          ),
+          isOffline: _isOffline,
+        ) ??
+        [];
     _languageOptions = result
         .map(
           (e) => {'value': e['code'].toString(), 'label': e['name'].toString()},
@@ -176,7 +210,7 @@ class CustomerFormProvider extends ChangeNotifier {
         notifyListeners();
         return _pickedImage;
       }
-    } catch (e) {}
+    } catch (_) {}
     return null;
   }
 
@@ -229,7 +263,7 @@ class CustomerFormProvider extends ChangeNotifier {
 
       _isOcrLoading = false;
       notifyListeners();
-    } catch (e) {
+    } catch (_) {
       _isOcrLoading = false;
       notifyListeners();
       return null;
