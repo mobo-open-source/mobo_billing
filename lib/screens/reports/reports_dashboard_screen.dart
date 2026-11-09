@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../providers/currency_provider.dart';
+import '../../providers/navigation_provider.dart';
+import '../../utils/refresh_on_tab_select.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/odoo_api_service.dart';
 import '../../services/session_service.dart';
 import '../../theme/app_theme.dart';
+import '../../services/data_cache.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/dashboard_metric_card.dart';
 import '../../widgets/shimmer_loading.dart';
 
@@ -19,10 +23,21 @@ class ReportsDashboardScreen extends StatefulWidget {
   State<ReportsDashboardScreen> createState() => _ReportsDashboardScreenState();
 }
 
-class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
+class _ReportsDashboardScreenState extends State<ReportsDashboardScreen>
+    with RefreshOnTabSelect {
   final OdooApiService _apiService = OdooApiService();
+
+  @override
+  int get tabIndex => NavigationProvider.reportsTab;
+
+  @override
+  Future<void> onTabSelected() => _loadAllData();
   bool _isLoading = true;
   String _error = '';
+
+  /// True when the figures on screen came from the offline cache.
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
 
   String _selectedRange = 'Last 30 Days';
   DateTime _startDate = DateTime.now().subtract(const Duration(days: 30));
@@ -80,8 +95,20 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
     _loadAllData();
   }
 
+  /// Cache key for the report snapshot — per date range, since the figures
+  /// only mean anything alongside the range they were computed for.
+  String get _reportCacheKey =>
+      'reports:${_selectedRange}_${_startDate.toIso8601String().split('T').first}';
+
   Future<void> _loadAllData() async {
     if (!mounted) return;
+
+    // Offline: redraw the last snapshot for this range instead of replacing
+    // the whole screen with a connection error.
+    if (!ConnectivityService.instance.isConnected) {
+      if (_restoreCachedReports()) return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = '';
@@ -99,10 +126,17 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
           throw TimeoutException('Reports loading timed out after 30 seconds');
         },
       );
-    } on TimeoutException catch (e) {
-      _error = 'Request timed out. Please check your connection and try again.';
+      _cacheReports();
+      _isShowingCachedData = false;
+    } on TimeoutException {
+      if (!_restoreCachedReports()) {
+        _error =
+            'Request timed out. Please check your connection and try again.';
+      }
     } catch (e) {
-      _error = e.toString();
+      if (!_restoreCachedReports()) {
+        _error = e.toString();
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -110,6 +144,44 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
         });
       }
     }
+  }
+
+  /// Snapshots the computed figures so they can be redrawn offline.
+  void _cacheReports() {
+    DataCache.write(_reportCacheKey, {
+      'summaryStats': Map<String, double>.from(_summaryStats),
+      'trendData': List<FlSpot>.from(_trendData),
+      'maxTrendValue': _maxTrendValue,
+      'trendLabels': List<String>.from(_trendLabels),
+      'statusDistribution': Map<String, double>.from(_statusDistribution),
+      'topCustomers': List<Map<String, dynamic>>.from(_topCustomers),
+    });
+  }
+
+  /// Restores the cached snapshot for the selected range. Returns whether it
+  /// found one.
+  bool _restoreCachedReports() {
+    final cached = DataCache.read<Map<String, dynamic>>(_reportCacheKey);
+    if (cached == null) return false;
+
+    if (!mounted) return false;
+    setState(() {
+      _summaryStats = Map<String, double>.from(cached['summaryStats'] as Map);
+      _trendData = List<FlSpot>.from(cached['trendData'] as List);
+      _maxTrendValue = cached['maxTrendValue'] as double;
+      _trendLabels = List<String>.from(cached['trendLabels'] as List);
+      _statusDistribution = Map<String, double>.from(
+        cached['statusDistribution'] as Map,
+      );
+      _topCustomers = List<Map<String, dynamic>>.from(
+        cached['topCustomers'] as List,
+      );
+      _cacheUpdatedAt = DataCache.updatedAt(_reportCacheKey);
+      _isShowingCachedData = true;
+      _isLoading = false;
+      _error = '';
+    });
+    return true;
   }
 
   Future<void> _fetchSummaryStats() async {
@@ -120,13 +192,13 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    final data = await _apiService.call('account.move', 'read_group', [
+    final data = await _apiService.readGroup(
+      'account.move',
       domain,
-      ['amount_total', 'amount_residual'],
-      [],
-    ]);
+      aggregates: {'amount_total': 'sum', 'amount_residual': 'sum'},
+    );
 
-    if (data is List && data.isNotEmpty) {
+    if (data.isNotEmpty) {
       final total = _safeDouble(data[0]['amount_total']);
       final residual = _safeDouble(data[0]['amount_residual']);
 
@@ -145,6 +217,15 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
     }
   }
 
+  /// Loads the invoice-total trend, bucketing the raw rows client-side.
+  ///
+  /// `read_group`'s date-granularity groupby syntax (`'invoice_date:day'`) is
+  /// handled by whatever internal aggregate-parsing codepath each Odoo
+  /// version's `read_group` compatibility wrapper happens to use — on Odoo 20
+  /// it mistakes the granularity suffix ('day'/'month') for an aggregate
+  /// function name and raises "Invalid aggregate method". Bucketing the raw
+  /// rows client-side sidesteps that server-side wrapper entirely, so it
+  /// keeps working regardless of how a given server implements groupby.
   Future<void> _fetchTrendData() async {
     final domain = [
       ['move_type', '=', 'out_invoice'],
@@ -153,33 +234,44 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    String groupBy = 'invoice_date:day';
-    if (_selectedRange == 'This Year' || _selectedRange == 'Last 90 Days') {
-      groupBy = 'invoice_date:month';
+    final bool groupByMonth =
+        _selectedRange == 'This Year' || _selectedRange == 'Last 90 Days';
+
+    final rows = await _apiService.call('account.move', 'search_read', [
+      domain,
+    ], {
+      'fields': ['invoice_date', 'amount_total'],
+    });
+
+    final Map<String, double> buckets = {};
+    if (rows is List) {
+      for (final row in rows) {
+        final rawDate = row['invoice_date'];
+        if (rawDate is! String || rawDate.isEmpty) continue;
+        DateTime date;
+        try {
+          date = DateTime.parse(rawDate);
+        } catch (_) {
+          continue;
+        }
+        final key = groupByMonth
+            ? DateFormat('yyyy-MM').format(date)
+            : DateFormat('yyyy-MM-dd').format(date);
+        buckets[key] = (buckets[key] ?? 0) + _safeDouble(row['amount_total']);
+      }
     }
 
-    final data = await _apiService.call('account.move', 'read_group', [
-      domain,
-      ['amount_total'],
-      [groupBy],
-    ]);
+    final sortedKeys = buckets.keys.toList()..sort();
 
     List<FlSpot> spots = [];
     List<String> labels = [];
     double maxVal = 0;
 
-    if (data is List) {
-      data.sort((a, b) => (a[groupBy] ?? '').compareTo(b[groupBy] ?? ''));
-
-      for (int i = 0; i < data.length; i++) {
-        final amount = _safeDouble(data[i]['amount_total']);
-        if (amount > maxVal) maxVal = amount;
-        spots.add(FlSpot(i.toDouble(), amount));
-
-        String rawLabel = data[i][groupBy] ?? '';
-
-        labels.add(_formatChartLabel(rawLabel, groupBy));
-      }
+    for (int i = 0; i < sortedKeys.length; i++) {
+      final amount = buckets[sortedKeys[i]]!;
+      if (amount > maxVal) maxVal = amount;
+      spots.add(FlSpot(i.toDouble(), amount));
+      labels.add(_formatBucketLabel(sortedKeys[i], groupByMonth));
     }
 
     _trendData = spots;
@@ -187,37 +279,14 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
     _trendLabels = labels;
   }
 
-  String _formatChartLabel(String label, String groupBy) {
+  String _formatBucketLabel(String key, bool isMonth) {
     try {
-      final parts = label.split(' ');
-
-      if (groupBy.contains('month')) {
-        if (parts.isNotEmpty) {
-          String month = parts[0];
-          if (month.length > 3) month = month.substring(0, 3);
-          return month;
-        }
-      } else {
-        try {
-          DateTime date = DateTime.parse(label);
-          return DateFormat('dd MMM').format(date);
-        } catch (_) {
-          if (parts.length >= 2) {
-            String day = parts[0];
-            String month = parts[1];
-
-            if (day.contains('-')) {
-              DateTime date = DateTime.parse(day);
-              return DateFormat('dd MMM').format(date);
-            }
-            if (month.length > 3) month = month.substring(0, 3);
-            return '$day $month';
-          }
-        }
+      if (isMonth) {
+        return DateFormat('MMM').format(DateFormat('yyyy-MM').parse(key));
       }
-      return label;
-    } catch (e) {
-      return label;
+      return DateFormat('dd MMM').format(DateTime.parse(key));
+    } catch (_) {
+      return key;
     }
   }
 
@@ -229,25 +298,25 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    final data = await _apiService.call('account.move', 'read_group', [
+    final data = await _apiService.readGroup(
+      'account.move',
       domain,
-      ['amount_total'],
-      ['payment_state'],
-    ]);
+      groupby: ['payment_state'],
+      aggregates: {'amount_total': 'sum'},
+    );
 
     Map<String, double> distribution = {};
-    if (data is List) {
-      for (var item in data) {
-        String status = item['payment_state'] ?? 'Unknown';
+    for (var item in data) {
+      final rawStatus = item['payment_state'];
+      String status = rawStatus is String ? rawStatus : 'Unknown';
 
-        if (status == 'not_paid') status = 'Unpaid';
-        if (status == 'paid') status = 'Paid';
-        if (status == 'partial') status = 'Partial';
-        if (status == 'reversed') status = 'Reversed';
-        if (status == 'in_payment') status = 'In Payment';
+      if (status == 'not_paid') status = 'Unpaid';
+      if (status == 'paid') status = 'Paid';
+      if (status == 'partial') status = 'Partial';
+      if (status == 'reversed') status = 'Reversed';
+      if (status == 'in_payment') status = 'In Payment';
 
-        distribution[status] = _safeDouble(item['amount_total']);
-      }
+      distribution[status] = _safeDouble(item['amount_total']);
     }
     _statusDistribution = distribution;
   }
@@ -260,27 +329,23 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
       ['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(_endDate)],
     ];
 
-    final data = await _apiService.call(
+    final data = await _apiService.readGroup(
       'account.move',
-      'read_group',
-      [
-        domain,
-        ['amount_total'],
-        ['partner_id'],
-      ],
-      {'limit': 5, 'orderby': 'amount_total desc'},
+      domain,
+      groupby: ['partner_id'],
+      aggregates: {'amount_total': 'sum'},
+      limit: 5,
+      orderby: 'amount_total desc',
     );
 
     List<Map<String, dynamic>> customers = [];
-    if (data is List) {
-      for (var item in data) {
-        if (item['partner_id'] != null) {
-          final partnerName = (item['partner_id'] is List)
-              ? item['partner_id'][1]
-              : 'Unknown';
-          final amount = _safeDouble(item['amount_total']);
-          customers.add({'name': partnerName, 'amount': amount});
-        }
+    for (var item in data) {
+      if (item['partner_id'] != null) {
+        final partnerName = (item['partner_id'] is List)
+            ? item['partner_id'][1]
+            : 'Unknown';
+        final amount = _safeDouble(item['amount_total']);
+        customers.add({'name': partnerName, 'amount': amount});
       }
     }
 
@@ -299,82 +364,85 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
           : Colors.grey[50],
       body: Consumer2<ConnectivityService, SessionService>(
         builder: (context, connectivity, session, _) {
-          if (!connectivity.isConnected) {
+          // Offline with a cached snapshot: keep the report on screen.
+          if (!connectivity.isConnected && !_isShowingCachedData) {
             return const ConnectionStatusWidget();
           }
           if (!session.hasValidSession) {
             return const ConnectionStatusWidget();
           }
 
-          return RefreshIndicator(
-            onRefresh: _loadAllData,
-            child: Stack(
-              children: [
-                SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildDateFilter(),
-                      const SizedBox(height: 20),
-                      if (_isLoading &&
-                          _summaryStats['total_invoiced'] == 0.0 &&
-                          _trendData.isEmpty)
-                        const ReportsShimmerLoading()
-                      else if (_error.isNotEmpty)
-                        ConnectionStatusWidget(
-                          serverUnreachable: true,
-                          serverErrorMessage: _error,
-                          onRetry: _loadAllData,
-                        )
-                      else ...[
-                        _buildSectionTitle('Overview', isDark),
-                        const SizedBox(height: 12),
-                        _buildSummaryGrid(),
-                        const SizedBox(height: 24),
-                        _buildSectionTitle('Sales Trend', isDark),
-                        const SizedBox(height: 12),
-                        _buildTrendChart(),
-                        const SizedBox(height: 24),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildSectionTitle('Invoice Status', isDark),
-                                  const SizedBox(height: 12),
-                                  _buildStatusChart(),
-                                ],
+          return Column(
+            children: [
+              // Pinned: the date-range pills stay put while the report below
+              // scrolls, so the range can be changed from anywhere in it.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: _buildDateFilter(),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _loadAllData,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_isShowingCachedData)
+                          OfflineDataBanner(
+                            lastUpdated: _cacheUpdatedAt,
+                            onRetry: _loadAllData,
+                            message: connectivity.isConnected
+                                ? "Couldn't refresh reports"
+                                : null,
+                          ),
+                        if (_isLoading &&
+                            _summaryStats['total_invoiced'] == 0.0 &&
+                            _trendData.isEmpty)
+                          const ReportsShimmerLoading()
+                        else if (_error.isNotEmpty)
+                          ConnectionStatusWidget(
+                            serverUnreachable: true,
+                            serverErrorMessage: _error,
+                            onRetry: _loadAllData,
+                          )
+                        else ...[
+                          _buildSectionTitle('Overview', isDark),
+                          const SizedBox(height: 12),
+                          _buildSummaryGrid(),
+                          const SizedBox(height: 24),
+                          _buildSectionTitle('Sales Trend', isDark),
+                          const SizedBox(height: 12),
+                          _buildTrendChart(),
+                          const SizedBox(height: 24),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildSectionTitle('Invoice Status', isDark),
+                                    const SizedBox(height: 12),
+                                    _buildStatusChart(),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                        _buildSectionTitle('Top Customers', isDark),
-                        const SizedBox(height: 12),
-                        _buildTopCustomersList(isDark),
-                        const SizedBox(height: 40),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          _buildSectionTitle('Top Customers', isDark),
+                          const SizedBox(height: 12),
+                          _buildTopCustomersList(isDark),
+                          const SizedBox(height: 40),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
-                if (_isLoading &&
-                    (_summaryStats['total_invoiced'] != 0.0 ||
-                        _trendData.isNotEmpty))
-                  const Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: LinearProgressIndicator(
-                      minHeight: 2,
-                      backgroundColor: Colors.transparent,
                     ),
                   ),
-              ],
-            ),
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -776,10 +844,13 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
                           value: entry.value,
                           title: '$percentage%',
                           radius: 40,
-                          titleStyle: const TextStyle(
+                          titleStyle: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                            // White washes out on the paler shades.
+                            color: _statusShade(entry.key) > 0.6
+                                ? Colors.white
+                                : AppTheme.textPrimary,
                           ),
                         );
                       }).toList(),
@@ -826,24 +897,24 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
     );
   }
 
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'paid':
-        return Colors.green;
-      case 'unpaid':
-      case 'not_paid':
-        return Colors.red;
-      case 'partial':
-        return Colors.orange;
-      case 'in payment':
-      case 'in_payment':
-        return Colors.blue;
-      case 'reversed':
-        return Colors.grey;
-      default:
-        return Colors.purple;
-    }
-  }
+  /// Strength of the Mobo colour per status on the Invoice Status chart: Paid
+  /// at full strength, lighter the further a status is from paid. List badges
+  /// keep their [StatusColors].
+  static const Map<String, double> _statusShades = {
+    'Paid': 1.0,
+    'In Payment': 0.7,
+    'Partial': 0.5,
+    'Unpaid': 0.3,
+  };
+
+  double _statusShade(String status) => _statusShades[status] ?? 0.15;
+
+  /// Mixed into white rather than made translucent, so the lighter shades
+  /// stay light pink on the dark card instead of sinking into it.
+  Color _getStatusColor(String status) => Color.alphaBlend(
+    AppTheme.primaryColor.withValues(alpha: _statusShade(status)),
+    Colors.white,
+  );
 
   Widget _buildTopCustomersList(bool isDark) {
     return Container(
@@ -887,7 +958,7 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
                         '${index + 1}.',
                         style: TextStyle(
                           fontSize: 14,
-                          color: isDark ? Colors.grey[400] : Colors.grey[600],
+                          color: isDark ? Colors.white : AppTheme.textPrimary,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -898,7 +969,7 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
-                            color: isDark ? Colors.white : Colors.black,
+                            color: isDark ? Colors.white : AppTheme.textPrimary,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -911,7 +982,7 @@ class _ReportsDashboardScreenState extends State<ReportsDashboardScreen> {
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 14,
-                              color: isDark ? Colors.white : Colors.black,
+                              color: AppTheme.primaryColor,
                             ),
                           );
                         },

@@ -45,6 +45,8 @@ class CustomerTypeAhead extends StatelessWidget {
         const SizedBox(height: 8),
         TypeAheadField<Contact>(
           controller: controller,
+          autoFlipDirection: true,
+          constraints: const BoxConstraints(maxHeight: 320),
           builder: (context, controller, focusNode) {
             return TextFormField(
               controller: controller,
@@ -136,7 +138,7 @@ class CustomerTypeAhead extends StatelessWidget {
                     ),
                   )
                   .toList();
-            } catch (e) {
+            } catch (_) {
               return [];
             }
           },
@@ -211,7 +213,7 @@ class CustomerTypeAhead extends StatelessWidget {
             : customer.imageUrl!;
         final bytes = base64Decode(base64String);
         return CircleAvatar(radius: 18, backgroundImage: MemoryImage(bytes));
-      } catch (e) {}
+      } catch (_) {}
     }
 
     return CircleAvatar(

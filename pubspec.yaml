@@ -2,7 +2,7 @@ name: mobo_billing
 description: "Odoo Billing & Invoicing App - Comprehensive billing solution with Odoo backend integration"
 publish_to: 'none'
 
-version: 1.0.5+18
+version: 1.0.6+19
 
 environment:
   sdk: ^3.8.1
@@ -18,7 +18,7 @@ dependencies:
   hugeicons: ^1.1.4
   in_app_review: ^2.0.9
   flutter_rating_bar: ^4.0.1
-  font_awesome_flutter: ^10.6.0
+  font_awesome_flutter: ^11.0.0
   flutter_svg: ^2.0.10+1
   lottie: ^3.3.0
 

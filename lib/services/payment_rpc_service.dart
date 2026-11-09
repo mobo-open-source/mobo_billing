@@ -34,7 +34,6 @@ class PaymentRpcService {
         }
 
         final payment = paymentCheck.first;
-        final paymentState = payment['state']?.toString() ?? 'draft';
         final paymentName =
             (payment['name'] is String &&
                 (payment['name'] as String).isNotEmpty)
@@ -60,7 +59,7 @@ class PaymentRpcService {
             ]);
             success = true;
           }
-        } catch (e) {}
+        } catch (_) {}
 
         if (!success) {
           try {
@@ -88,7 +87,7 @@ class PaymentRpcService {
                     [{}],
                     {'context': odoo18Context},
                   );
-                } catch (e) {
+                } catch (_) {
                   wizardId = await apiService.call(
                     'mail.compose.message',
                     'create',
@@ -108,21 +107,7 @@ class PaymentRpcService {
                 }
               }
             }
-          } catch (e) {}
-        }
-
-        if (!success) {
-          final reconciledInvoiceIds = payment['reconciled_invoice_ids'];
-          if (reconciledInvoiceIds is List && reconciledInvoiceIds.isNotEmpty) {
-            final invoiceId = reconciledInvoiceIds.first;
-
-            await InvoiceService.sendInvoice(
-              context,
-              invoiceId,
-              closeLoadingDialog: closeLoadingDialog,
-            );
-            return;
-          }
+          } catch (_) {}
         }
 
         if (!success) {
@@ -141,6 +126,9 @@ class PaymentRpcService {
             int? templateId = templates.isNotEmpty
                 ? templates.first['id']
                 : null;
+            if (templateId == null) {
+              throw StateError('No payment receipt mail template');
+            }
 
             final baseContext = {
               'default_model': 'account.payment',
@@ -163,7 +151,7 @@ class PaymentRpcService {
                 [{}],
                 {'context': odoo18Context},
               );
-            } catch (e) {
+            } catch (_) {
               final legacyContext = {
                 ...baseContext,
                 'default_res_id': paymentId,
@@ -185,7 +173,23 @@ class PaymentRpcService {
               );
               success = true;
             }
-          } catch (e) {}
+          } catch (_) {}
+        }
+
+        // Last resort when no receipt template could be used: send the invoice
+        // this payment paid instead.
+        if (!success) {
+          final reconciledInvoiceIds = payment['reconciled_invoice_ids'];
+          if (reconciledInvoiceIds is List && reconciledInvoiceIds.isNotEmpty) {
+            final invoiceId = reconciledInvoiceIds.first;
+
+            await InvoiceService.sendInvoice(
+              context,
+              invoiceId,
+              closeLoadingDialog: closeLoadingDialog,
+            );
+            return;
+          }
         }
 
         if (success) {
@@ -206,7 +210,7 @@ class PaymentRpcService {
           throw Exception('Sending payment receipt timed out after 30 seconds');
         },
       );
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         closeLoadingDialog();
       }

@@ -5,20 +5,26 @@ import 'package:hugeicons/hugeicons.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../providers/customer_provider.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/filter_sheet.dart';
+import '../../widgets/group_section_card.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../widgets/customer_list_tile.dart';
 import 'package:mobo_billing/providers/last_opened_provider.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/empty_state_widget.dart';
 import 'customer_details_screen.dart';
 import 'customer_form_screen.dart';
 import '../../models/customer.dart';
 import '../../widgets/custom_snackbar.dart';
 import 'package:intl/intl.dart';
-import '../../utils/date_picker_utils.dart';
+import '../../widgets/date_range_filter_fields.dart';
+import '../../widgets/pagination_bar.dart';
 
 class CustomersScreen extends StatefulWidget {
   final bool autoFocusSearch;
@@ -85,6 +91,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        forceMaterialTransparency: true,
         backgroundColor:
             Theme.of(context).appBarTheme.backgroundColor ??
             Theme.of(context).colorScheme.surface,
@@ -112,11 +119,11 @@ class _CustomersScreenState extends State<CustomersScreen> {
             _loadData();
           }
         },
-        backgroundColor: isDark ? Colors.white : Theme.of(context).primaryColor,
+        backgroundColor: Theme.of(context).primaryColor,
         tooltip: 'Create Customer',
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedUserAdd01,
-          color: isDark ? Colors.black : Colors.white,
+          color: Colors.white,
         ),
       ),
       body: Consumer<CustomerProvider>(
@@ -134,7 +141,10 @@ class _CustomersScreenState extends State<CustomersScreen> {
                           (provider.showActiveOnly ? 0 : 1) +
                           (provider.showCompaniesOnly ? 1 : 0) +
                           (provider.showIndividualsOnly ? 1 : 0) +
-                          (provider.showCreditBreachesOnly ? 1 : 0) +
+                          // Credit Breaches isn't wired up to any query
+                          // filtering yet (see CustomerProvider._buildDomain),
+                          // so it's deliberately left out of this count —
+                          // toggling it has no effect on the results shown.
                           (provider.startDate != null ||
                                   provider.endDate != null
                               ? 1
@@ -159,14 +169,15 @@ class _CustomersScreenState extends State<CustomersScreen> {
               Expanded(
                 child: Consumer2<ConnectivityService, SessionService>(
                   builder: (context, connectivityService, sessionService, child) {
+                    // Offline with records in hand: keep them on screen under
+                    // a banner instead of blanking the list.
                     if (!connectivityService.isConnected) {
+                      if (provider.customers.isNotEmpty) {
+                        return _buildCachedContent(provider);
+                      }
+
                       return ConnectionStatusWidget(
-                        onRetry: () {
-                          if (connectivityService.isConnected &&
-                              sessionService.hasValidSession) {
-                            _loadData();
-                          }
-                        },
+                        onRetry: _loadData,
                         customMessage:
                             'No internet connection. Please check your connection and try again.',
                       );
@@ -174,6 +185,15 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
                     if (!sessionService.hasValidSession) {
                       return const ConnectionStatusWidget();
+                    }
+
+                    // A failed refresh keeps the last good page on screen.
+                    if (provider.error != null &&
+                        provider.customers.isNotEmpty) {
+                      return _buildCachedContent(
+                        provider,
+                        message: "Couldn't refresh customers",
+                      );
                     }
 
                     if (provider.error != null && provider.customers.isEmpty) {
@@ -234,195 +254,37 @@ class _CustomersScreenState extends State<CustomersScreen> {
   }
 
   Widget _buildSearchField() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final provider = Provider.of<CustomerProvider>(context, listen: false);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
-      child: Container(
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF000000).withOpacity(0.05),
-              offset: const Offset(0, 6),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          onChanged: _onSearchChanged,
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xff1E1E1E),
-            fontWeight: FontWeight.w400,
-            fontStyle: FontStyle.normal,
-            fontSize: 15,
-            height: 1.0,
-            letterSpacing: 0.0,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Search customers...',
-            hintStyle: TextStyle(
-              color: isDark ? Colors.white : const Color(0xff1E1E1E),
-              fontWeight: FontWeight.w400,
-              fontStyle: FontStyle.normal,
-              fontSize: 15,
-              height: 1.0,
-              letterSpacing: 0.0,
-            ),
-            prefixIcon: IconButton(
-              icon: HugeIcon(
-                icon: HugeIcons.strokeRoundedFilterHorizontal,
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-              ),
-              onPressed: _showFilterBottomSheet,
-            ),
-            suffixIcon: _searchController.text.isNotEmpty
-                ? IconButton(
-                    icon: Icon(
-                      Icons.clear,
-                      color: isDark ? Colors.grey[400] : Colors.grey,
-                      size: 20,
-                    ),
-                    onPressed: () {
-                      _searchController.clear();
-                      _searchDebounce?.cancel();
-                      Provider.of<CustomerProvider>(
-                        context,
-                        listen: false,
-                      ).loadCustomers();
-                      setState(() {});
-                    },
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                  )
-                : null,
-            filled: true,
-            fillColor: isDark ? Colors.grey[850] : Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1.5,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            isDense: true,
-            alignLabelWithHint: true,
-          ),
-        ),
+      child: MoboSearchField(
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        hintText: 'Search customers...',
+        hasActiveFilters: _hasActiveFilters(provider),
+        onFilterTap: _showFilterBottomSheet,
+        onChanged: _onSearchChanged,
+        onClear: () {
+          _searchDebounce?.cancel();
+          Provider.of<CustomerProvider>(context, listen: false).loadCustomers();
+        },
       ),
     );
   }
 
   Widget _buildTopPaginationBar(CustomerProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final paginationText = provider.isGrouped
-        ? '${provider.totalCount}/${provider.totalCount}'
-        : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}';
-
-    return Container(
-      padding: const EdgeInsets.only(right: 0, top: 4, bottom: 4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  paginationText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.grey[300] : Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (!provider.isGrouped) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasPreviousPage && !provider.isLoading)
-                      ? provider.goToPreviousPage
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowLeft01,
-                      size: 20,
-                      color: (provider.hasPreviousPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasNextPage && !provider.isLoading)
-                      ? provider.goToNextPage
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowRight01,
-                      size: 20,
-                      color: (provider.hasNextPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PaginationBar(
+      totalCount: provider.totalCount,
+      rangeText: provider.isGrouped
+          ? '${provider.totalCount}/${provider.totalCount}'
+          : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}',
+      showArrows: !provider.isGrouped,
+      hasPrevious: provider.hasPreviousPage,
+      hasNext: provider.hasNextPage,
+      isLoading: provider.isLoading,
+      onPrevious: provider.goToPreviousPage,
+      onNext: provider.goToNextPage,
     );
   }
 
@@ -441,6 +303,21 @@ class _CustomersScreenState extends State<CustomersScreen> {
     );
   }
 
+  /// The customer list under an [OfflineDataBanner], used when the records
+  /// came from the cache rather than a live fetch.
+  Widget _buildCachedContent(CustomerProvider provider, {String? message}) {
+    return Column(
+      children: [
+        OfflineDataBanner(
+          lastUpdated: provider.cacheUpdatedAt,
+          onRetry: _loadData,
+          message: message,
+        ),
+        Expanded(child: _buildCustomerList(provider.customers, provider)),
+      ],
+    );
+  }
+
   Widget _buildCustomerList(
     List<Customer> customers,
     CustomerProvider provider,
@@ -454,44 +331,20 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
       return ListView.builder(
         controller: _scrollController,
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.fabClearance),
         itemCount: groups.length,
         itemBuilder: (context, index) {
           final group = groups[index];
           final groupKey = group.key;
           final count = group.value;
           final isExpanded = _expandedGroups[groupKey] ?? false;
+          final loadedCustomers = provider.loadedGroups[groupKey];
 
-          Widget? expandedContent;
-          if (isExpanded) {
-            if (provider.loadedGroups.containsKey(groupKey)) {
-              expandedContent = Column(
-                children: provider.loadedGroups[groupKey]!
-                    .map(
-                      (customer) => Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8.0,
-                          vertical: 4.0,
-                        ),
-                        child: _buildCustomerCard(customer),
-                      ),
-                    )
-                    .toList(),
-              );
-            } else {
-              expandedContent = const Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-          }
-
-          return _buildOdooStyleGroupTile(
-            context,
-            groupKey,
-            count,
-            isExpanded,
-            () {
+          return GroupSectionCard(
+            title: groupKey,
+            subtitle: '$count customer${count != 1 ? 's' : ''}',
+            isExpanded: isExpanded,
+            onToggle: () {
               setState(() {
                 _expandedGroups[groupKey] = !isExpanded;
               });
@@ -499,7 +352,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 provider.loadGroupContacts(groupKey);
               }
             },
-            expandedContent: expandedContent,
+            isLoading: loadedCustomers == null,
+            body: Column(
+              children: [
+                for (final customer in loadedCustomers ?? const <Customer>[])
+                  _buildCustomerCard(customer),
+              ],
+            ),
           );
         },
       );
@@ -507,7 +366,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, AppSpacing.fabClearance),
       itemCount: customers.length,
       itemBuilder: (context, index) {
         final customer = customers[index];
@@ -526,9 +385,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
       onTap: () async {
         try {
           final id = customer.id?.toString() ?? '';
-          final name = customer.name;
           if (id.isNotEmpty) {
-            final type = customer.companyType;
             await Provider.of<LastOpenedProvider>(
               context,
               listen: false,
@@ -640,7 +497,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
       try {
         await launchUrl(smsUri, mode: LaunchMode.externalApplication);
         return;
-      } catch (e) {}
+      } catch (_) {}
 
       if (await canLaunchUrl(smsUri)) {
         await launchUrl(smsUri, mode: LaunchMode.externalApplication);
@@ -705,7 +562,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
           mode: LaunchMode.externalApplication,
         );
         return;
-      } catch (e) {}
+      } catch (_) {}
 
       if (await canLaunchUrl(Uri.parse(whatsappUrl))) {
         await launchUrl(
@@ -758,7 +615,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
             ListTile(
               leading: HugeIcon(
                 icon: HugeIcons.strokeRoundedMessage01,
-                color: isDark ? Colors.white : primaryColor,
+                color: primaryColor,
               ),
               title: Text(
                 'System Messenger',
@@ -871,679 +728,137 @@ class _CustomersScreenState extends State<CustomersScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      isDismissible: true,
-      enableDrag: true,
-      builder: (context) => DefaultTabController(
-        length: 2,
-        child: StatefulBuilder(
-          builder: (context, setDialogState) {
-            final theme = Theme.of(context);
-            final isDark = theme.brightness == Brightness.dark;
-
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.8,
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF232323) : Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
-                ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Filter & Group By',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                color: isDark ? Colors.white : Colors.black87,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: Icon(
-                              Icons.close,
-                              color: isDark ? Colors.white : Colors.black54,
-                            ),
-                            splashRadius: 20,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.grey[800] : Colors.grey[100],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: TabBar(
-                        indicator: BoxDecoration(
-                          color: theme.primaryColor,
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: theme.primaryColor.withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        indicatorPadding: const EdgeInsets.all(4),
-                        indicatorSize: TabBarIndicatorSize.tab,
-                        dividerColor: Colors.transparent,
-                        labelColor: Colors.white,
-                        unselectedLabelColor: isDark
-                            ? Colors.grey[400]
-                            : Colors.grey[600],
-                        labelStyle: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                        unselectedLabelStyle: const TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                        tabs: const [
-                          Tab(height: 48, text: 'Filter'),
-                          Tab(height: 48, text: 'Group By'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    Expanded(
-                      child: TabBarView(
-                        children: [
-                          _buildCustomerFilterTab(
-                            context,
-                            setDialogState,
-                            isDark,
-                            theme,
-                            provider,
-                            tempState,
-                          ),
-                          _buildCustomerGroupByTab(
-                            context,
-                            setDialogState,
-                            isDark,
-                            theme,
-                            provider,
-                            tempState,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.grey[850] : Colors.grey[50],
-                        border: Border(
-                          top: BorderSide(
-                            color: isDark
-                                ? Colors.grey[700]!
-                                : Colors.grey[200]!,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => _clearAllFilters(
-                                setDialogState,
-                                tempState,
-                                provider,
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: isDark
-                                    ? Colors.white
-                                    : Colors.black87,
-                                side: BorderSide(
-                                  color: isDark
-                                      ? Colors.grey[600]!
-                                      : Colors.grey[300]!,
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                              child: const Text('Clear All'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 2,
-                            child: ElevatedButton(
-                              onPressed: () =>
-                                  _applyFiltersAndGroupBy(tempState, provider),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: theme.primaryColor,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                elevation: 0,
-                                shadowColor: Colors.transparent,
-                              ),
-                              child: const Text('Apply'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => FilterSheetShell(
+          filterTab: _buildCustomerFilterTab(setDialogState, tempState),
+          groupByTab: FilterGroupByTab(
+            heading: 'Group customers by',
+            options: provider.groupByOptions,
+            selected: tempState['selectedGroupBy'],
+            loadingWhenEmpty: true,
+            onChanged: (value) => setDialogState(
+              () => tempState['selectedGroupBy'] = value,
+            ),
+          ),
+          onClear: () => _clearAllFilters(setDialogState, tempState, provider),
+          onApply: () => _applyFiltersAndGroupBy(tempState, provider),
         ),
       ),
     );
   }
 
   Widget _buildCustomerFilterTab(
-    BuildContext context,
     StateSetter setDialogState,
-    bool isDark,
-    ThemeData theme,
-    CustomerProvider provider,
     Map<String, dynamic> tempState,
   ) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (tempState['showActiveOnly'] == true ||
-              tempState['showCompaniesOnly'] == true ||
-              tempState['showIndividualsOnly'] == true ||
-              tempState['showCreditBreachesOnly'] == true ||
-              tempState['startDate'] != null ||
-              tempState['endDate'] != null) ...[
-            Text(
-              'Active Filters',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: isDark ? Colors.white : theme.primaryColor,
-                fontWeight: FontWeight.w600,
+    final DateTime? start = tempState['startDate'];
+    final DateTime? end = tempState['endDate'];
+
+    return FilterTabBody(
+      children: [
+        FilterActiveFilters(
+          chips: [
+            // "Active Only" defaults to ON — hiding archived customers is the
+            // baseline, not something the user applied — so the deviation worth
+            // surfacing (and offering to undo) here is turning it OFF, i.e.
+            // choosing to include archived ones too.
+            if (tempState['showActiveOnly'] == false)
+              FilterActiveChip(
+                label: 'Including Archived',
+                onRemove: () =>
+                    setDialogState(() => tempState['showActiveOnly'] = true),
               ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                if (tempState['showActiveOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Active Only',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showActiveOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showCompaniesOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Companies',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showCompaniesOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showIndividualsOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Individuals',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showIndividualsOnly'] = false,
-                    ),
-                  ),
-                if (tempState['showCreditBreachesOnly'] == true)
-                  Chip(
-                    label: const Text(
-                      'Credit Breaches',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(
-                      () => tempState['showCreditBreachesOnly'] = false,
-                    ),
-                  ),
-                if (tempState['startDate'] != null ||
-                    tempState['endDate'] != null)
-                  Chip(
-                    label: Text(
-                      'Date: ${tempState['startDate'] != null ? DateFormat('MMM dd').format(tempState['startDate']) : '...'} - ${tempState['endDate'] != null ? DateFormat('MMM dd, yyyy').format(tempState['endDate']) : '...'}',
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(.08)
-                        : theme.primaryColor.withOpacity(0.08),
-                    deleteIcon: const Icon(Icons.close, size: 16),
-                    onDeleted: () => setDialogState(() {
-                      tempState['startDate'] = null;
-                      tempState['endDate'] = null;
-                    }),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
+            if (tempState['showCompaniesOnly'] == true)
+              FilterActiveChip(
+                label: 'Companies',
+                onRemove: () => setDialogState(
+                  () => tempState['showCompaniesOnly'] = false,
+                ),
+              ),
+            if (tempState['showIndividualsOnly'] == true)
+              FilterActiveChip(
+                label: 'Individuals',
+                onRemove: () => setDialogState(
+                  () => tempState['showIndividualsOnly'] = false,
+                ),
+              ),
+            if (tempState['showCreditBreachesOnly'] == true)
+              FilterActiveChip(
+                label: 'Credit Breaches',
+                onRemove: () => setDialogState(
+                  () => tempState['showCreditBreachesOnly'] = false,
+                ),
+              ),
+            if (start != null || end != null)
+              FilterActiveChip(
+                label:
+                    'Date: ${start != null ? DateFormat('MMM dd').format(start) : '...'} - ${end != null ? DateFormat('MMM dd, yyyy').format(end) : '...'}',
+                onRemove: () => setDialogState(() {
+                  tempState['startDate'] = null;
+                  tempState['endDate'] = null;
+                }),
+              ),
           ],
-
-          Text(
-            'Status',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              ChoiceChip(
-                label: Text(
-                  'Active Only',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showActiveOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showActiveOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showActiveOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) =>
-                    setDialogState(() => tempState['showActiveOnly'] = val),
-              ),
-              ChoiceChip(
-                label: Text(
-                  'Credit Breaches',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showCreditBreachesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showCreditBreachesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showCreditBreachesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) => setDialogState(
-                  () => tempState['showCreditBreachesOnly'] = val,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          Text(
-            'Type',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              ChoiceChip(
-                label: Text(
-                  'Companies',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showCompaniesOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showCompaniesOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showCompaniesOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showCompaniesOnly'] = val;
-                    if (val) tempState['showIndividualsOnly'] = false;
-                  });
-                },
-              ),
-              ChoiceChip(
-                label: Text(
-                  'Individuals',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: tempState['showIndividualsOnly'] == true
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: tempState['showIndividualsOnly'] == true
-                        ? Colors.white
-                        : (isDark ? Colors.white : Colors.black87),
-                  ),
-                ),
-                selected: tempState['showIndividualsOnly'] == true,
-                selectedColor: theme.primaryColor,
-                backgroundColor: isDark
-                    ? Colors.white.withOpacity(.08)
-                    : theme.primaryColor.withOpacity(0.08),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey[600]! : Colors.grey[300]!,
-                  ),
-                ),
-                onSelected: (val) {
-                  setDialogState(() {
-                    tempState['showIndividualsOnly'] = val;
-                    if (val) tempState['showCompaniesOnly'] = false;
-                  });
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          Text(
-            'Date Range',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          InkWell(
-            onTap: () async {
-              final date = await DatePickerUtils.showStandardDatePicker(
-                context: context,
-                initialDate: tempState['startDate'] ?? DateTime.now(),
-                firstDate: DateTime(2020),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
-              );
-              if (date != null) {
-                setDialogState(() => tempState['startDate'] = date);
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.grey[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                ),
-              ),
-              child: Row(
-                children: [
-                  HugeIcon(
-                    icon: HugeIcons.strokeRoundedCalendar03,
-                    size: 16,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      tempState['startDate'] != null
-                          ? 'From: ${DateFormat('MMM dd, yyyy').format(tempState['startDate'])}'
-                          : 'Select start date',
-                      style: TextStyle(
-                        color: tempState['startDate'] != null
-                            ? (isDark ? Colors.white : Colors.grey[800])
-                            : (isDark ? Colors.grey[400] : Colors.grey[600]),
-                      ),
-                    ),
-                  ),
-                  if (tempState['startDate'] != null)
-                    IconButton(
-                      onPressed: () =>
-                          setDialogState(() => tempState['startDate'] = null),
-                      icon: Icon(
-                        Icons.clear,
-                        size: 16,
-                        color: isDark ? Colors.grey[400] : Colors.grey[600],
-                      ),
-                    ),
-                ],
+        ),
+        const FilterSectionTitle('Status'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChoiceChip(
+              label: 'Active Only',
+              selected: tempState['showActiveOnly'] == true,
+              onTap: () => setDialogState(
+                () => tempState['showActiveOnly'] =
+                    tempState['showActiveOnly'] != true,
               ),
             ),
-          ),
-          const SizedBox(height: 8),
-
-          InkWell(
-            onTap: () async {
-              final date = await DatePickerUtils.showStandardDatePicker(
-                context: context,
-                initialDate: tempState['endDate'] ?? DateTime.now(),
-                firstDate: tempState['startDate'] ?? DateTime(2020),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
-              );
-              if (date != null) {
-                setDialogState(() => tempState['endDate'] = date);
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.grey[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                ),
-              ),
-              child: Row(
-                children: [
-                  HugeIcon(
-                    icon: HugeIcons.strokeRoundedCalendar03,
-                    size: 16,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      tempState['endDate'] != null
-                          ? 'To: ${DateFormat('MMM dd, yyyy').format(tempState['endDate'])}'
-                          : 'Select end date',
-                      style: TextStyle(
-                        color: tempState['endDate'] != null
-                            ? (isDark ? Colors.white : Colors.grey[800])
-                            : (isDark ? Colors.grey[400] : Colors.grey[600]),
-                      ),
-                    ),
-                  ),
-                  if (tempState['endDate'] != null)
-                    IconButton(
-                      onPressed: () =>
-                          setDialogState(() => tempState['endDate'] = null),
-                      icon: Icon(
-                        Icons.clear,
-                        size: 16,
-                        color: isDark ? Colors.grey[400] : Colors.grey[600],
-                      ),
-                    ),
-                ],
+            FilterChoiceChip(
+              label: 'Credit Breaches',
+              selected: tempState['showCreditBreachesOnly'] == true,
+              onTap: () => setDialogState(
+                () => tempState['showCreditBreachesOnly'] =
+                    tempState['showCreditBreachesOnly'] != true,
               ),
             ),
-          ),
-          const SizedBox(height: 20),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCustomerGroupByTab(
-    BuildContext context,
-    StateSetter setDialogState,
-    bool isDark,
-    ThemeData theme,
-    CustomerProvider provider,
-    Map<String, dynamic> tempState,
-  ) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 16),
-          Text(
-            'Group customers by',
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          RadioListTile<String?>(
-            title: Text(
-              'None',
-              style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            subtitle: Text(
-              'Display as a simple list',
-              style: TextStyle(
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                fontSize: 12,
-              ),
-            ),
-            value: null,
-            groupValue: tempState['selectedGroupBy'],
-            onChanged: (value) {
-              setDialogState(() {
-                tempState['selectedGroupBy'] = value;
-              });
-            },
-            activeColor: theme.primaryColor,
-            contentPadding: EdgeInsets.zero,
-          ),
-          const Divider(),
-          if (provider.groupByOptions.isEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Center(child: Text("Loading options...")),
-            ),
-          ] else ...[
-            ...provider.groupByOptions.entries.map((entry) {
-              String description = '';
-              switch (entry.key) {
-                case 'user_id':
-                  description = 'Group by assigned salesperson';
-                  break;
-                case 'country_id':
-                  description = 'Group by country';
-                  break;
-                case 'state_id':
-                  description = 'Group by state';
-                  break;
-                case 'company_id':
-                  description = 'Group by company';
-                  break;
-                default:
-                  description = 'Group by ${entry.value.toLowerCase()}';
-              }
-              return RadioListTile<String>(
-                title: Text(
-                  entry.value,
-                  style: TextStyle(
-                    color: isDark ? Colors.white : Colors.black87,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                subtitle: Text(
-                  description,
-                  style: TextStyle(
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    fontSize: 12,
-                  ),
-                ),
-                value: entry.key,
-                groupValue: tempState['selectedGroupBy'],
-                onChanged: (value) {
-                  setDialogState(() {
-                    tempState['selectedGroupBy'] = value;
-                  });
-                },
-                activeColor: theme.primaryColor,
-                contentPadding: EdgeInsets.zero,
-              );
-            }).toList(),
           ],
-          const SizedBox(height: 24),
-        ],
-      ),
+        ),
+        const FilterSectionTitle('Type'),
+        // Companies and Individuals exclude each other.
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChoiceChip(
+              label: 'Companies',
+              selected: tempState['showCompaniesOnly'] == true,
+              onTap: () => setDialogState(() {
+                final val = tempState['showCompaniesOnly'] != true;
+                tempState['showCompaniesOnly'] = val;
+                if (val) tempState['showIndividualsOnly'] = false;
+              }),
+            ),
+            FilterChoiceChip(
+              label: 'Individuals',
+              selected: tempState['showIndividualsOnly'] == true,
+              onTap: () => setDialogState(() {
+                final val = tempState['showIndividualsOnly'] != true;
+                tempState['showIndividualsOnly'] = val;
+                if (val) tempState['showCompaniesOnly'] = false;
+              }),
+            ),
+          ],
+        ),
+        const FilterSectionTitle('Date Range'),
+        DateRangeFilterFields(
+          startDate: start,
+          endDate: end,
+          onStartChanged: (date) =>
+              setDialogState(() => tempState['startDate'] = date),
+          onEndChanged: (date) =>
+              setDialogState(() => tempState['endDate'] = date),
+        ),
+      ],
     );
   }
 
@@ -1567,6 +882,14 @@ class _CustomersScreenState extends State<CustomersScreen> {
     Map<String, dynamic> tempState,
     CustomerProvider provider,
   ) {
+    if (!DateRangeFilterFields.isValid(
+      tempState['startDate'],
+      tempState['endDate'],
+    )) {
+      CustomSnackbar.showError(context, DateRangeFilterFields.rangeError);
+      return;
+    }
+
     provider.setFilterState(
       showActiveOnly: tempState['showActiveOnly'],
       showCompaniesOnly: tempState['showCompaniesOnly'],
@@ -1586,10 +909,11 @@ class _CustomersScreenState extends State<CustomersScreen> {
   }
 
   bool _hasActiveFilters(CustomerProvider provider) {
+    // Credit Breaches is excluded here too — it's not wired up to any query
+    // filtering yet, so it shouldn't count as a result-affecting filter.
     return !provider.showActiveOnly ||
         provider.showCompaniesOnly ||
         provider.showIndividualsOnly ||
-        provider.showCreditBreachesOnly ||
         provider.startDate != null ||
         provider.endDate != null ||
         provider.selectedGroupBy != null;
@@ -1643,87 +967,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
               color: isDark ? Colors.grey[400] : Colors.grey[600],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOdooStyleGroupTile(
-    BuildContext context,
-    String groupTitle,
-    int count,
-    bool isExpanded,
-    VoidCallback onTap, {
-    Widget? expandedContent,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
-        ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.08),
-            ),
-        ],
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            groupTitle,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: isDark ? Colors.white : Colors.black87,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '$count customer${count != 1 ? 's' : ''}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: isDark
-                                  ? Colors.grey[400]
-                                  : Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (isExpanded && expandedContent != null) expandedContent,
         ],
       ),
     );

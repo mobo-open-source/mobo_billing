@@ -84,9 +84,9 @@ class CircularImageWidget extends StatelessWidget {
                 }
               } catch (_) {}
             }
-          } catch (e) {}
+          } catch (_) {}
         }
-      } catch (e) {}
+      } catch (_) {}
     }
 
     return CircleAvatar(

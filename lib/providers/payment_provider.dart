@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/payment.dart';
+import '../services/connectivity_service.dart';
+import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 
 /// Provider for managing payment list, status filtering, and payment lifecycle actions.
@@ -14,14 +16,30 @@ class PaymentProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
+
   int _currentOffset = 0;
   int _limit = 40;
   int _totalCount = 0;
 
   String? _currentSearchQuery;
+
+  /// The screen's filter domain (status/date) for the current listing, kept so
+  /// paging and post-action reloads stay filtered.
+  List<dynamic>? _currentCustomFilter;
+
+  /// Group label → many2one record id, from the last read_group.
+  Map<String, int> _groupIds = {};
   String _currentStatusFilter = 'all';
 
   List<Payment> get payments => _payments;
+
+  /// Whether [payments] came from the cache instead of a live request.
+  bool get isShowingCachedData => _isShowingCachedData;
+
+  /// When the cached records on screen were fetched.
+  DateTime? get cacheUpdatedAt => _cacheUpdatedAt;
 
   bool get isLoading => _isLoading;
 
@@ -56,8 +74,12 @@ class PaymentProvider with ChangeNotifier {
     _totalCount = 0;
     _currentSearchQuery = null;
     _currentStatusFilter = 'all';
+    _currentCustomFilter = null;
     _groupSummary = {};
     _loadedGroups = {};
+    _isShowingCachedData = false;
+    _cacheUpdatedAt = null;
+    DataCache.invalidatePrefix(DataCache.paymentPrefix);
     notifyListeners();
   }
 
@@ -69,9 +91,15 @@ class PaymentProvider with ChangeNotifier {
     List<dynamic>? customFilter,
   }) async {
     _currentStatusFilter = status;
+    _currentCustomFilter = customFilter;
 
     if (_currentSearchQuery != null) {
       _currentSearchQuery = null;
+    }
+
+    // Offline: serve what was loaded last instead of clearing the screen.
+    if (!ConnectivityService.instance.isConnected && _serveCachedPayments()) {
+      return;
     }
 
     _setLoading(true);
@@ -94,59 +122,59 @@ class PaymentProvider with ChangeNotifier {
           domain.addAll(customFilter);
         }
 
-        List<Map<String, dynamic>> results;
-        try {
-          results = await _apiService.searchRead(
-            'account.payment',
-            domain,
-            [
-              'name',
-              'partner_id',
-              'amount',
-              'date',
-              'payment_method_line_id',
-              'state',
-              'payment_reference',
-              'currency_id',
-              'journal_id',
-              'memo',
-              'partner_bank_id',
-              'is_sent',
-              'payment_method_code',
-              'company_id',
-              'create_date',
-              'write_date',
-            ],
-            offset,
-            limit,
-            'date desc, id desc',
-          );
-        } catch (e) {
-          results = await _apiService.searchRead(
-            'account.payment',
-            domain,
-            [
-              'name',
-              'partner_id',
-              'amount',
-              'date',
-              'state',
-
-              'currency_id',
-              'journal_id',
-            ],
-            offset,
-            limit,
-            'date desc, id desc',
-          );
+        Future<List<Map<String, dynamic>>> fetchPage() async {
+          try {
+            return await _apiService.searchRead(
+              'account.payment',
+              domain,
+              [
+                'name',
+                'partner_id',
+                'amount',
+                'date',
+                'payment_method_line_id',
+                'state',
+                'payment_reference',
+                'currency_id',
+                'journal_id',
+                'memo',
+                'partner_bank_id',
+                'is_sent',
+                'payment_method_code',
+                'company_id',
+                'create_date',
+                'write_date',
+              ],
+              offset,
+              limit,
+              'date desc, id desc',
+            );
+          } catch (_) {
+            return await _apiService.searchRead(
+              'account.payment',
+              domain,
+              ['name', 'partner_id', 'amount', 'date', 'state', 'currency_id', 'journal_id'],
+              offset,
+              limit,
+              'date desc, id desc',
+            );
+          }
         }
 
-        _payments = results.map((p) => Payment.fromJson(p)).toList();
+        // Count and page data are independent reads — run them concurrently
+        // instead of waiting on the count before even starting the page fetch.
+        final results = await Future.wait([
+          fetchPage(),
+          _apiService.getCount('account.payment', domain: domain),
+        ]);
 
-        _totalCount = await _apiService.getCount(
-          'account.payment',
-          domain: domain,
-        );
+        _payments = (results[0] as List<Map<String, dynamic>>)
+            .map((p) => Payment.fromJson(p))
+            .toList();
+        _totalCount = results[1] as int;
+
+        _cachePayments();
+        _isShowingCachedData = false;
 
         _setLoading(false);
         notifyListeners();
@@ -156,25 +184,45 @@ class PaymentProvider with ChangeNotifier {
           throw TimeoutException('Loading payments timed out after 30 seconds');
         },
       );
-    } on TimeoutException catch (e) {
+    } on TimeoutException {
+      _setLoading(false);
+
+      if (_payments.isEmpty && _serveCachedPayments()) return;
+
       _setError(
         'Request timed out. Please check your connection and try again.',
       );
-
-      if (_payments.isEmpty) {
-        _payments = [];
-        _totalCount = 0;
-      }
-      _setLoading(false);
     } catch (e) {
-      _setError(e.toString());
-
-      if (_payments.isEmpty) {
-        _payments = [];
-        _totalCount = 0;
-      }
       _setLoading(false);
+
+      if (_payments.isEmpty && _serveCachedPayments()) return;
+
+      _setError(e.toString());
     }
+  }
+
+  /// Stores the current page so it can be shown again offline.
+  void _cachePayments() {
+    final key = DataCache.listKey(DataCache.paymentPrefix);
+    DataCache.write(key, CachedList<Payment>(List.of(_payments), _totalCount));
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+  }
+
+  /// Publishes the cached page, if there is one. Returns whether it did.
+  bool _serveCachedPayments() {
+    final key = DataCache.listKey(DataCache.paymentPrefix);
+    final cached = DataCache.read<CachedList<Payment>>(key);
+    if (cached == null || cached.items.isEmpty) return false;
+
+    _payments = List.of(cached.items);
+    _totalCount = cached.totalCount;
+    _currentOffset = 0;
+    _isShowingCachedData = true;
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+    return true;
   }
 
   /// Searches for payments based on a query (name, partner, or reference).
@@ -183,14 +231,21 @@ class PaymentProvider with ChangeNotifier {
     int offset = 0,
     int limit = 40,
     String status = 'all',
+    List<dynamic>? customFilter,
   }) async {
     if (query.isEmpty) {
-      await loadPayments(offset: 0, limit: limit, status: status);
+      await loadPayments(
+        offset: 0,
+        limit: limit,
+        status: status,
+        customFilter: customFilter,
+      );
       return;
     }
 
     _currentSearchQuery = query;
     _currentStatusFilter = status;
+    _currentCustomFilter = customFilter;
     _setLoading(true);
     _setError(null);
 
@@ -208,62 +263,64 @@ class PaymentProvider with ChangeNotifier {
         domain.add(['state', '=', status]);
       }
 
+      if (customFilter != null && customFilter.isNotEmpty) {
+        domain.addAll(customFilter);
+      }
+
       _currentOffset = offset;
       _limit = limit;
 
-      List<Map<String, dynamic>> results;
-      try {
-        results = await _apiService.searchRead(
-          'account.payment',
-          domain,
-          [
-            'name',
-            'partner_id',
-            'amount',
-            'date',
-            'payment_method_line_id',
-            'state',
-            'payment_reference',
-            'currency_id',
-            'journal_id',
-            'memo',
-            'partner_bank_id',
-            'is_sent',
-            'payment_method_code',
-            'company_id',
-          ],
-          offset,
-          limit,
-        );
-      } catch (e) {
-        results = await _apiService.searchRead(
-          'account.payment',
-          domain,
-          [
-            'name',
-            'partner_id',
-            'amount',
-            'date',
-            'state',
-
-            'currency_id',
-            'journal_id',
-          ],
-          offset,
-          limit,
-        );
+      Future<List<Map<String, dynamic>>> fetchPage() async {
+        try {
+          return await _apiService.searchRead(
+            'account.payment',
+            domain,
+            [
+              'name',
+              'partner_id',
+              'amount',
+              'date',
+              'payment_method_line_id',
+              'state',
+              'payment_reference',
+              'currency_id',
+              'journal_id',
+              'memo',
+              'partner_bank_id',
+              'is_sent',
+              'payment_method_code',
+              'company_id',
+            ],
+            offset,
+            limit,
+          );
+        } catch (_) {
+          return await _apiService.searchRead(
+            'account.payment',
+            domain,
+            ['name', 'partner_id', 'amount', 'date', 'state', 'currency_id', 'journal_id'],
+            offset,
+            limit,
+          );
+        }
       }
 
-      _payments = results.map((p) => Payment.fromJson(p)).toList();
+      // Count and page data are independent reads — run them concurrently
+      // instead of waiting on the count before even starting the page fetch.
+      final results = await Future.wait([
+        fetchPage(),
+        _apiService.getCount('account.payment', domain: domain).timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            throw TimeoutException('Search timed out after 30 seconds');
+          },
+        ),
+      ]);
 
-      _totalCount = await _apiService
-          .getCount('account.payment', domain: domain)
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () {
-              throw TimeoutException('Search timed out after 30 seconds');
-            },
-          );
+      _payments = (results[0] as List<Map<String, dynamic>>)
+          .map((p) => Payment.fromJson(p))
+          .toList();
+      _totalCount = results[1] as int;
 
       _setLoading(false);
       notifyListeners();
@@ -279,7 +336,14 @@ class PaymentProvider with ChangeNotifier {
   }
 
   /// Fetches detailed raw information for a specific payment.
+  /// Loads one payment's detail, served from cache when offline or on failure.
   Future<Map<String, dynamic>?> getPaymentDetails(int paymentId) async {
+    final cacheKey = DataCache.detailKey(DataCache.paymentPrefix, paymentId);
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<Map<String, dynamic>>(cacheKey);
+    }
+
     try {
       List<Map<String, dynamic>> results;
       try {
@@ -313,7 +377,7 @@ class PaymentProvider with ChangeNotifier {
               onTimeout: () =>
                   throw TimeoutException('Loading payment details timed out'),
             );
-      } catch (e) {
+      } catch (_) {
         results = await _apiService.searchRead(
           'account.payment',
           [
@@ -335,11 +399,12 @@ class PaymentProvider with ChangeNotifier {
       }
 
       if (results.isNotEmpty) {
+        DataCache.write(cacheKey, results.first);
         return results.first;
       }
-      return null;
-    } catch (e) {
-      return null;
+      return DataCache.read<Map<String, dynamic>>(cacheKey);
+    } catch (_) {
+      return DataCache.read<Map<String, dynamic>>(cacheKey);
     }
   }
 
@@ -358,6 +423,27 @@ class PaymentProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-runs the current listing — same page, search and filters — e.g. after
+  /// an action changed a payment.
+  Future<void> refresh() {
+    final query = _currentSearchQuery;
+    if (query != null && query.isNotEmpty) {
+      return searchPayments(
+        query,
+        offset: _currentOffset,
+        limit: _limit,
+        status: _currentStatusFilter,
+        customFilter: _currentCustomFilter,
+      );
+    }
+    return loadPayments(
+      offset: _currentOffset,
+      limit: _limit,
+      status: _currentStatusFilter,
+      customFilter: _currentCustomFilter,
+    );
+  }
+
   /// Navigation to the next page of payments.
   Future<void> goToNextPage() async {
     if (hasNextPage) {
@@ -367,12 +453,14 @@ class PaymentProvider with ChangeNotifier {
           offset: _currentOffset + _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       } else {
         await loadPayments(
           offset: _currentOffset + _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       }
     }
@@ -387,12 +475,14 @@ class PaymentProvider with ChangeNotifier {
           offset: _currentOffset - _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       } else {
         await loadPayments(
           offset: _currentOffset - _limit,
           limit: _limit,
           status: _currentStatusFilter,
+          customFilter: _currentCustomFilter,
         );
       }
     }
@@ -415,11 +505,11 @@ class PaymentProvider with ChangeNotifier {
           );
 
       if (result is int) {
-        await loadPayments();
+        await refresh();
         _setLoading(false);
         return result;
       } else if (result is List && result.isNotEmpty && result[0] is int) {
-        await loadPayments();
+        await refresh();
         _setLoading(false);
         return result[0] as int;
       } else {
@@ -447,11 +537,7 @@ class PaymentProvider with ChangeNotifier {
           );
 
       if (result) {
-        await loadPayments(
-          offset: _currentOffset,
-          limit: _limit,
-          status: _currentStatusFilter,
-        );
+        await refresh();
 
         if (_groupSummary.isNotEmpty) {
           _loadedGroups.clear();
@@ -466,11 +552,7 @@ class PaymentProvider with ChangeNotifier {
       if (errorStr.contains('missingerror') ||
           errorStr.contains('does not exist') ||
           errorStr.contains('has been deleted')) {
-        await loadPayments(
-          offset: _currentOffset,
-          limit: _limit,
-          status: _currentStatusFilter,
-        );
+        await refresh();
         _loadedGroups.clear();
         _setLoading(false);
         return true;
@@ -497,7 +579,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Confirming payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -522,7 +604,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Cancelling payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -547,7 +629,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Marking as sent timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -572,7 +654,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Unmarking as sent timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -597,7 +679,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Resetting to draft timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -622,7 +704,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Rejecting payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -647,7 +729,7 @@ class PaymentProvider with ChangeNotifier {
             onTimeout: () =>
                 throw TimeoutException('Validating payment timed out'),
           );
-      await loadPayments();
+      await refresh();
       _setLoading(false);
       return true;
     } catch (e) {
@@ -682,38 +764,34 @@ class PaymentProvider with ChangeNotifier {
         domain.addAll(customFilter);
       }
 
-      final result = await _apiService.callKw({
-        'model': 'account.payment',
-        'method': 'read_group',
-        'args': [
-          domain,
-          [groupByField],
-          [groupByField],
-        ],
-        'kwargs': {},
-      });
+      final result = await _apiService.readGroup(
+        'account.payment',
+        domain,
+        groupby: [groupByField],
+      );
 
       _groupSummary = {};
       _loadedGroups = {};
+      _groupIds = {};
       int total = 0;
 
-      if (result is List) {
-        for (var item in result) {
-          if (item is Map) {
-            final key = _getGroupKeyFromReadGroup(item[groupByField]);
-            final count = item['${groupByField}_count'] as int? ?? 0;
-            if (count > 0) {
-              _groupSummary[key] = count;
-              total += count;
-            }
+      for (var item in result) {
+        final raw = item[groupByField];
+        final key = _getGroupKeyFromReadGroup(raw);
+        final count = item['${groupByField}_count'] as int? ?? 0;
+        if (count > 0) {
+          _groupSummary[key] = count;
+          if (raw is List && raw.isNotEmpty && raw[0] is int) {
+            _groupIds[key] = raw[0] as int;
           }
+          total += count;
         }
       }
       _totalCount = total;
 
       _isLoading = false;
       notifyListeners();
-    } catch (e) {
+    } catch (_) {
       if (_groupSummary.isEmpty) {
         _groupSummary = {};
         _loadedGroups = {};
@@ -771,7 +849,7 @@ class PaymentProvider with ChangeNotifier {
           1000,
           'date desc, id desc',
         );
-      } catch (e) {
+      } catch (_) {
         results = await _apiService.searchRead(
           'account.payment',
           fullDomain,
@@ -795,7 +873,7 @@ class PaymentProvider with ChangeNotifier {
           .map((p) => Payment.fromJson(p))
           .toList();
       notifyListeners();
-    } catch (e) {}
+    } catch (_) {}
   }
 
   /// Extracts a human-readable group name from an Odoo read_group result.
@@ -813,6 +891,16 @@ class PaymentProvider with ChangeNotifier {
     if (groupKey == 'Undefined') {
       return [
         [groupByField, '=', false],
+      ];
+    }
+
+    // Many2one groups match on the record id: the key is read_group's
+    // display name ("Company, Contact"), which `partner_id.name` never equals
+    // for a child contact.
+    final groupId = _groupIds[groupKey];
+    if (groupId != null) {
+      return [
+        [groupByField, '=', groupId],
       ];
     }
 

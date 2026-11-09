@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/invoice.dart';
 import '../models/customer.dart';
+import '../services/connectivity_service.dart';
+import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 import '../services/odoo_session_manager.dart';
 import '../services/session_service.dart';
@@ -18,6 +20,17 @@ class InvoiceProvider with ChangeNotifier {
   String? _error;
   bool _isServerUnreachable = false;
   bool _dashboardLoaded = false;
+
+  /// True while the screen is looking at cached records rather than a live
+  /// fetch — set when the device is offline or a request failed and the cache
+  /// covered for it.
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
+
+  /// The dashboard's own cache flags — kept apart from the invoice list's so a
+  /// live dashboard load clears its banner without touching the list's.
+  bool _isShowingCachedDashboard = false;
+  DateTime? _dashboardCacheUpdatedAt;
 
   int _currentOffset = 0;
   int _limit = 40;
@@ -52,6 +65,18 @@ class InvoiceProvider with ChangeNotifier {
   }
 
   List<Invoice> get invoices => _invoices;
+
+  /// Whether [invoices] came from the cache instead of a live request.
+  bool get isShowingCachedData => _isShowingCachedData;
+
+  /// When the cached records on screen were fetched.
+  DateTime? get cacheUpdatedAt => _cacheUpdatedAt;
+
+  /// Whether the dashboard figures are the last snapshot, not a live fetch.
+  bool get isShowingCachedDashboard => _isShowingCachedDashboard;
+
+  /// When the dashboard snapshot on screen was fetched.
+  DateTime? get dashboardCacheUpdatedAt => _dashboardCacheUpdatedAt;
 
   List<Invoice> get recentInvoices => _recentInvoices;
 
@@ -115,6 +140,11 @@ class InvoiceProvider with ChangeNotifier {
 
   /// Fetches top-level dashboard data: recent invoices, payments, and global statistics.
   Future<void> loadDashboardData() async {
+    // Offline: restore the last snapshot instead of zeroing every tile.
+    if (!ConnectivityService.instance.isConnected && _serveCachedDashboard()) {
+      return;
+    }
+
     if (!_dashboardLoaded) {
       _isDashboardLoading = true;
       notifyListeners();
@@ -171,9 +201,15 @@ class InvoiceProvider with ChangeNotifier {
       _error = null;
 
       _dashboardLoaded = true;
+      _isDashboardLoading = false;
+      _isShowingCachedDashboard = false;
+      _dashboardCacheUpdatedAt = null;
+      _cacheDashboard();
       _setLoading(false);
       notifyListeners();
     } catch (e) {
+      if (!_dashboardLoaded && _serveCachedDashboard()) return;
+
       _setError(e.toString());
 
       if (!_dashboardLoaded) {
@@ -262,13 +298,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_total'],
-                [],
-              ])
+                aggregates: {'amount_total': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_total'];
             _todaysSales = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -286,13 +322,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_total'],
-                [],
-              ])
+                aggregates: {'amount_total': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_total'];
             _totalRevenue = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -311,13 +347,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_residual'],
-                [],
-              ])
+                aggregates: {'amount_residual': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_residual'];
             _pendingRevenue = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -337,13 +373,13 @@ class InvoiceProvider with ChangeNotifier {
         ];
         try {
           final res = await _apiService
-              .call('account.move', 'read_group', [
+              .readGroup(
+                'account.move',
                 domain,
-                ['amount_residual'],
-                [],
-              ])
+                aggregates: {'amount_residual': 'sum'},
+              )
               .timeout(const Duration(seconds: 15));
-          if (res is List && res.isNotEmpty) {
+          if (res.isNotEmpty) {
             final val = res[0]['amount_residual'];
             _overdueAmount = (val is num) ? val.toDouble() : 0.0;
           } else {
@@ -383,7 +419,7 @@ class InvoiceProvider with ChangeNotifier {
       ], eagerError: false);
 
       await _fetchDailyRevenue().timeout(const Duration(seconds: 10));
-    } catch (e) {}
+    } catch (_) {}
   }
 
   /// Resets the invoice state to its initial values.
@@ -400,6 +436,12 @@ class InvoiceProvider with ChangeNotifier {
     _currentSearchQuery = null;
     _currentCustomFilterDomain = null;
     _hasCustomFilters = false;
+    _isShowingCachedData = false;
+    _cacheUpdatedAt = null;
+    _isShowingCachedDashboard = false;
+    _dashboardCacheUpdatedAt = null;
+    DataCache.invalidatePrefix(DataCache.invoicePrefix);
+    DataCache.invalidatePrefix(DataCache.dashboardPrefix);
     _totalInvoices = 0;
     _draftInvoices = 0;
     _pendingPaymentInvoices = 0;
@@ -417,13 +459,29 @@ class InvoiceProvider with ChangeNotifier {
   }
 
   /// Loads a paginated list of invoices with optional server-side filtering.
+  /// Loads a page of invoices.
+  ///
+  /// [customFilter] replaces the retained bottom-sheet domain; passing `null`
+  /// keeps it, which is what pagination relies on. To actually *remove* it —
+  /// the user cleared their filters — pass [clearCustomFilter] as `true`.
   Future<void> loadInvoices({
     String? filter,
     int offset = 0,
     int limit = 40,
     List<dynamic>? customFilter,
+    bool clearCustomFilter = false,
   }) async {
     _currentSearchQuery = null;
+
+    if (clearCustomFilter) {
+      _currentCustomFilterDomain = null;
+      _hasCustomFilters = false;
+    }
+
+    // Offline: serve what was loaded last instead of clearing the screen.
+    if (!ConnectivityService.instance.isConnected && _serveCachedInvoices()) {
+      return;
+    }
 
     _setLoading(true);
     _setError(null);
@@ -463,7 +521,8 @@ class InvoiceProvider with ChangeNotifier {
           _currentCustomFilterDomain = customFilter;
           _hasCustomFilters = true;
           domain.addAll(customFilter);
-        } else if (_currentCustomFilterDomain != null &&
+        } else if (!clearCustomFilter &&
+            _currentCustomFilterDomain != null &&
             _currentCustomFilterDomain!.isNotEmpty) {
           domain.addAll(_currentCustomFilterDomain!);
         }
@@ -471,16 +530,19 @@ class InvoiceProvider with ChangeNotifier {
         _currentOffset = offset;
         _limit = limit;
 
-        final invoicesData = await _apiService.getInvoices(
-          domain: domain,
-          offset: offset,
-          limit: limit,
-        );
+        // The page of records and the total count are independent reads —
+        // running them concurrently instead of one after another halves the
+        // round trips this call blocks on.
+        final results = await Future.wait([
+          _apiService.getInvoices(domain: domain, offset: offset, limit: limit),
+          _apiService.getInvoiceCount(domain: domain),
+        ]);
+        final invoicesData = results[0] as List<Map<String, dynamic>>;
         _invoices = invoicesData.map((json) => Invoice.fromJson(json)).toList();
+        _totalCount = results[1] as int;
 
-        if (_invoices.isNotEmpty) {}
-
-        _totalCount = await _apiService.getInvoiceCount(domain: domain);
+        _cacheInvoices();
+        _isShowingCachedData = false;
 
         _setLoading(false);
 
@@ -491,28 +553,106 @@ class InvoiceProvider with ChangeNotifier {
           throw TimeoutException('Loading invoices timed out after 30 seconds');
         },
       );
-    } on TimeoutException catch (e) {
+    } on TimeoutException {
+      _setLoading(false);
+
+      // A cached page is more useful than an error on an empty list.
+      if (_invoices.isEmpty && _serveCachedInvoices()) return;
+
       _setError(
         'Request timed out. Please check your connection and try again.',
       );
-
-      if (_invoices.isEmpty) {
-        _invoices = [];
-        _totalCount = 0;
-      }
-      _setLoading(false);
       notifyListeners();
     } catch (e) {
-      _setError(e.toString());
       _setLoading(false);
 
-      if (_invoices.isEmpty) {
-        _invoices = [];
-        _totalCount = 0;
-      }
+      if (_invoices.isEmpty && _serveCachedInvoices()) return;
 
+      _setError(e.toString());
       notifyListeners();
     }
+  }
+
+  /// Snapshots the dashboard figures so they can be redrawn offline.
+  void _cacheDashboard() {
+    DataCache.write(DataCache.listKey(DataCache.dashboardPrefix), {
+      'recentInvoices': List.of(_recentInvoices),
+      'recentPayments': List.of(_recentPayments),
+      'totalInvoices': _totalInvoices,
+      'draftInvoices': _draftInvoices,
+      'pendingPaymentInvoices': _pendingPaymentInvoices,
+      'paidInvoices': _paidInvoices,
+      'overdueInvoices': _overdueInvoices,
+      'totalCustomers': _totalCustomers,
+      'totalRevenue': _totalRevenue,
+      'pendingRevenue': _pendingRevenue,
+      'overdueAmount': _overdueAmount,
+      'todaysSales': _todaysSales,
+      'dailyRevenueData': List.of(_dailyRevenueData),
+      'topProducts': List.of(_topProducts),
+    });
+  }
+
+  /// Restores the cached dashboard snapshot. Returns whether it did.
+  bool _serveCachedDashboard() {
+    final key = DataCache.listKey(DataCache.dashboardPrefix);
+    final cached = DataCache.read<Map<String, dynamic>>(key);
+    if (cached == null) return false;
+
+    _recentInvoices = List<Invoice>.from(cached['recentInvoices'] as List);
+    _recentPayments = List<Map<String, dynamic>>.from(
+      cached['recentPayments'] as List,
+    );
+    _totalInvoices = cached['totalInvoices'] as int;
+    _draftInvoices = cached['draftInvoices'] as int;
+    _pendingPaymentInvoices = cached['pendingPaymentInvoices'] as int;
+    _paidInvoices = cached['paidInvoices'] as int;
+    _overdueInvoices = cached['overdueInvoices'] as int;
+    _totalCustomers = cached['totalCustomers'] as int;
+    _totalRevenue = cached['totalRevenue'] as double;
+    _pendingRevenue = cached['pendingRevenue'] as double;
+    _overdueAmount = cached['overdueAmount'] as double;
+    _todaysSales = cached['todaysSales'] as double;
+    _dailyRevenueData = List<Map<String, dynamic>>.from(
+      cached['dailyRevenueData'] as List,
+    );
+    _topProducts = List<Map<String, dynamic>>.from(
+      cached['topProducts'] as List,
+    );
+
+    _dashboardLoaded = true;
+    _isDashboardLoading = false;
+    _isShowingCachedDashboard = true;
+    _dashboardCacheUpdatedAt = DataCache.updatedAt(key);
+    _error = null;
+    _isServerUnreachable = false;
+    notifyListeners();
+    return true;
+  }
+
+  /// Stores the current page so it can be shown again offline.
+  void _cacheInvoices() {
+    final key = DataCache.listKey(DataCache.invoicePrefix);
+    DataCache.write(key, CachedList<Invoice>(List.of(_invoices), _totalCount));
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+  }
+
+  /// Publishes the cached page, if there is one. Returns whether it did.
+  bool _serveCachedInvoices() {
+    final key = DataCache.listKey(DataCache.invoicePrefix);
+    final cached = DataCache.read<CachedList<Invoice>>(key);
+    if (cached == null || cached.items.isEmpty) return false;
+
+    _invoices = List.of(cached.items);
+    _totalCount = cached.totalCount;
+    _currentOffset = 0;
+    _isShowingCachedData = true;
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+    _isLoading = false;
+    _error = null;
+    _isServerUnreachable = false;
+    notifyListeners();
+    return true;
   }
 
   /// Performs an advanced search for invoices using multi-criteria domain filters.
@@ -615,7 +755,15 @@ class InvoiceProvider with ChangeNotifier {
   }
 
   /// Fetches detailed information for a specific invoice.
+  /// Loads one invoice's full detail, falling back to the cached copy when the
+  /// device is offline or the request fails.
   Future<Invoice?> getInvoiceDetails(int invoiceId) async {
+    final key = DataCache.detailKey(DataCache.invoicePrefix, invoiceId);
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<Invoice>(key);
+    }
+
     try {
       final data = await _apiService
           .getInvoiceDetails(invoiceId)
@@ -625,12 +773,33 @@ class InvoiceProvider with ChangeNotifier {
                 throw TimeoutException('Loading invoice details timed out'),
           );
       if (data != null) {
-        return Invoice.fromJson(data);
+        final invoice = Invoice.fromJson(data);
+        DataCache.write(key, invoice);
+        return invoice;
       }
-      return null;
-    } catch (e) {
-      if (kDebugMode) {}
-      return null;
+      return DataCache.read<Invoice>(key);
+    } catch (_) {
+      return DataCache.read<Invoice>(key);
+    }
+  }
+
+  /// Fetches the current header fields (name, state, partner, totals) of the
+  /// given invoices / credit notes, so summaries kept on the device — the
+  /// dashboard's recently-opened list — can be brought up to date. Returns an
+  /// empty list when offline or on failure.
+  Future<List<Map<String, dynamic>>> fetchMoveSummaries(List<int> ids) async {
+    if (ids.isEmpty || !ConnectivityService.instance.isConnected) return [];
+    try {
+      return await _apiService
+          .getInvoices(
+            domain: [
+              ['id', 'in', ids],
+            ],
+            limit: ids.length,
+          )
+          .timeout(const Duration(seconds: 20));
+    } catch (_) {
+      return [];
     }
   }
 
@@ -655,8 +824,8 @@ class InvoiceProvider with ChangeNotifier {
 
       _setLoading(false);
       return newInvoice;
-    } catch (e) {
-      if (kDebugMode) _setLoading(false);
+    } catch (_) {
+      _setLoading(false);
       rethrow;
     }
   }
@@ -674,8 +843,8 @@ class InvoiceProvider with ChangeNotifier {
 
       _setLoading(false);
       return invoiceId;
-    } catch (e) {
-      if (kDebugMode) _setLoading(false);
+    } catch (_) {
+      _setLoading(false);
       rethrow;
     }
   }
@@ -704,8 +873,8 @@ class InvoiceProvider with ChangeNotifier {
 
       _setLoading(false);
       return success;
-    } catch (e) {
-      if (kDebugMode) _setLoading(false);
+    } catch (_) {
+      _setLoading(false);
       rethrow;
     }
   }
@@ -731,8 +900,8 @@ class InvoiceProvider with ChangeNotifier {
 
       _setLoading(false);
       return success;
-    } catch (e) {
-      if (kDebugMode) _setLoading(false);
+    } catch (_) {
+      _setLoading(false);
       rethrow;
     }
   }
@@ -751,7 +920,16 @@ class InvoiceProvider with ChangeNotifier {
     _setLoading(true);
     _setError(null);
 
+    // Captured up front so a timed-out / failed call can be checked against the
+    // server: `action_create_payments` is not idempotent, and on a slow instance
+    // it often completes after the client has already given up.
+    final residualBefore = await _readResidual(invoiceId);
+
     try {
+      // registerPayment makes up to 4 sequential RPC round-trips
+      // (read move, read payment method, create wizard, action_create_payments),
+      // each with its own internal timeout in OdooApiService.call(), so this
+      // needs headroom for the whole chain rather than a single-call timeout.
       final success = await _apiService
           .registerPayment(
             invoiceId,
@@ -764,21 +942,115 @@ class InvoiceProvider with ChangeNotifier {
             paymentMethodLineId: paymentMethodLineId,
           )
           .timeout(
-            const Duration(seconds: 30),
+            const Duration(seconds: 90),
             onTimeout: () =>
                 throw TimeoutException('Registering payment timed out'),
           );
 
       if (success) {
-        await loadInvoices();
-        await loadDashboardData();
+        await _refreshAfterPayment();
       }
 
       _setLoading(false);
       return success;
     } catch (e) {
-      if (kDebugMode) _setLoading(false);
+      // The payment may still have been created server-side. Only report a
+      // failure once the invoice confirms nothing was applied.
+      final landed = await _paymentLanded(invoiceId, residualBefore);
+
+      if (landed) {
+        await _refreshAfterPayment();
+        _setLoading(false);
+        return true;
+      }
+
+      _setError(e.toString().replaceFirst('Exception: ', ''));
+      _setLoading(false);
       rethrow;
+    }
+  }
+
+  /// Reads the invoice's outstanding amount, or `null` when it can't be read.
+  Future<double?> _readResidual(int invoiceId) async {
+    try {
+      final records = await _apiService
+          .read('account.move', [invoiceId], ['amount_residual'])
+          .timeout(const Duration(seconds: 15));
+
+      if (records.isEmpty) return null;
+      return (records.first['amount_residual'] as num?)?.toDouble();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Whether a payment actually reached the invoice — the outstanding amount
+  /// dropped, or the invoice is now (partially) paid.
+  Future<bool> _paymentLanded(int invoiceId, double? residualBefore) async {
+    try {
+      final records = await _apiService
+          .read(
+            'account.move',
+            [invoiceId],
+            ['amount_residual', 'payment_state'],
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (records.isEmpty) return false;
+
+      final record = records.first;
+      final residualAfter = (record['amount_residual'] as num?)?.toDouble();
+      final paymentState = record['payment_state'];
+
+      if (residualBefore != null &&
+          residualAfter != null &&
+          residualAfter < residualBefore - 0.001) {
+        return true;
+      }
+
+      return residualBefore == null &&
+          ['paid', 'in_payment', 'partial'].contains(paymentState);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Reloads list + dashboard after a payment. A refresh failure must not turn
+  /// a registered payment into a reported failure, so it is swallowed here.
+  Future<void> _refreshAfterPayment() async {
+    try {
+      await loadInvoices();
+      await loadDashboardData();
+    } catch (_) {}
+  }
+
+  /// Translates a status filter key into its `account.move` domain conditions.
+  static List<dynamic> _statusDomainFor(String? filter) {
+    switch (filter) {
+      case 'draft':
+        return [
+          ['state', '=', 'draft'],
+        ];
+      case 'posted':
+        return [
+          ['state', '=', 'posted'],
+          [
+            'payment_state',
+            'in',
+            ['not_paid', 'in_payment', 'partial'],
+          ],
+        ];
+      case 'paid':
+        return [
+          ['state', '=', 'posted'],
+          ['payment_state', '=', 'paid'],
+        ];
+      case 'cancelled':
+        return [
+          ['state', '=', 'cancel'],
+        ];
+      default:
+        return [];
     }
   }
 
@@ -787,11 +1059,30 @@ class InvoiceProvider with ChangeNotifier {
     String query, {
     int offset = 0,
     int limit = 40,
+    String? filter,
+    List<dynamic>? customFilter,
+    bool clearCustomFilter = false,
   }) async {
     if (query.isEmpty) {
       _currentSearchQuery = null;
-      await loadInvoices(offset: 0, limit: _limit);
+      await loadInvoices(
+        offset: 0,
+        limit: _limit,
+        filter: filter,
+        customFilter: customFilter,
+        clearCustomFilter: clearCustomFilter,
+      );
       return;
+    }
+
+    // Same bookkeeping as [loadInvoices]: remember the domain that was
+    // applied, so paging through the results (which passes none) keeps it.
+    if (clearCustomFilter) {
+      _currentCustomFilterDomain = null;
+      _hasCustomFilters = false;
+    } else if (customFilter != null && customFilter.isNotEmpty) {
+      _currentCustomFilterDomain = customFilter;
+      _hasCustomFilters = true;
     }
 
     _currentSearchQuery = query;
@@ -801,36 +1092,50 @@ class InvoiceProvider with ChangeNotifier {
     try {
       List domain = [
         ['move_type', '=', 'out_invoice'],
+      ];
+
+      domain.addAll(_statusDomainFor(filter));
+
+      final appliedFilter = _currentCustomFilterDomain;
+      if (appliedFilter != null && appliedFilter.isNotEmpty) {
+        domain.addAll(appliedFilter);
+      }
+
+      // The OR group goes last so it binds to the two name/partner leaves.
+      domain.addAll([
         '|',
         ['name', 'ilike', query],
         ['partner_id', 'ilike', query],
-      ];
+      ]);
 
       _currentOffset = offset;
       _limit = limit;
 
-      final invoicesData = await _apiService.searchRead(
-        'account.move',
-        domain,
-        [
-          'name',
-          'partner_id',
-          'invoice_date',
-          'invoice_date_due',
-          'amount_total',
-          'amount_residual',
-          'state',
-          'payment_state',
-          'move_type',
-          'currency_id',
-          'company_id',
-        ],
-        offset,
-        limit,
-      );
+      final results = await Future.wait([
+        _apiService.searchRead(
+          'account.move',
+          domain,
+          [
+            'name',
+            'partner_id',
+            'invoice_date',
+            'invoice_date_due',
+            'amount_total',
+            'amount_residual',
+            'state',
+            'payment_state',
+            'move_type',
+            'currency_id',
+            'company_id',
+          ],
+          offset,
+          limit,
+        ),
+        _apiService.getInvoiceCount(domain: domain),
+      ]);
+      final invoicesData = results[0] as List<Map<String, dynamic>>;
       _invoices = invoicesData.map((json) => Invoice.fromJson(json)).toList();
-
-      _totalCount = await _apiService.getInvoiceCount(domain: domain);
+      _totalCount = results[1] as int;
 
       _setLoading(false);
       notifyListeners();
@@ -905,6 +1210,28 @@ class InvoiceProvider with ChangeNotifier {
     }
   }
 
+  Future<bool> deleteInvoice(int invoiceId) async {
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      final success = await _apiService.deleteInvoice(invoiceId);
+
+      if (success) {
+        _invoices.removeWhere((invoice) => invoice.id == invoiceId);
+        await loadInvoices();
+        await loadDashboardData();
+      }
+
+      _setLoading(false);
+      return success;
+    } catch (e) {
+      _setError(e.toString().replaceFirst('Exception: ', ''));
+      _setLoading(false);
+      return false;
+    }
+  }
+
   Future<bool> duplicateInvoice(int invoiceId) async {
     _setLoading(true);
     _setError(null);
@@ -928,23 +1255,60 @@ class InvoiceProvider with ChangeNotifier {
     }
   }
 
+  /// Payment journals for the payment form. Reference data, so a cached copy is
+  /// reused while fresh and falls back to whatever is stored when offline.
   Future<List<Map<String, dynamic>>> getPaymentJournals({
     int? companyId,
   }) async {
+    final key = DataCache.referenceKey('journals:${companyId ?? 'all'}');
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<List<Map<String, dynamic>>>(key) ?? [];
+    }
+
+    final fresh = DataCache.readFresh<List<Map<String, dynamic>>>(
+      key,
+      ttl: DataCache.referenceTtl,
+    );
+    if (fresh != null) return fresh;
+
     try {
-      return await _apiService.getPaymentJournals(companyId: companyId);
+      final journals = await _apiService.getPaymentJournals(
+        companyId: companyId,
+      );
+      DataCache.write(key, journals);
+      return journals;
     } catch (e) {
+      final cached = DataCache.read<List<Map<String, dynamic>>>(key);
+      if (cached != null) return cached;
       _setError(e.toString());
       return [];
     }
   }
 
+  /// Payment method lines for a journal — cached the same way as the journals.
   Future<List<Map<String, dynamic>>> getPaymentMethodLines(
     int journalId,
   ) async {
+    final key = DataCache.referenceKey('method_lines:$journalId');
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<List<Map<String, dynamic>>>(key) ?? [];
+    }
+
+    final fresh = DataCache.readFresh<List<Map<String, dynamic>>>(
+      key,
+      ttl: DataCache.referenceTtl,
+    );
+    if (fresh != null) return fresh;
+
     try {
-      return await _apiService.getPaymentMethodLines(journalId);
+      final lines = await _apiService.getPaymentMethodLines(journalId);
+      DataCache.write(key, lines);
+      return lines;
     } catch (e) {
+      final cached = DataCache.read<List<Map<String, dynamic>>>(key);
+      if (cached != null) return cached;
       _setError(e.toString());
       return [];
     }
@@ -956,7 +1320,14 @@ class InvoiceProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Loads a partner's detail, served from cache when offline or on failure.
   Future<Customer?> getCustomerDetails(int partnerId) async {
+    final key = DataCache.detailKey(DataCache.customerPrefix, partnerId);
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<Customer>(key);
+    }
+
     try {
       final res = await _apiService.searchRead(
         'res.partner',
@@ -1005,18 +1376,34 @@ class InvoiceProvider with ChangeNotifier {
         1,
       );
       if (res is List && res.isNotEmpty && res.first != null) {
-        return Customer.fromJson(res.first as Map<String, dynamic>);
+        final customer = Customer.fromJson(res.first as Map<String, dynamic>);
+        DataCache.write(key, customer);
+        return customer;
       }
-      return null;
+      return DataCache.read<Customer>(key);
     } catch (e) {
+      final cached = DataCache.read<Customer>(key);
+      if (cached != null) return cached;
       _setError(e.toString());
       return null;
     }
   }
 
+  /// Payments reconciled against an invoice, cached so the detail screen's
+  /// payment list survives going offline.
   Future<List<Map<String, dynamic>>> getPaymentsForInvoice(
     int invoiceId,
   ) async {
+    final key = DataCache.relatedKey(
+      DataCache.invoicePrefix,
+      invoiceId,
+      'payments',
+    );
+
+    if (!ConnectivityService.instance.isConnected) {
+      return DataCache.read<List<Map<String, dynamic>>>(key) ?? [];
+    }
+
     try {
       final paymentData = await _apiService.searchRead(
         'account.payment',
@@ -1029,8 +1416,11 @@ class InvoiceProvider with ChangeNotifier {
         ],
         ['name', 'amount', 'date', 'state', 'payment_type', 'journal_id'],
       );
+      DataCache.write(key, paymentData);
       return paymentData;
     } catch (e) {
+      final cached = DataCache.read<List<Map<String, dynamic>>>(key);
+      if (cached != null) return cached;
       _setError(e.toString());
       return [];
     }
@@ -1052,6 +1442,8 @@ class InvoiceProvider with ChangeNotifier {
           _currentSearchQuery!,
           offset: _currentOffset + _limit,
           limit: _limit,
+          filter: filter,
+          customFilter: customFilter,
         );
       } else {
         await loadInvoices(
@@ -1074,6 +1466,8 @@ class InvoiceProvider with ChangeNotifier {
           _currentSearchQuery!,
           offset: _currentOffset - _limit,
           limit: _limit,
+          filter: filter,
+          customFilter: customFilter,
         );
       } else {
         await loadInvoices(
@@ -1193,33 +1587,13 @@ class InvoiceProvider with ChangeNotifier {
         }
       }
 
-      final result = await _apiService.call('account.move', 'read_group', [
-        domain,
-        ['invoice_date', 'amount_total'],
-        ['invoice_date:day'],
-      ]);
-
       final Map<String, double> revenueByDate = {};
 
-      if (result is List && result.isNotEmpty) {
-        for (final group in result) {
-          try {
-            final dateStr =
-                group['invoice_date:day'] as String? ??
-                group['invoice_date'] as String?;
-
-            if (dateStr != null) {
-              DateTime? date;
-              if (dateStr.contains(' ')) {
-                try {} catch (_) {}
-              } else {
-                date = DateTime.tryParse(dateStr);
-              }
-            }
-          } catch (e) {}
-        }
-      }
-
+      // A single search_read of the raw rows and a manual per-day sum below
+      // is what actually populates the chart — a read_group('invoice_date:day')
+      // call used to run here too, but its result was never read into
+      // anything (Odoo's day-grouped label format is also version-fragile
+      // across 17/18/19), so it was a second full round trip for nothing.
       final invoices = await _apiService.searchRead('account.move', domain, [
         'invoice_date',
         'amount_total',
@@ -1264,7 +1638,7 @@ class InvoiceProvider with ChangeNotifier {
       }
 
       _dailyRevenueData = chartData;
-    } catch (e) {
+    } catch (_) {
       _dailyRevenueData = [];
     }
   }
@@ -1273,8 +1647,14 @@ class InvoiceProvider with ChangeNotifier {
   Future<List<Map<String, dynamic>>> _fetchRecentPayments() async {
     try {
       try {
+        // Confirmed payments on every version: `posted` on Odoo 17,
+        // `in_process`/`paid` on 18–19, `paid`/`reconciled` on 20.
         List<dynamic> domain = [
-          ['state', '=', 'posted'],
+          [
+            'state',
+            'not in',
+            ['draft', 'cancel', 'canceled', 'rejected'],
+          ],
           ['payment_type', '=', 'inbound'],
         ];
 
@@ -1303,10 +1683,10 @@ class InvoiceProvider with ChangeNotifier {
           if (paymentsNoState is List)
             return paymentsNoState.cast<Map<String, dynamic>>();
         }
-      } catch (e) {}
+      } catch (_) {}
 
       return [];
-    } catch (e) {
+    } catch (_) {
       return [];
     }
   }
@@ -1354,32 +1734,23 @@ class InvoiceProvider with ChangeNotifier {
 
       domain.add(['move_type', '=', 'out_invoice']);
 
-      final result = await _apiService.callKw({
-        'model': 'account.move',
-        'method': 'read_group',
-        'args': [domain],
-        'kwargs': {
-          'fields': ['id'],
-          'groupby': [groupByField],
-          'lazy': false,
-        },
-      });
+      final result = await _apiService.readGroup(
+        'account.move',
+        domain,
+        groupby: [groupByField],
+      );
 
-      if (result is List) {
-        _groupSummary.clear();
-        _loadedGroups.clear();
-        int total = 0;
+      _groupSummary.clear();
+      _loadedGroups.clear();
+      int total = 0;
 
-        for (final group in result) {
-          if (group is Map) {
-            final groupKey = _getGroupKeyFromReadGroup(group, groupByField);
-            final count = group['__count'] ?? 0;
-            _groupSummary[groupKey] = count as int;
-            total += count as int;
-          }
-        }
-        _totalCount = total;
+      for (final group in result) {
+        final groupKey = _getGroupKeyFromReadGroup(group, groupByField);
+        final count = group['__count'] as int;
+        _groupSummary[groupKey] = count;
+        total += count;
       }
+      _totalCount = total;
     } catch (e) {
       _setError(e.toString());
 
@@ -1456,7 +1827,7 @@ class InvoiceProvider with ChangeNotifier {
             .toList();
         notifyListeners();
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   /// Parses a human-readable group key from the Odoo read_group result map.
@@ -1479,7 +1850,7 @@ class InvoiceProvider with ChangeNotifier {
         return 'Undefined';
       }
       return value.toString();
-    } catch (e) {
+    } catch (_) {
       return 'Unknown';
     }
   }

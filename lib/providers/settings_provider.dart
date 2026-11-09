@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import '../services/odoo_api_service.dart';
 import '../services/odoo_session_manager.dart';
+import '../utils/odoo_binary_utils.dart';
 
 /// Provider for managing application-wide settings, user preferences, and local storage.
 class SettingsProvider extends ChangeNotifier {
@@ -137,7 +138,9 @@ class SettingsProvider extends ChangeNotifier {
       final tzTs = prefs.getInt('tz_updated_at');
       if (cachedUser != null && cachedUser.isNotEmpty) {
         try {
-          _userProfile = Map<String, dynamic>.from(jsonDecode(cachedUser));
+          _userProfile = Map<String, dynamic>.from(
+            normalizeOdooBinaries(jsonDecode(cachedUser)),
+          );
         } catch (_) {
           _userProfile = null;
         }
@@ -262,13 +265,23 @@ class SettingsProvider extends ChangeNotifier {
 
     try {
       await Future.wait([
-        fetchUserProfile(),
-        fetchAvailableLanguages(),
-        fetchAvailableCurrencies(),
-        fetchAvailableTimezones(),
+        fetchUserProfile().catchError((e) {
+          return;
+        }),
+        fetchAvailableLanguages().catchError((e) {
+          return;
+        }),
+        fetchAvailableCurrencies().catchError((e) {
+          return;
+        }),
+        fetchAvailableTimezones().catchError((e) {
+          return;
+        }),
       ]);
     } catch (e) {
-      _error = 'Failed to fetch Odoo data: $e';
+      if (_userProfile == null) {
+        _error = 'Failed to fetch Odoo data: $e';
+      }
     } finally {
       _isLoading = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -379,7 +392,7 @@ class SettingsProvider extends ChangeNotifier {
           if (_companyInfo != null) {
             await prefs.setString(companyKey, jsonEncode(_companyInfo));
           }
-        } catch (e) {}
+        } catch (_) {}
       }
     } catch (e) {
       _error = 'Failed to fetch user profile: $e';
@@ -422,7 +435,7 @@ class SettingsProvider extends ChangeNotifier {
         }
         await saveLocalSettings();
       }
-    } catch (e) {
+    } catch (_) {
       if (_availableLanguages.isEmpty) {
         _availableLanguages = [
           {'code': 'en_US', 'name': 'English (US)', 'iso_code': 'en'},
@@ -472,11 +485,9 @@ class SettingsProvider extends ChangeNotifier {
           _currenciesUpdatedAt = DateTime.now();
         }
 
-        try {} catch (e) {}
-
         await saveLocalSettings();
       }
-    } catch (e) {
+    } catch (_) {
       if (_availableCurrencies.isEmpty) {
         _availableCurrencies = [
           {'name': 'USD', 'full_name': 'US Dollar', 'symbol': '\$'},
@@ -551,7 +562,7 @@ class SettingsProvider extends ChangeNotifier {
           {'code': 'America/New_York', 'name': 'America/New_York'},
         ];
       }
-    } catch (e) {
+    } catch (_) {
       if (_availableTimezones.isEmpty) {
         _availableTimezones = [
           {'code': 'UTC', 'name': 'UTC'},
@@ -619,10 +630,10 @@ class SettingsProvider extends ChangeNotifier {
       try {
         final Directory tempDir = await getTemporaryDirectory();
         totalSize += (await _getDirectorySize(tempDir)) / (1024 * 1024);
-      } catch (e) {}
+      } catch (_) {}
 
       _cacheSize = double.parse(totalSize.toStringAsFixed(1));
-    } catch (e) {
+    } catch (_) {
       _cacheSize = 0.0;
     }
   }
@@ -664,7 +675,6 @@ class SettingsProvider extends ChangeNotifier {
         'database',
       };
 
-      int clearedCount = 0;
       for (final key in allKeys) {
         final isExplicitPreserve = preserveKeys.contains(key);
         final isStoredAccountsKey =
@@ -678,7 +688,6 @@ class SettingsProvider extends ChangeNotifier {
         }
 
         await prefs.remove(key);
-        clearedCount++;
       }
 
       _userProfile = null;
@@ -693,25 +702,22 @@ class SettingsProvider extends ChangeNotifier {
       if (onClearProviderCaches != null) {
         try {
           await onClearProviderCaches();
-        } catch (e) {}
+        } catch (_) {}
       }
 
       try {
         await DefaultCacheManager().emptyCache();
-      } catch (e) {}
+      } catch (_) {}
 
       try {
         PaintingBinding.instance.imageCache.clear();
         PaintingBinding.instance.imageCache.clearLiveImages();
-      } catch (e) {}
+      } catch (_) {}
 
       try {
         final Directory tempDir = await getTemporaryDirectory();
-        final sizeBefore = await _getDirectorySize(tempDir);
         await _deleteDirectoryContents(tempDir);
-        final sizeAfter = await _getDirectorySize(tempDir);
-        final clearedMB = (sizeBefore - sizeAfter) / (1024 * 1024);
-      } catch (e) {}
+      } catch (_) {}
 
       await calculateCacheSize();
 

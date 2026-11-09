@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:mobo_billing/screens/settings/settings_screen.dart';
 import 'package:mobo_billing/theme/app_theme.dart';
+import 'package:mobo_billing/utils/odoo_binary_utils.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:mobo_billing/services/session_service.dart';
@@ -84,7 +85,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final currentSession = sessionService.currentSession;
 
       if (cached != null && cached.isNotEmpty && mounted) {
-        final decoded = jsonDecode(cached);
+        final decoded = normalizeOdooBinaries(jsonDecode(cached));
         if (decoded is! Map<String, dynamic>) return;
         final data = decoded;
         final cachedUserId = data['id']?.toString();
@@ -95,9 +96,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             cachedUserId == currentUserId) {
           setState(() {
             _userData = data;
-            final img = data['image_1920'];
-
-            _userData = data;
             _isLoading = false;
           });
           _updateControllers();
@@ -106,7 +104,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           await prefs.remove(_cacheKeyUserWriteDate);
         }
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   void _startConnectivityListener() {
@@ -178,11 +176,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           currentUserId != null &&
           cachedUserId == currentUserId) {
         _userData = settingsProvider.userProfile;
-        final img = _userData!['image_1920'];
 
         _isLoading = false;
         _updateControllers();
-      } else {}
+      }
     }
 
     _loadCachedUser();
@@ -429,7 +426,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         },
       });
       return result is List ? result.cast<Map<String, dynamic>>() : [];
-    } catch (e) {
+    } catch (_) {
       rethrow;
     }
   }
@@ -455,7 +452,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         },
       });
       return result is List ? result.cast<Map<String, dynamic>>() : [];
-    } catch (e) {
+    } catch (_) {
       rethrow;
     }
   }
@@ -495,7 +492,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               : null)
         : null;
 
-    // Reset loading state and tracking for fresh dialog open
     _isLoadingStates = false;
     _lastFetchedCountryId = null;
     _states = [];
@@ -886,7 +882,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'kwargs': {},
       });
       await _fetchUserProfile();
-    } catch (e) {
+    } catch (_) {
       rethrow;
     }
   }
@@ -900,10 +896,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return;
     }
     try {
-      final sessionService = Provider.of<SessionService>(
-        context,
-        listen: false,
-      );
       final res = await OdooSessionManager.callKwWithCompany({
         'model': 'res.partner',
         'method': 'read',
@@ -931,7 +923,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           });
         }
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   Future<void> _fetchUserProfile({bool forceRefresh = false}) async {
@@ -1051,7 +1043,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (wd != null) {
             await prefs.setString(_cacheKeyUserWriteDate, wd);
           }
-        } catch (e) {}
+        } catch (_) {}
       } else {
         if (mounted) {
           setState(() {
@@ -1377,9 +1369,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     padding: const EdgeInsets.all(16),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).colorScheme.primary,
+                      color: Theme.of(context).colorScheme.primary,
                       size: 50,
                     ),
                   ),
@@ -1513,11 +1503,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _tileDivider(bool isDark) =>
-      Divider(height: 0, color: isDark ? Colors.grey[800] : Colors.grey[200]);
+      Divider(height: 1, color: isDark ? Colors.grey[800] : Colors.grey[200]);
 
   Widget _quickActionTile(
     BuildContext context, {
-    required IconData icon,
+    required List<List<dynamic>> icon,
     required String title,
     String subtitle = '',
     VoidCallback? onTap,
@@ -1534,7 +1524,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         : (isDark ? Colors.grey[400]! : Colors.grey[600]!);
 
     return ListTile(
-      leading: Icon(icon, color: iconColor),
+      leading: HugeIcon(icon: icon, color: iconColor),
       title: Text(
         title,
         style: TextStyle(
@@ -1543,7 +1533,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
       subtitle: subtitle.isNotEmpty
-          ? Text(subtitle, style: TextStyle(color: subtitleColor))
+          ? Text(
+              subtitle,
+              style: TextStyle(fontSize: 13, color: subtitleColor),
+            )
           : null,
       trailing:
           trailing ??
@@ -1559,12 +1552,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildQuickActionsSection(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? Colors.grey[900] : Colors.white;
 
+    // Dividers between rows come from the loop below.
     final List<Widget> tiles = [
       _quickActionTile(
         context,
-        icon: Icons.settings_outlined,
+        icon: HugeIcons.strokeRoundedSettings01,
         title: 'Settings',
         subtitle: 'App preferences and sync options',
         onTap: () async {
@@ -1576,12 +1569,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           } catch (_) {}
         },
       ),
-      _tileDivider(isDark),
       const SwitchAccountWidget(),
-      _tileDivider(isDark),
       _quickActionTile(
         context,
-        icon: Icons.logout_outlined,
+        icon: HugeIcons.strokeRoundedLogout01,
         title: 'Logout',
         subtitle: 'Sign out from this device',
         destructive: true,
@@ -1600,25 +1591,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(12),
+        color: isDark ? Colors.grey[850] : Colors.white,
+        borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
+          color: isDark ? Colors.grey[850]! : Colors.grey[200]!,
+          width: 0.5,
         ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.06),
-            ),
-        ],
+        boxShadow: AppShadows.card,
       ),
-      child: Column(children: children),
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(children: children),
+      ),
     );
   }
 
@@ -1880,6 +1866,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: const Text('Configuration'),
         leading: IconButton(
           onPressed: () async {

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lottie/lottie.dart';
 
+import '../theme/app_theme.dart';
+
 class EmptyStateWidget extends StatelessWidget {
   final String title;
   final String subtitle;
@@ -62,18 +64,19 @@ class EmptyStateWidget extends StatelessWidget {
 
               SizedBox(
                 width: 180,
+                height: 48,
                 child: OutlinedButton(
                   onPressed: onClearFilters,
                   style: OutlinedButton.styleFrom(
-                    side: BorderSide(
-                      color: const Color(0xFFE91E63).withOpacity(0.3),
-                      width: 1,
+                    side: const BorderSide(
+                      color: AppTheme.primaryColor,
+                      width: 1.5,
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    foregroundColor: const Color(0xFFE91E63),
+                    foregroundColor: AppTheme.primaryColor,
                   ),
                   child: Text(
                     'Clear All Filters',

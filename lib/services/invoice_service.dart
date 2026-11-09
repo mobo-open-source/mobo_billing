@@ -35,7 +35,6 @@ class InvoiceService {
       final invoiceState = invoice['state'];
       final invoiceName = invoice['name'];
       final moveType = invoice['move_type'];
-      final isMoveSent = invoice['is_move_sent'] ?? false;
 
       if (invoiceState != 'posted') {
         throw Exception(
@@ -77,7 +76,7 @@ class InvoiceService {
               );
 
               if (wizardCreateResult is int) {
-                final sendResult = await apiService.call(
+                await apiService.call(
                   'account.move.send.wizard',
                   'action_send_and_print',
                   [wizardCreateResult],
@@ -114,7 +113,7 @@ class InvoiceService {
           );
 
           if (wizardCreateResult is int) {
-            final sendResult = await apiService.call(
+            await apiService.call(
               'account.move.send.wizard',
               'action_send_and_print',
               [wizardCreateResult],
@@ -134,7 +133,7 @@ class InvoiceService {
           throw Exception('Unexpected wizard model: $wizardModel');
         }
       } else {
-        final directResult = await apiService.call(
+        await apiService.call(
           'account.move',
           'action_send_and_print',
           [moveId],
@@ -152,7 +151,7 @@ class InvoiceService {
           );
         }
       }
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         closeLoadingDialog();
       }

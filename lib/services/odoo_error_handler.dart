@@ -175,7 +175,7 @@ Please contact your system administrator for assistance.''';
             cleanMessage = cleanMessage.replaceAll(RegExp(r'\s+'), ' ').trim();
             return '⚠️ Company Mismatch\n\n$cleanMessage';
           }
-        } catch (parseError) {}
+        } catch (_) {}
       }
       return '⚠️ Company Mismatch\n\nThe product and taxes belong to different companies. Please ensure all items in the invoice belong to the same company.\n\nContact your administrator if you need assistance.';
     }

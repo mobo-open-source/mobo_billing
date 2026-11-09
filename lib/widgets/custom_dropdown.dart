@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class CustomDropdownField extends StatelessWidget {
   final String? value;
@@ -33,7 +34,9 @@ class CustomDropdownField extends StatelessWidget {
         Text(
           labelText,
           style: TextStyle(
-            fontWeight: FontWeight.w400,
+            fontFamily: GoogleFonts.manrope(
+              fontWeight: FontWeight.w400,
+            ).fontFamily,
             color: isDark ? Colors.white70 : const Color(0xff7F7F7F),
             fontSize: 14,
           ),
@@ -46,7 +49,9 @@ class CustomDropdownField extends StatelessWidget {
               ? Text(
                   hintText!,
                   style: TextStyle(
-                    fontWeight: FontWeight.w400,
+                    fontFamily: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w400,
+                    ).fontFamily,
                     color: isDark ? Colors.white54 : Colors.grey[600],
                     fontStyle: FontStyle.italic,
                   ),
@@ -81,7 +86,9 @@ class CustomDropdownField extends StatelessWidget {
                 : const Color(0xffF8FAFB),
           ),
           style: TextStyle(
-            fontWeight: FontWeight.w600,
+            fontFamily: GoogleFonts.manrope(
+              fontWeight: FontWeight.w600,
+            ).fontFamily,
             color: isDark ? Colors.white70 : const Color(0xff000000),
           ),
           dropdownColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
@@ -131,7 +138,9 @@ class CustomGenericDropdownField<T> extends StatelessWidget {
         Text(
           labelText,
           style: TextStyle(
-            fontWeight: FontWeight.w400,
+            fontFamily: GoogleFonts.manrope(
+              fontWeight: FontWeight.w400,
+            ).fontFamily,
             color: isDark ? Colors.white70 : const Color(0xff7F7F7F),
             fontSize: 14,
           ),
@@ -144,7 +153,9 @@ class CustomGenericDropdownField<T> extends StatelessWidget {
               ? Text(
                   hintText!,
                   style: TextStyle(
-                    fontWeight: FontWeight.w400,
+                    fontFamily: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w400,
+                    ).fontFamily,
                     color: isDark ? Colors.white54 : Colors.grey[600],
                     fontStyle: FontStyle.italic,
                   ),
@@ -179,7 +190,9 @@ class CustomGenericDropdownField<T> extends StatelessWidget {
                 : const Color(0xffF8FAFB),
           ),
           style: TextStyle(
-            fontWeight: FontWeight.w600,
+            fontFamily: GoogleFonts.manrope(
+              fontWeight: FontWeight.w600,
+            ).fontFamily,
             color: isDark ? Colors.white70 : const Color(0xff000000),
           ),
           dropdownColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,

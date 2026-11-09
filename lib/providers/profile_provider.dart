@@ -168,12 +168,10 @@ class ProfileProvider with ChangeNotifier {
         }
 
         dynamic profileImage = user['avatar_128'];
-        String _imgSource = 'avatar_128';
         if (profileImage == null ||
             (profileImage is bool && profileImage == false) ||
             (profileImage is String && profileImage.isEmpty)) {
           profileImage = user['image_128'];
-          _imgSource = 'image_128';
         }
         if (profileImage is bool && profileImage == false) {
           profileImage = null;
@@ -190,32 +188,8 @@ class ProfileProvider with ChangeNotifier {
             if (clean.isEmpty) {
               profileImage = null;
             } else {
-              final bytes = base64Decode(clean);
-
-              bool looksLikeImage(List<int> b) {
-                if (b.length < 4) return false;
-                if (b[0] == 0x89 &&
-                    b[1] == 0x50 &&
-                    b[2] == 0x4E &&
-                    b[3] == 0x47)
-                  return true;
-                if (b[0] == 0xFF && b[1] == 0xD8) return true;
-                if (b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46) return true;
-                if (b.length >= 12 &&
-                    b[0] == 0x52 &&
-                    b[1] == 0x49 &&
-                    b[2] == 0x46 &&
-                    b[3] == 0x46 &&
-                    b[8] == 0x57 &&
-                    b[9] == 0x45 &&
-                    b[10] == 0x42 &&
-                    b[11] == 0x50)
-                  return true;
-                return false;
-              }
-
-              if (!looksLikeImage(bytes)) {
-              } else {}
+              // Malformed base64 throws here, and the catch below drops the image.
+              base64Decode(clean);
             }
           } catch (_) {
             profileImage = null;

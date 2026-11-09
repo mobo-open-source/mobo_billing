@@ -175,7 +175,7 @@ class CurrencyProvider extends ChangeNotifier {
           };
         }
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   /// Updates the internal currency metadata from Odoo settings.
@@ -294,20 +294,5 @@ class CurrencyProvider extends ChangeNotifier {
     _error = null;
     _lastCurrencyIdList = null;
     notifyListeners();
-  }
-
-  void debugCurrencyFormatting() {
-    final testAmount = 1234.56;
-    final testCurrencies = ['USD', 'INR', 'EUR', 'GBP'];
-    for (final currency in testCurrencies) {
-      final locale = currencyToLocale[currency] ?? 'en_US';
-      try {
-        final formatter = NumberFormat.currency(
-          locale: locale,
-          decimalDigits: 2,
-        );
-        final formatted = formatter.format(testAmount);
-      } catch (e) {}
-    }
   }
 }

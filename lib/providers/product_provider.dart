@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../services/connectivity_service.dart';
+import '../services/data_cache.dart';
 import '../services/odoo_api_service.dart';
 import '../services/odoo_error_handler.dart';
+import '../services/odoo_session_manager.dart';
 import '../models/product.dart';
 
 /// Provider for managing product catalog, variant search, and category grouping.
@@ -14,6 +17,9 @@ class ProductProvider extends ChangeNotifier {
   List<Product> _products = [];
   bool _isLoading = false;
   String? _error;
+
+  bool _isShowingCachedData = false;
+  DateTime? _cacheUpdatedAt;
 
   int _currentOffset = 0;
   final int _limit = 40;
@@ -31,6 +37,12 @@ class ProductProvider extends ChangeNotifier {
   final Map<String, List<Product>> _loadedGroups = {};
 
   List<Product> get products => _products;
+
+  /// Whether [products] came from the cache instead of a live request.
+  bool get isShowingCachedData => _isShowingCachedData;
+
+  /// When the cached records on screen were fetched.
+  DateTime? get cacheUpdatedAt => _cacheUpdatedAt;
 
   bool get isLoading => _isLoading;
 
@@ -89,11 +101,29 @@ class ProductProvider extends ChangeNotifier {
     _selectedGroupBy = null;
     _groupSummary.clear();
     _loadedGroups.clear();
+    _isShowingCachedData = false;
+    _cacheUpdatedAt = null;
+    DataCache.invalidatePrefix(DataCache.productPrefix);
     notifyListeners();
   }
 
+  /// Bumped by every [loadProducts]; a response for an older number has been
+  /// superseded and is dropped, so a slow unfiltered reload can't land on top
+  /// of the search the user started after it.
+  int _loadSeq = 0;
+
   /// Loads a paginated list of product templates from the Odoo server.
   Future<void> loadProducts({int offset = 0, String search = ''}) async {
+    // A keyboard suggestion leaves a trailing space, and `ilike '%foo %'`
+    // misses a product named "foo".
+    search = search.trim();
+    final seq = ++_loadSeq;
+
+    // Offline: the product picker still needs options, so serve the last set.
+    if (!ConnectivityService.instance.isConnected && _serveCachedProducts()) {
+      return;
+    }
+
     try {
       _isLoading = true;
       _error = null;
@@ -103,91 +133,133 @@ class ProductProvider extends ChangeNotifier {
 
       final domain = await _buildDomain(search);
 
-      final countResult = await _apiService
-          .call('product.template', 'search_count', [domain])
-          .timeout(
-            const Duration(seconds: 60),
-            onTimeout: () => throw TimeoutException(
-              'Loading products timed out after 60 seconds',
+      // Count and page data are independent reads — run them concurrently
+      // instead of waiting on the count before even starting the page fetch.
+      // The list tile only ever renders `image_128`; the full-size
+      // `image_1920` (often megabytes per record across a 40-row page) was
+      // being fetched here for nothing and is the single biggest contributor
+      // to slow list loads — it's only needed once a product is opened, so
+      // it stays out of this list query.
+      final results = await Future.wait([
+        _apiService
+            .call('product.template', 'search_count', [domain])
+            .timeout(
+              const Duration(seconds: 60),
+              onTimeout: () => throw TimeoutException(
+                'Loading products timed out after 60 seconds',
+              ),
             ),
-          );
+        _apiService
+            .call(
+              'product.template',
+              'search_read',
+              [domain],
+              {
+                'fields': [
+                  'name',
+                  'default_code',
+                  'list_price',
+                  'image_128',
+                  'qty_available',
+                  'uom_id',
+                  'taxes_id',
+                  'categ_id',
+                  'currency_id',
+                  'description',
+                  'description_sale',
+                  'standard_price',
+                  'barcode',
+                  'product_variant_count',
+                  'product_variant_ids',
+                  'weight',
+                  'volume',
+                  'active',
+                  'sale_ok',
+                  'purchase_ok',
+                  'create_date',
+                  'cost_method',
+                  'property_stock_inventory',
+                  'property_stock_production',
+                ],
+                'offset': offset,
+                'limit': _limit,
+                'order': 'name asc',
+              },
+            )
+            .timeout(
+              const Duration(seconds: 60),
+              onTimeout: () => throw TimeoutException(
+                'Loading products timed out after 60 seconds',
+              ),
+            ),
+      ]);
+      if (seq != _loadSeq) return;
+      final countResult = results[0];
       _totalCount = countResult is int ? countResult : 0;
-
-      final result = await _apiService
-          .call(
-            'product.template',
-            'search_read',
-            [domain],
-            {
-              'fields': [
-                'name',
-                'default_code',
-                'list_price',
-                'image_128',
-                'image_1920',
-                'qty_available',
-                'uom_id',
-                'taxes_id',
-                'categ_id',
-                'currency_id',
-                'description',
-                'description_sale',
-                'standard_price',
-                'barcode',
-                'product_variant_count',
-                'product_variant_ids',
-                'weight',
-                'volume',
-                'active',
-                'sale_ok',
-                'purchase_ok',
-                'create_date',
-                'cost_method',
-                'property_stock_inventory',
-                'property_stock_production',
-              ],
-              'offset': offset,
-              'limit': _limit,
-              'order': 'name asc',
-            },
-          )
-          .timeout(
-            const Duration(seconds: 60),
-            onTimeout: () => throw TimeoutException(
-              'Loading products timed out after 60 seconds',
-            ),
-          );
+      final result = results[1];
 
       if (result is List) {
         _products = result
             .map((json) => Product.fromJson(json as Map<String, dynamic>))
             .toList();
+        _cacheProducts();
+        _isShowingCachedData = false;
       } else {
         _products = [];
       }
     } on TimeoutException catch (e) {
+      if (seq != _loadSeq) return;
+      if (_products.isEmpty && _serveCachedProducts()) return;
+
       _error = 'TIMEOUT: ${e.message}';
-
-      if (_products.isEmpty) {
-        _products = [];
-        _totalCount = 0;
-      }
     } catch (e) {
-      _error = OdooErrorHandler.toUserMessage(e);
+      if (seq != _loadSeq) return;
+      if (_products.isEmpty && _serveCachedProducts()) return;
 
-      if (_products.isEmpty) {
-        _products = [];
-        _totalCount = 0;
-      }
+      _error = OdooErrorHandler.toUserMessage(e);
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (seq == _loadSeq) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
-  /// Searches for products based on name or reference.
+  /// Stores the current page so it can be shown again offline.
+  void _cacheProducts() {
+    final key = DataCache.listKey(DataCache.productPrefix);
+    DataCache.write(key, CachedList<Product>(List.of(_products), _totalCount));
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+  }
+
+  /// Publishes the cached page, if there is one. Returns whether it did.
+  bool _serveCachedProducts() {
+    final key = DataCache.listKey(DataCache.productPrefix);
+    final cached = DataCache.read<CachedList<Product>>(key);
+    if (cached == null || cached.items.isEmpty) return false;
+
+    _products = List.of(cached.items);
+    _totalCount = cached.totalCount;
+    _currentOffset = 0;
+    _isShowingCachedData = true;
+    _cacheUpdatedAt = DataCache.updatedAt(key);
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+    return true;
+  }
+
+  /// Searches for products based on name or reference. When grouped, the
+  /// group counts are re-read too — the grouped view never shows the flat list.
   Future<void> searchProducts(String query) async {
-    await loadProducts(offset: 0, search: query);
+    final search = query.trim();
+    if (isGrouped) {
+      _currentSearchQuery = search;
+      _groupSummary.clear();
+      _loadedGroups.clear();
+      await _fetchGroupSummary();
+    }
+    await loadProducts(offset: 0, search: search);
   }
 
   /// Navigates to the next page of products.
@@ -229,7 +301,13 @@ class ProductProvider extends ChangeNotifier {
       domain.add(['type', '=', 'consu']);
     }
     if (_showStorableOnly) {
-      domain.add(['type', '=', 'product']);
+      // Odoo 18 dropped the `product` (storable) type: storable goods are
+      // `consu` products with the `is_storable` flag.
+      domain.add(
+        OdooSessionManager.serverMajorVersion >= 18
+            ? ['is_storable', '=', true]
+            : ['type', '=', 'product'],
+      );
     }
     if (_showAvailableOnly) {
       domain.add(['qty_available', '>', 0]);
@@ -286,35 +364,23 @@ class ProductProvider extends ChangeNotifier {
       final domain = await _buildDomain(_currentSearchQuery);
 
       final result = await _apiService
-          .call(
-            'product.template',
-            'read_group',
-            [domain],
-            {
-              'groupby': [_selectedGroupBy],
-            },
-          )
+          .readGroup('product.template', domain, groupby: [_selectedGroupBy!])
           .timeout(
             const Duration(seconds: 30),
             onTimeout: () =>
                 throw TimeoutException('Loading group summary timed out'),
           );
 
-      if (result is List) {
-        _groupSummary.clear();
-        int total = 0;
-        for (final group in result) {
-          if (group is Map) {
-            final groupMap = Map<String, dynamic>.from(group);
-            final groupKey = getGroupKeyFromReadGroup(groupMap);
-            final count = groupMap['${_selectedGroupBy}_count'] ?? 0;
-            _groupSummary[groupKey] = count;
-            total += count as int;
-          }
-        }
-        _totalCount = total;
+      _groupSummary.clear();
+      int total = 0;
+      for (final group in result) {
+        final groupKey = getGroupKeyFromReadGroup(group);
+        final count = group['${_selectedGroupBy}_count'] as int;
+        _groupSummary[groupKey] = count;
+        total += count;
       }
-    } catch (e) {
+      _totalCount = total;
+    } catch (_) {
       if (_groupSummary.isEmpty) {
         _groupSummary.clear();
         _totalCount = 0;
@@ -360,7 +426,6 @@ class ProductProvider extends ChangeNotifier {
                 'default_code',
                 'list_price',
                 'image_128',
-                'image_1920',
                 'qty_available',
                 'uom_id',
                 'taxes_id',
@@ -395,7 +460,7 @@ class ProductProvider extends ChangeNotifier {
             .toList();
         notifyListeners();
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   Future<List<dynamic>> _buildGroupDomain(String groupKey) async {
@@ -437,7 +502,6 @@ class ProductProvider extends ChangeNotifier {
                 'default_code',
                 'list_price',
                 'image_128',
-                'image_1920',
                 'qty_available',
                 'uom_id',
                 'taxes_id',
@@ -479,7 +543,7 @@ class ProductProvider extends ChangeNotifier {
       _error = 'TIMEOUT: ${e.message}';
       notifyListeners();
       return [];
-    } catch (e) {
+    } catch (_) {
       notifyListeners();
       return [];
     }

@@ -80,9 +80,7 @@ class ProductListTile extends StatelessWidget {
                                   style: TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,
-                                    color: isDark
-                                        ? Colors.white
-                                        : AppTheme.primaryColor,
+                                    color: AppTheme.primaryColor,
                                     letterSpacing: -0.1,
                                   ),
                                   overflow: TextOverflow.ellipsis,
@@ -238,7 +236,7 @@ class ProductListTile extends StatelessWidget {
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) => _buildAvatarFallback(),
         );
-      } catch (e) {
+      } catch (_) {
         imageWidget = _buildAvatarFallback();
       }
     } else {

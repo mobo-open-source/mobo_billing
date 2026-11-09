@@ -8,10 +8,12 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../services/odoo_api_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../widgets/pinned_action_bar.dart';
 import '../../widgets/custom_text_field.dart';
 import '../../widgets/custom_text_field_simple.dart' as simple;
 import '../../models/product.dart';
 import '../../utils/data_loss_warning_mixin.dart';
+import '../../utils/form_snapshot.dart';
 import '../../services/runtime_permission_service.dart';
 import '../../services/odoo_error_handler.dart';
 
@@ -62,6 +64,45 @@ class _ProductFormScreenState extends State<ProductFormScreen>
   final ImagePicker _picker = ImagePicker();
 
   bool get _isNameFilled => _nameController.text.trim().isNotEmpty;
+
+  /// How the product being edited looked once loaded. Save Changes stays
+  /// disabled until the form differs from it.
+  final _editSnapshot = FormSnapshot();
+
+  /// Text fields don't rebuild the screen, so the submit button listens to
+  /// them directly.
+  late final Listenable _textFields = Listenable.merge([
+    _nameController,
+    _defaultCodeController,
+    _barcodeController,
+    _listPriceController,
+    _standardPriceController,
+    _weightController,
+    _volumeController,
+    _descriptionController,
+  ]);
+
+  /// The values [_saveProduct] writes, in a form [_editSnapshot] can compare.
+  Map<String, dynamic> get _editableValues => {
+    'name': _nameController.text.trim(),
+    'default_code': _defaultCodeController.text,
+    'barcode': _barcodeController.text,
+    'list_price': double.tryParse(_listPriceController.text) ?? 0.0,
+    'standard_price': double.tryParse(_standardPriceController.text) ?? 0.0,
+    'weight': double.tryParse(_weightController.text) ?? 0.0,
+    'volume': double.tryParse(_volumeController.text) ?? 0.0,
+    'description_sale': _descriptionController.text,
+    'active': _isActive,
+    'sale_ok': _canBeSold,
+    'purchase_ok': _canBePurchased,
+    'image': _pickedImageFile?.path,
+    'categ_id': _selectedCategory,
+    'taxes_id': _selectedTax,
+    'uom_id': _selectedUOM,
+    'currency_id': _selectedCurrency,
+  };
+
+  bool get _hasEdits => _editSnapshot.hasChanges(_editableValues);
 
   @override
   bool get hasUnsavedData {
@@ -137,18 +178,40 @@ class _ProductFormScreenState extends State<ProductFormScreen>
       final categories = await _apiService.searchRead('product.category', [], [
         'name',
       ]);
+      // Explicit <String, dynamic> map literals: without it, Dart infers
+      // Map<String, Object> here (int id + String name have no narrower
+      // common type), which reifies these lists as List<Map<String, Object>>
+      // even though the field is declared List<Map<String, dynamic>>. Any
+      // later .firstWhere(orElse: () => {...}) on them then throws at
+      // runtime — the orElse closure is checked against the list's actual
+      // reified type, not its declared one.
       _categoryOptions = categories
-          .map((c) => {'id': c['id'] as int, 'name': c['name'].toString()})
+          .map(
+            (c) => <String, dynamic>{
+              'id': c['id'] as int,
+              'name': c['name'].toString(),
+            },
+          )
           .toList();
 
       final taxes = await _apiService.searchRead('account.tax', [], ['name']);
       _taxOptions = taxes
-          .map((t) => {'id': t['id'] as int, 'name': t['name'].toString()})
+          .map(
+            (t) => <String, dynamic>{
+              'id': t['id'] as int,
+              'name': t['name'].toString(),
+            },
+          )
           .toList();
 
       final uoms = await _apiService.searchRead('uom.uom', [], ['name']);
       _uomOptions = uoms
-          .map((u) => {'id': u['id'] as int, 'name': u['name'].toString()})
+          .map(
+            (u) => <String, dynamic>{
+              'id': u['id'] as int,
+              'name': u['name'].toString(),
+            },
+          )
           .toList();
 
       final currencies = await _apiService.searchRead('res.currency', [], [
@@ -157,7 +220,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
       ]);
       _currencyOptions = currencies
           .map(
-            (c) => {
+            (c) => <String, dynamic>{
               'id': c['id'] as int,
               'name': c['name'].toString(),
               'symbol': c['symbol']?.toString() ?? '',
@@ -175,10 +238,13 @@ class _ProductFormScreenState extends State<ProductFormScreen>
             : p.currencyId;
       }
 
+      if (_isEditMode) _editSnapshot.capture(_editableValues);
       setState(() {
         _dropdownsLoading = false;
       });
     } catch (e) {
+      // The form still opens on whatever loaded, so that is the baseline.
+      if (_isEditMode) _editSnapshot.capture(_editableValues);
       setState(() {
         _dropdownsLoading = false;
       });
@@ -269,7 +335,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                       HugeIcon(
                         icon: HugeIcons.strokeRoundedCamera02,
                         size: 20,
-                        color: isDark ? Colors.white : primaryColor,
+                        color: primaryColor,
                       ),
                       const SizedBox(width: 16),
                       Text(
@@ -303,7 +369,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                       HugeIcon(
                         icon: HugeIcons.strokeRoundedImageCrop,
                         size: 20,
-                        color: isDark ? Colors.white : primaryColor,
+                        color: primaryColor,
                       ),
                       const SizedBox(width: 16),
                       Text(
@@ -347,6 +413,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
         },
         child: Scaffold(
           appBar: AppBar(
+            forceMaterialTransparency: true,
             title: Text(
               _isEditMode ? 'Edit Product' : 'Create Product',
               style: TextStyle(
@@ -355,7 +422,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               ),
             ),
             backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-            foregroundColor: isDark ? Colors.white : primaryColor,
+            foregroundColor: primaryColor,
             elevation: 0,
             leading: IconButton(
               onPressed: () => handleNavigation(() => Navigator.pop(context)),
@@ -375,9 +442,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
     if (_pickedImageFile != null) {
       photoWidget = CircleAvatar(
         radius: 48,
-        backgroundColor: isDark
-            ? Colors.grey.shade200
-            : primaryColor.withOpacity(.1),
+        backgroundColor: primaryColor.withOpacity(.1),
         backgroundImage: FileImage(_pickedImageFile!),
       );
     } else if (_imageBase64 != null && _imageBase64!.isNotEmpty) {
@@ -388,34 +453,28 @@ class _ProductFormScreenState extends State<ProductFormScreen>
         final bytes = base64Decode(base64String);
         photoWidget = CircleAvatar(
           radius: 48,
-          backgroundColor: isDark
-              ? Colors.grey.shade200
-              : primaryColor.withOpacity(.1),
+          backgroundColor: primaryColor.withOpacity(.1),
           backgroundImage: MemoryImage(bytes),
         );
-      } catch (e) {
+      } catch (_) {
         photoWidget = CircleAvatar(
           radius: 48,
-          backgroundColor: isDark
-              ? Colors.grey.shade200
-              : primaryColor.withOpacity(.1),
+          backgroundColor: primaryColor.withOpacity(.1),
           child: Icon(
             Icons.image,
             size: 48,
-            color: isDark ? Colors.grey.shade800 : primaryColor,
+            color: primaryColor,
           ),
         );
       }
     } else {
       photoWidget = CircleAvatar(
         radius: 48,
-        backgroundColor: isDark
-            ? Colors.grey.shade200
-            : primaryColor.withOpacity(.1),
+        backgroundColor: primaryColor.withOpacity(.1),
         child: Icon(
           Icons.image,
           size: 48,
-          color: isDark ? Colors.grey.shade800 : primaryColor,
+          color: primaryColor,
         ),
       );
     }
@@ -431,6 +490,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
       },
       child: Scaffold(
         appBar: AppBar(
+          forceMaterialTransparency: true,
           title: Text(
             _isEditMode ? 'Edit Product' : 'Create Product',
             style: TextStyle(
@@ -439,7 +499,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
             ),
           ),
           backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-          foregroundColor: isDark ? Colors.white : primaryColor,
+          foregroundColor: primaryColor,
           elevation: 0,
           leading: IconButton(
             onPressed: () => handleNavigation(() => Navigator.pop(context)),
@@ -468,7 +528,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                         borderRadius: BorderRadius.circular(24),
                         child: CircleAvatar(
                           radius: 18,
-                          backgroundColor: isDark ? Colors.grey : primaryColor,
+                          backgroundColor: primaryColor,
                           child: Icon(
                             Icons.add_a_photo,
                             color: Colors.white,
@@ -483,7 +543,8 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               const SizedBox(height: 16),
               simple.CustomTextField(
                 controller: _nameController,
-                labelText: 'Product Name *',
+                labelText: 'Product Name',
+                isRequired: true,
                 hintText: 'Enter product name',
                 isDark: isDark,
                 validator: (v) {
@@ -1074,8 +1135,6 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               Row(
                 children: [
                   Checkbox(
-                    checkColor: Colors.white,
-                    activeColor: isDark ? Colors.grey : primaryColor,
                     value: _isActive,
                     onChanged: (v) => setState(() => _isActive = v ?? true),
                   ),
@@ -1086,8 +1145,6 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               Row(
                 children: [
                   Checkbox(
-                    checkColor: Colors.white,
-                    activeColor: isDark ? Colors.grey : primaryColor,
                     value: _canBeSold,
                     onChanged: (v) => setState(() => _canBeSold = v ?? true),
                   ),
@@ -1098,8 +1155,6 @@ class _ProductFormScreenState extends State<ProductFormScreen>
               Row(
                 children: [
                   Checkbox(
-                    checkColor: Colors.white,
-                    activeColor: isDark ? Colors.grey : primaryColor,
                     value: _canBePurchased,
                     onChanged: (v) =>
                         setState(() => _canBePurchased = v ?? true),
@@ -1107,49 +1162,58 @@ class _ProductFormScreenState extends State<ProductFormScreen>
                   const Text('Can be Purchased'),
                 ],
               ),
-              const SizedBox(height: 24),
-              SafeArea(
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: (_isLoading || !_isNameFilled)
-                        ? null
-                        : _saveProduct,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shadowColor: Colors.transparent,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 14,
-                        horizontal: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      disabledBackgroundColor: isDark
-                          ? Colors.grey[700]!
-                          : Colors.grey[400]!,
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : Text(
-                            _isEditMode ? 'Save Changes' : 'Create Product',
-                            style: const TextStyle(fontSize: 16),
-                          ),
-                  ),
-                ),
-              ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
+        // Pinned under the form so saving never needs a scroll.
+        bottomNavigationBar: PinnedActionBar(child: _buildSaveButton(isDark)),
+      ),
+    );
+  }
+
+  Widget _buildSaveButton(bool isDark) {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ListenableBuilder(
+        listenable: _textFields,
+        builder: (context, _) {
+          // An edit that changes nothing has nothing to submit.
+          final nothingToSave = _isEditMode && !_hasEdits;
+          return ElevatedButton(
+            onPressed: (_isLoading || !_isNameFilled || nothingToSave)
+                ? null
+                : _saveProduct,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shadowColor: Colors.transparent,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              disabledBackgroundColor: isDark
+                  ? Colors.grey[700]!
+                  : AppTheme.disabledButtonFill,
+              disabledForegroundColor: AppTheme.disabledButtonText,
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : Text(
+                    _isEditMode ? 'Save Changes' : 'Create Product',
+                    style: const TextStyle(fontSize: 16),
+                  ),
+          );
+        },
       ),
     );
   }
@@ -1189,7 +1253,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
 
     try {
       final productData = {
-        'name': _nameController.text,
+        'name': _nameController.text.trim(),
         'default_code': _defaultCodeController.text.isEmpty
             ? false
             : _defaultCodeController.text,
@@ -1229,7 +1293,7 @@ class _ProductFormScreenState extends State<ProductFormScreen>
       }
 
       if (widget.product != null) {
-        final result = await _apiService.write('product.product', [
+        await _apiService.write('product.product', [
           widget.product!.id,
         ], productData);
 
@@ -1238,19 +1302,18 @@ class _ProductFormScreenState extends State<ProductFormScreen>
             _isLoading = false;
           });
 
-          Navigator.pop(context, true);
-
-          Future.delayed(const Duration(milliseconds: 100), () {
-            if (context.mounted) {
-              CustomSnackbar.showSuccess(
-                context,
-                'Product updated successfully',
-              );
-            }
-          });
+          // Pop first, then toast on the navigator's context so the snackbar
+          // (a dialog route) shows on the details page instead of being
+          // dismissed along with the form.
+          final navigator = Navigator.of(context);
+          navigator.pop(true);
+          CustomSnackbar.showSuccess(
+            navigator.context,
+            'Product updated successfully',
+          );
         }
       } else {
-        final newId = await _apiService.create('product.product', productData);
+        await _apiService.create('product.product', productData);
 
         if (mounted) {
           setState(() {

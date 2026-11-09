@@ -74,8 +74,7 @@ class _FullImageScreenState extends State<FullImageScreen> {
           }
         }
       }
-    } catch (e) {
-    } finally {
+    } catch (_) {} finally {
       if (mounted) {
         setState(() => _isLoadingHighRes = false);
       }
@@ -205,14 +204,14 @@ class _FullImageScreenState extends State<FullImageScreen> {
           } catch (_) {}
         }
       }
-    } catch (e) {}
+    } catch (_) {}
     return _buildErrorIcon(isDark);
   }
 
   Widget _buildLoadingIndicator(bool isDark) {
     return Center(
       child: LoadingAnimationWidget.fourRotatingDots(
-        color: isDark ? Colors.white : AppTheme.primaryColor,
+        color: AppTheme.primaryColor,
         size: 40,
       ),
     );
@@ -258,6 +257,7 @@ class _FullImageScreenState extends State<FullImageScreen> {
     return Scaffold(
       backgroundColor: isDark ? Colors.grey[900] : Colors.grey[50],
       appBar: AppBar(
+        forceMaterialTransparency: true,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -291,7 +291,7 @@ class _FullImageScreenState extends State<FullImageScreen> {
           ),
         ),
         backgroundColor: isDark ? Colors.grey[900] : Colors.grey[50],
-        foregroundColor: isDark ? Colors.white : Theme.of(context).primaryColor,
+        foregroundColor: Theme.of(context).primaryColor,
         elevation: 0,
       ),
       body: LayoutBuilder(

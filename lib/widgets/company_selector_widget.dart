@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import '../providers/company_provider.dart';
 import '../services/session_service.dart';
+import 'mobo_checkbox.dart';
 
 class CompanySelectorWidget extends StatelessWidget {
   final bool showMultiSelect;
@@ -174,18 +175,23 @@ class CompanySelectorWidget extends StatelessWidget {
         backgroundColor: Colors.transparent,
         builder: (context) {
           final isDark = Theme.of(context).brightness == Brightness.dark;
-          return Container(
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[900] : Colors.white,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
+          return SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: Container(
+              decoration: BoxDecoration(
+                color: isDark ? Colors.grey[900] : Colors.white,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
               ),
-            ),
-            padding: const EdgeInsets.only(top: 8, bottom: 16),
-            child: _CompanyDropdownContent(
-              provider: provider,
-              onCompanyChanged: onCompanyChanged,
-              width: screenSize.width,
+              padding: const EdgeInsets.only(top: 8, bottom: 16),
+              child: _CompanyDropdownContent(
+                provider: provider,
+                onCompanyChanged: onCompanyChanged,
+                width: screenSize.width,
+              ),
             ),
           );
         },
@@ -342,7 +348,7 @@ class _CompanyDropdownContentState extends State<_CompanyDropdownContent> {
 
     return Container(
       width: widget.width ?? 280,
-      constraints: const BoxConstraints(maxHeight: 350),
+      constraints: const BoxConstraints(maxHeight: 480),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF2D2D2D) : Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -393,10 +399,13 @@ class _CompanyDropdownContentState extends State<_CompanyDropdownContent> {
                 final isAllowed = _tempAllowedCompanyIds.contains(companyId);
 
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
                   child: Material(
                     color: isActive
-                        ? (primaryColor.withOpacity(0.1))
+                        ? primaryColor.withValues(alpha: 0.1)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
                     child: InkWell(
@@ -413,7 +422,7 @@ class _CompanyDropdownContentState extends State<_CompanyDropdownContent> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
-                          vertical: 8,
+                          vertical: 10,
                         ),
                         child: Row(
                           children: [
@@ -421,56 +430,41 @@ class _CompanyDropdownContentState extends State<_CompanyDropdownContent> {
                               child: Text(
                                 companyName,
                                 style: TextStyle(
-                                  fontSize: 14,
+                                  fontSize: 13,
                                   fontWeight: isActive
                                       ? FontWeight.w600
                                       : FontWeight.normal,
-                                  color: isDark ? Colors.white : Colors.black87,
+                                  color: isDark
+                                      ? Colors.white70
+                                      : Colors.black87,
                                 ),
                               ),
                             ),
                             const SizedBox(width: 12),
-                            Checkbox(
-                              value: isAllowed,
-                              onChanged: _applying
-                                  ? null
-                                  : (companyId == _tempSelectedCompanyId)
-                                  ? null
-                                  : (val) {
-                                      setState(() {
-                                        if (val == true) {
-                                          _tempAllowedCompanyIds.add(companyId);
-                                        } else {
-                                          _tempAllowedCompanyIds.remove(
-                                            companyId,
-                                          );
-                                        }
-                                      });
-                                    },
-                              fillColor: MaterialStateProperty.resolveWith((
-                                states,
-                              ) {
-                                if (isActive) {
-                                  return primaryColor;
-                                }
-                                if (states.contains(MaterialState.selected)) {
-                                  return primaryColor;
-                                }
-                                return Colors.transparent;
-                              }),
-                              checkColor: isActive
-                                  ? Colors.white
-                                  : Colors.white,
-
-                              side: BorderSide(
-                                color: isActive
-                                    ? primaryColor
-                                    : Colors.grey.shade400,
-                                width: isActive ? 2 : 1,
-                              ),
-
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(4),
+                            SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: MoboCheckbox(
+                                value: isAllowed,
+                                // The active company is always ticked.
+                                onChanged: _applying
+                                    ? null
+                                    : (companyId == _tempSelectedCompanyId)
+                                    ? null
+                                    : (val) {
+                                        setState(() {
+                                          if (val) {
+                                            _tempAllowedCompanyIds.add(
+                                              companyId,
+                                            );
+                                          } else {
+                                            _tempAllowedCompanyIds.remove(
+                                              companyId,
+                                            );
+                                          }
+                                        });
+                                      },
+                                size: 26,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -504,17 +498,19 @@ class _CompanyDropdownContentState extends State<_CompanyDropdownContent> {
                             });
                           },
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      foregroundColor: primaryColor,
+                      minimumSize: const Size.fromHeight(48),
+                      padding: EdgeInsets.zero,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      side: BorderSide(color: primaryColor),
+                      side: BorderSide(color: primaryColor, width: 1.2),
                     ),
                     child: Text(
                       'Reset',
                       style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
                         color: primaryColor,
                       ),
                     ),
@@ -543,31 +539,33 @@ class _CompanyDropdownContentState extends State<_CompanyDropdownContent> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryColor,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      minimumSize: const Size.fromHeight(48),
+                      padding: EdgeInsets.zero,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       elevation: 0,
                     ),
                     child: _applying
                         ? Row(
                             mainAxisAlignment: MainAxisAlignment.center,
-                            children: const [
+                            children: [
                               SizedBox(
                                 width: 14,
                                 height: 14,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
-                                  ),
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(
+                                        Colors.white,
+                                      ),
                                 ),
                               ),
-                              SizedBox(width: 8),
-                              Text(
+                              const SizedBox(width: 8),
+                              const Text(
                                 'Applying...',
                                 style: TextStyle(
-                                  fontSize: 14,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -576,7 +574,7 @@ class _CompanyDropdownContentState extends State<_CompanyDropdownContent> {
                         : const Text(
                             'Confirm',
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
                           ),

@@ -32,9 +32,9 @@ class BiometricService {
       final bool canCheckBiometrics = await _localAuth!.canCheckBiometrics;
 
       return canCheckBiometrics;
-    } on PlatformException catch (e) {
+    } on PlatformException {
       return false;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
@@ -76,20 +76,9 @@ class BiometricService {
       );
 
       return didAuthenticate;
-    } on PlatformException catch (e) {
-      switch (e.code) {
-        case 'NotAvailable':
-          break;
-        case 'NotEnrolled':
-          break;
-        case 'LockedOut':
-          break;
-        case 'PermanentlyLockedOut':
-          break;
-        default:
-      }
+    } on PlatformException {
       return false;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
@@ -105,7 +94,7 @@ class BiometricService {
       final isAvailable = await isBiometricAvailable();
 
       return isAvailable;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
@@ -114,6 +103,6 @@ class BiometricService {
     try {
       await _ensureInitialized();
       await _localAuth?.isDeviceSupported();
-    } catch (e) {}
+    } catch (_) {}
   }
 }

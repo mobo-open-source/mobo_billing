@@ -9,17 +9,23 @@ import '../../providers/last_opened_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/invoice_list_tile.dart';
 import '../../widgets/shimmer_loading.dart';
+import '../../widgets/group_section_card.dart';
 import '../../widgets/invoice_filter_bottomsheet.dart';
 import 'package:intl/intl.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/connection_status_widget.dart';
+import '../../widgets/offline_data_banner.dart';
 import '../../widgets/empty_state_widget.dart';
 import '../../widgets/filter_badges.dart';
+import '../../widgets/mobo_search_field.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../providers/navigation_provider.dart';
+import '../../utils/refresh_on_tab_select.dart';
 
 import 'invoice_detail_screen.dart';
 import 'create_invoice_screen.dart';
+import '../../widgets/pagination_bar.dart';
 
 class InvoiceListScreenNew extends StatefulWidget {
   final String? initialFilter;
@@ -30,7 +36,8 @@ class InvoiceListScreenNew extends StatefulWidget {
   State<InvoiceListScreenNew> createState() => _InvoiceListScreenNewState();
 }
 
-class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
+class _InvoiceListScreenNewState extends State<InvoiceListScreenNew>
+    with RefreshOnTabSelect {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   String? _currentFilter;
@@ -63,6 +70,51 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     _scrollController.dispose();
     _searchDebounce?.cancel();
     super.dispose();
+  }
+
+  @override
+  int get tabIndex => NavigationProvider.invoicesTab;
+
+  /// Reloads what is on screen — same page, search, filters and group-by.
+  @override
+  Future<void> onTabSelected() async {
+    if (_isFirstLoad) return;
+    final provider = Provider.of<InvoiceProvider>(context, listen: false);
+    final domain = _buildFilterDomain();
+    final query = _searchController.text.trim();
+
+    if (_selectedGroupBy != null) {
+      await provider.fetchGroupSummary(
+        groupByField: _selectedGroupBy!,
+        customFilter: domain.isNotEmpty ? domain : null,
+        filter: _currentFilter,
+      );
+      final openGroups = _expandedGroups.entries
+          .where((e) => e.value && provider.groupSummary.containsKey(e.key))
+          .map((e) => e.key);
+      await Future.wait(openGroups.map((k) => _loadGroupInvoices(provider, k)));
+    } else if (query.isNotEmpty) {
+      await provider.searchInvoices(
+        query,
+        offset: provider.currentOffset,
+        limit: 40,
+        filter: _currentFilter,
+        customFilter: domain.isNotEmpty ? domain : null,
+        clearCustomFilter: domain.isEmpty,
+      );
+    } else {
+      await provider.loadInvoices(
+        filter: _currentFilter,
+        offset: provider.currentOffset,
+        limit: 40,
+        customFilter: domain.isNotEmpty ? domain : null,
+        clearCustomFilter: domain.isEmpty,
+      );
+    }
+
+    if (provider.error != null && mounted) {
+      _showErrorSnackBar(provider.error!);
+    }
   }
 
   String _getScreenTitle() {
@@ -118,27 +170,15 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
                 Expanded(
                   child: Consumer2<ConnectivityService, SessionService>(
                     builder: (context, connectivityService, sessionService, child) {
+                      // Offline with records in hand: keep showing them under
+                      // a banner instead of blanking the screen.
                       if (!connectivityService.isConnected) {
+                        if (provider.invoices.isNotEmpty) {
+                          return _buildCachedContent(isDark, provider);
+                        }
+
                         return ConnectionStatusWidget(
-                          onRetry: () {
-                            if (connectivityService.isConnected &&
-                                sessionService.hasValidSession) {
-                              if (provider.currentSearchQuery != null &&
-                                  provider.currentSearchQuery!.isNotEmpty) {
-                                provider.searchInvoices(
-                                  provider.currentSearchQuery!,
-                                  offset: 0,
-                                  limit: 40,
-                                );
-                              } else {
-                                provider.loadInvoices(
-                                  filter: _currentFilter,
-                                  offset: 0,
-                                  limit: 40,
-                                );
-                              }
-                            }
-                          },
+                          onRetry: _reload,
                           customMessage:
                               'No internet connection. Please check your connection and try again.',
                         );
@@ -148,6 +188,16 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
                         return const ConnectionStatusWidget();
                       }
 
+                      // A failed refresh keeps the last good page on screen.
+                      if (provider.error != null &&
+                          provider.invoices.isNotEmpty) {
+                        return _buildCachedContent(
+                          isDark,
+                          provider,
+                          message: "Couldn't refresh invoices",
+                        );
+                      }
+
                       if (provider.error != null && provider.invoices.isEmpty) {
                         return ConnectionStatusWidget(
                           serverUnreachable: true,
@@ -155,10 +205,9 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
                           onRetry: () {
                             if (provider.currentSearchQuery != null &&
                                 provider.currentSearchQuery!.isNotEmpty) {
-                              provider.searchInvoices(
+                              _runSearch(
+                                provider,
                                 provider.currentSearchQuery!,
-                                offset: 0,
-                                limit: 40,
                               );
                             } else {
                               provider.loadInvoices(
@@ -193,14 +242,14 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
             Provider.of<InvoiceProvider>(context, listen: false).loadInvoices();
           }
         },
-        backgroundColor: isDark ? Colors.white : AppTheme.primaryColor,
+        backgroundColor: AppTheme.primaryColor,
         elevation: 0,
         focusElevation: 0,
         hoverElevation: 0,
         highlightElevation: 0,
         child: HugeIcon(
           icon: HugeIcons.strokeRoundedTaskAdd01,
-          color: isDark ? Colors.black : Colors.white,
+          color: Colors.white,
         ),
       ),
     );
@@ -211,23 +260,21 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
       return _buildShimmerList();
     }
 
-    final Widget content;
-    if (provider.invoices.isEmpty && _selectedGroupBy == null) {
-      content = _buildEmptyState(isDark, provider);
-    } else {
-      content = _buildInvoiceContent(provider);
-    }
+    // With a group-by on, "nothing found" is a list with no groups rather than
+    // an empty page of invoices — and shows the same empty screen.
+    final isEmpty = _selectedGroupBy == null
+        ? provider.invoices.isEmpty
+        : provider.groupSummary.isEmpty;
+    final Widget content = isEmpty
+        ? _buildEmptyState(isDark, provider)
+        : _buildInvoiceContent(provider);
 
     return RefreshIndicator(
       onRefresh: () async {
         try {
           if (provider.currentSearchQuery != null &&
               provider.currentSearchQuery!.isNotEmpty) {
-            await provider.searchInvoices(
-              provider.currentSearchQuery!,
-              offset: 0,
-              limit: 40,
-            );
+            await _runSearch(provider, provider.currentSearchQuery!);
           } else {
             await _applyFilters();
           }
@@ -240,7 +287,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
         }
       },
       color: AppTheme.primaryColor,
-      child: (provider.invoices.isEmpty && _selectedGroupBy == null)
+      child: isEmpty
           ? LayoutBuilder(
               builder: (context, constraints) {
                 return SingleChildScrollView(
@@ -262,6 +309,38 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     return const CommonListShimmer();
   }
 
+  /// Re-runs whatever the list is currently showing — the active search, or
+  /// the filtered page.
+  void _reload() {
+    final provider = Provider.of<InvoiceProvider>(context, listen: false);
+    final query = provider.currentSearchQuery;
+
+    if (query != null && query.isNotEmpty) {
+      _runSearch(provider, query);
+    } else {
+      _applyFilters();
+    }
+  }
+
+  /// The normal list under an [OfflineDataBanner], used when the records on
+  /// screen came from the cache rather than a live fetch.
+  Widget _buildCachedContent(
+    bool isDark,
+    InvoiceProvider provider, {
+    String? message,
+  }) {
+    return Column(
+      children: [
+        OfflineDataBanner(
+          lastUpdated: provider.cacheUpdatedAt,
+          onRetry: _reload,
+          message: message,
+        ),
+        Expanded(child: _buildListContent(isDark, provider)),
+      ],
+    );
+  }
+
   Widget _buildEmptyState(bool isDark, InvoiceProvider provider) {
     return EmptyStateWidget(
       title: _hasActiveFilters() ? 'No results found' : 'No invoices found',
@@ -269,15 +348,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
           ? 'Try adjusting your filters'
           : 'There are no invoice records to display',
       showClearButton: _hasActiveFilters(),
-      onClearFilters: () {
-        setState(() {
-          _activeFilters.clear();
-          _startDate = null;
-          _endDate = null;
-          _selectedGroupBy = null;
-        });
-        _applyFilters();
-      },
+      onClearFilters: _clearAllFilters,
     );
   }
 
@@ -289,7 +360,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     return ListView.builder(
       controller: _scrollController,
       itemCount: provider.invoices.length,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, AppSpacing.fabClearance),
       itemBuilder: (context, index) {
         if (index >= provider.invoices.length) {
           return const SizedBox.shrink();
@@ -298,14 +369,6 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
         return InvoiceListTile(
           invoice: invoice,
           onTap: () {
-            final partner = invoice.customerName.isNotEmpty
-                ? invoice.customerName
-                : 'Customer';
-            final invName = invoice.name.isEmpty
-                ? 'Draft Invoice'
-                : invoice.name;
-            final invId = invoice.id.toString();
-
             try {
               Provider.of<LastOpenedProvider>(
                 context,
@@ -328,132 +391,29 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
   }
 
   Widget _buildSearchAndFilterBar(InvoiceProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
-      child: Container(
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF000000).withOpacity(0.05),
-              offset: const Offset(0, 6),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          enabled: true,
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xff1E1E1E),
-            fontWeight: FontWeight.w400,
-            fontStyle: FontStyle.normal,
-            fontSize: 15,
-            height: 1.0,
-            letterSpacing: 0.0,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Search invoices...',
-            hintStyle: TextStyle(
-              color: isDark ? Colors.white : const Color(0xff1E1E1E),
-              fontWeight: FontWeight.w400,
-              fontStyle: FontStyle.normal,
-              fontSize: 15,
-              height: 1.0,
-              letterSpacing: 0.0,
-            ),
-            prefixIcon: IconButton(
-              icon: HugeIcon(
-                icon: HugeIcons.strokeRoundedFilterHorizontal,
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-                size: 18,
-              ),
-              tooltip: 'Filter & Group By',
-              onPressed: () => _showFilterBottomSheet(provider),
-            ),
-            suffixIcon: Container(
-              constraints: const BoxConstraints(maxWidth: 140),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (provider.isLoading &&
-                      (provider.currentSearchQuery != null &&
-                          provider.currentSearchQuery!.isNotEmpty))
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppTheme.primaryColor,
-                        ),
-                      ),
-                    ),
-                  if (_searchController.text.isNotEmpty)
-                    IconButton(
-                      icon: Icon(
-                        Icons.clear,
-                        color: isDark ? Colors.grey[400] : Colors.grey,
-                        size: 20,
-                      ),
-                      onPressed: () {
-                        _searchController.clear();
-                        _searchDebounce?.cancel();
-                        _applyFilters();
-                        setState(() {});
-                      },
-                      padding: const EdgeInsets.all(8),
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            filled: true,
-            fillColor: isDark ? Colors.grey[850] : Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isDark ? Colors.grey[850]! : Colors.white,
-                width: 1.5,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            isDense: true,
-            alignLabelWithHint: true,
-          ),
-          onChanged: (value) {
-            setState(() {});
-            _searchDebounce?.cancel();
-            _searchDebounce = Timer(const Duration(milliseconds: 350), () {
-              if (!mounted) return;
-              if (value.isEmpty) {
-                _applyFilters();
-              } else {
-                provider.searchInvoices(value, offset: 0, limit: 40);
-              }
-            });
-          },
-        ),
+      child: MoboSearchField(
+        controller: _searchController,
+        hintText: 'Search invoices...',
+        hasActiveFilters: _hasActiveFilters(),
+        onFilterTap: () => _showFilterBottomSheet(provider),
+        onClear: () {
+          _searchDebounce?.cancel();
+          _applyFilters();
+        },
+        onChanged: (value) {
+          setState(() {});
+          _searchDebounce?.cancel();
+          _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+            if (!mounted) return;
+            if (value.isEmpty) {
+              _applyFilters();
+            } else {
+              _runSearch(provider, value);
+            }
+          });
+        },
       ),
     );
   }
@@ -461,51 +421,58 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
   List<dynamic> _buildFilterDomain() {
     List<dynamic> domain = [];
     if (_activeFilters.isNotEmpty) {
-      List<dynamic> statusConditions = [];
+      // One entry per selected status, each a complete prefix expression as a
+      // flat token list. The `|` count has to follow these, not the number of
+      // chips, or a chip with no condition would leave an operator without an
+      // operand.
+      final List<List<dynamic>> statusTerms = [];
+      void leaf(String field, String value) => statusTerms.add([
+        [field, '=', value],
+      ]);
+
       for (String filter in _activeFilters) {
         switch (filter) {
           case 'draft':
-            statusConditions.add(['state', '=', 'draft']);
+            leaf('state', 'draft');
             break;
           case 'posted':
-            statusConditions.add('&');
-            statusConditions.add(['state', '=', 'posted']);
-            statusConditions.add(['payment_state', '=', 'not_paid']);
+            // Odoo's own "Posted" filter: every posted invoice, whatever its
+            // payment state (paid and in-payment ones are still posted).
+            leaf('state', 'posted');
             break;
           case 'paid':
-            statusConditions.add(['payment_state', '=', 'paid']);
+            leaf('payment_state', 'paid');
             break;
           case 'partial':
-            statusConditions.add(['payment_state', '=', 'partial']);
+            leaf('payment_state', 'partial');
             break;
           case 'not_paid':
-            statusConditions.add('&');
-            statusConditions.add(['state', '=', 'posted']);
-            statusConditions.add(['payment_state', '=', 'not_paid']);
+            statusTerms.add([
+              '&',
+              ['state', '=', 'posted'],
+              ['payment_state', '=', 'not_paid'],
+            ]);
             break;
           case 'in_payment':
-            statusConditions.add(['payment_state', '=', 'in_payment']);
+            leaf('payment_state', 'in_payment');
             break;
           case 'reversed':
-            statusConditions.add(['payment_state', '=', 'reversed']);
+            leaf('payment_state', 'reversed');
             break;
           case 'blocked':
-            statusConditions.add(['payment_state', '=', 'blocked']);
+            leaf('payment_state', 'blocked');
             break;
           case 'cancelled':
-            statusConditions.add(['state', '=', 'cancel']);
+            leaf('state', 'cancel');
             break;
         }
       }
 
-      if (statusConditions.isNotEmpty) {
-        int n = _activeFilters.length;
-        if (n > 1) {
-          for (int i = 0; i < n - 1; i++) {
-            domain.add('|');
-          }
-        }
-        domain.addAll(statusConditions);
+      for (int i = 0; i < statusTerms.length - 1; i++) {
+        domain.add('|');
+      }
+      for (final term in statusTerms) {
+        domain.addAll(term);
       }
     }
 
@@ -540,7 +507,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
 
     return ListView.builder(
       itemCount: groups.length,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.fabClearance),
       itemBuilder: (context, index) {
         final group = groups[index];
         final groupKey = group.key;
@@ -568,222 +535,56 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     bool isDark,
     InvoiceProvider provider,
   ) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.06),
-        ),
-        boxShadow: [
-          if (!isDark)
-            BoxShadow(
-              blurRadius: 16,
-              spreadRadius: 2,
-              offset: const Offset(0, 6),
-              color: Colors.black.withOpacity(0.08),
-            ),
-        ],
-      ),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () async {
-              setState(() {
-                _expandedGroups[groupKey] = !isExpanded;
-              });
+    return GroupSectionCard(
+      title: _groupTitle(groupKey),
+      subtitle: '$count invoice${count != 1 ? 's' : ''}',
+      isExpanded: isExpanded,
+      onToggle: () async {
+        setState(() {
+          _expandedGroups[groupKey] = !isExpanded;
+        });
 
-              if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
-                await _loadGroupInvoices(provider, groupKey);
-              }
-            },
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          groupKey,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$count invoice${count != 1 ? 's' : ''}',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: isDark ? Colors.grey[400] : Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (isExpanded) ...[
-            if (loadedInvoices.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                child: Center(
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Theme.of(context).primaryColor,
-                      ),
-                    ),
-                  ),
-                ),
-              )
-            else
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: loadedInvoices.length,
-                padding: EdgeInsets.zero,
-                itemBuilder: (context, index) {
-                  if (index >= loadedInvoices.length)
-                    return const SizedBox.shrink();
-                  final invoice = loadedInvoices[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: InvoiceListTile(
+        if (!isExpanded && !provider.loadedGroups.containsKey(groupKey)) {
+          await _loadGroupInvoices(provider, groupKey);
+        }
+      },
+      isLoading: loadedInvoices.isEmpty,
+      body: Column(
+        children: [
+          for (final invoice in loadedInvoices)
+            InvoiceListTile(
+              invoice: invoice,
+              onTap: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => InvoiceDetailScreen(
+                      invoiceId: invoice.id,
                       invoice: invoice,
-                      onTap: () async {
-                        await Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => InvoiceDetailScreen(
-                              invoiceId: invoice.id,
-                              invoice: invoice,
-                            ),
-                          ),
-                        );
-                        if (mounted) {
-                          _applyFilters();
-                        }
-                      },
                     ),
-                  );
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
+                  ),
+                );
+                if (mounted) {
+                  _applyFilters();
+                }
+              },
+            ),
         ],
       ),
     );
   }
 
   Widget _buildTopPaginationBar(InvoiceProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final paginationText = _selectedGroupBy != null
-        ? '${provider.totalCount}/${provider.totalCount}'
-        : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}';
-
-    return Container(
-      padding: const EdgeInsets.only(right: 0, top: 4, bottom: 4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  paginationText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.grey[300] : Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_selectedGroupBy == null) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasPreviousPage && !provider.isLoading)
-                      ? () => provider.goToPreviousPage(filter: _currentFilter)
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowLeft01,
-                      size: 20,
-                      color: (provider.hasPreviousPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: (provider.hasNextPage && !provider.isLoading)
-                      ? () => provider.goToNextPage(filter: _currentFilter)
-                      : null,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 4,
-                    ),
-                    child: HugeIcon(
-                      icon: HugeIcons.strokeRoundedArrowRight01,
-                      size: 20,
-                      color: (provider.hasNextPage && !provider.isLoading)
-                          ? (isDark ? Colors.white : Colors.black87)
-                          : (isDark ? Colors.grey[600] : Colors.grey[400]),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return PaginationBar(
+      totalCount: provider.totalCount,
+      rangeText: _selectedGroupBy != null
+          ? '${provider.totalCount}/${provider.totalCount}'
+          : '${provider.startRecord}-${provider.endRecord}/${provider.totalCount}',
+      showArrows: _selectedGroupBy == null,
+      hasPrevious: provider.hasPreviousPage,
+      hasNext: provider.hasNextPage,
+      isLoading: provider.isLoading,
+      onPrevious: () => provider.goToPreviousPage(filter: _currentFilter),
+      onNext: () => provider.goToNextPage(filter: _currentFilter),
     );
   }
 
@@ -830,15 +631,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
               ),
             ),
           TextButton(
-            onPressed: () {
-              setState(() {
-                _activeFilters.clear();
-                _startDate = null;
-                _endDate = null;
-                _selectedGroupBy = null;
-              });
-              _applyFilters();
-            },
+            onPressed: _clearAllFilters,
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               minimumSize: Size.zero,
@@ -917,6 +710,22 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
         _selectedGroupBy != null;
   }
 
+  /// Group tiles keyed by `state` arrive as Odoo's raw value ("posted",
+  /// "cancel"); show them the way Odoo's own group headers do.
+  String _groupTitle(String groupKey) {
+    if (_selectedGroupBy != 'state') return groupKey;
+    switch (groupKey) {
+      case 'draft':
+        return 'Draft';
+      case 'posted':
+        return 'Posted';
+      case 'cancel':
+        return 'Cancelled';
+      default:
+        return groupKey;
+    }
+  }
+
   String _getGroupByLabel(String key) {
     switch (key) {
       case 'state':
@@ -970,15 +779,7 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
           ),
           const SizedBox(width: 8),
           InkWell(
-            onTap: () {
-              setState(() {
-                _activeFilters.clear();
-                _startDate = null;
-                _endDate = null;
-                _selectedGroupBy = null;
-              });
-              _applyFilters();
-            },
+            onTap: _clearAllFilters,
             child: Icon(
               Icons.close,
               size: 16,
@@ -990,25 +791,66 @@ class _InvoiceListScreenNewState extends State<InvoiceListScreenNew> {
     );
   }
 
+  /// Runs a search that keeps the selected status pill and the bottom-sheet
+  /// filters applied.
+  Future<void> _runSearch(InvoiceProvider provider, String query) {
+    final domain = _buildFilterDomain();
+    return provider.searchInvoices(
+      query,
+      offset: 0,
+      limit: 40,
+      filter: _currentFilter,
+      customFilter: domain.isNotEmpty ? domain : null,
+      clearCustomFilter: domain.isEmpty,
+    );
+  }
+
   Future<void> _applyFilters() async {
     final provider = Provider.of<InvoiceProvider>(context, listen: false);
+    final query = _searchController.text.trim();
 
     if (_selectedGroupBy != null) {
+      // read_group replaces every loaded group, so collapse the open tiles
+      // rather than leave them spinning on data that is no longer there.
+      setState(() => _expandedGroups.clear());
       final filterDomain = _buildFilterDomain();
-      provider.fetchGroupSummary(
+      await provider.fetchGroupSummary(
         groupByField: _selectedGroupBy!,
         customFilter: filterDomain.isNotEmpty ? filterDomain : null,
         filter: _currentFilter,
       );
-    } else {
-      final domain = _buildFilterDomain();
-      provider.loadInvoices(
-        filter: _currentFilter,
-        offset: 0,
-        limit: 40,
-        customFilter: domain.isNotEmpty ? domain : null,
-      );
+      return;
     }
+
+    if (query.isNotEmpty) {
+      await _runSearch(provider, query);
+      return;
+    }
+
+    final domain = _buildFilterDomain();
+    await provider.loadInvoices(
+      filter: _currentFilter,
+      offset: 0,
+      limit: 40,
+      customFilter: domain.isNotEmpty ? domain : null,
+      // Without this the provider keeps re-applying the last domain it saw,
+      // so clearing the filters would leave the list filtered.
+      clearCustomFilter: domain.isEmpty,
+    );
+  }
+
+  /// Resets every filter affordance on this screen — status chips, date range,
+  /// group-by and the search box — and reloads the unfiltered list.
+  void _clearAllFilters() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    setState(() {
+      _activeFilters.clear();
+      _startDate = null;
+      _endDate = null;
+      _selectedGroupBy = null;
+    });
+    _applyFilters();
   }
 
   void _showErrorSnackBar(String error) {

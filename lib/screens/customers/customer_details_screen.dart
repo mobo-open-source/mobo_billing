@@ -29,6 +29,8 @@ import '../../widgets/full_image_screen.dart';
 import '../../providers/last_opened_provider.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../services/runtime_permission_service.dart';
+import '../../services/odoo_session_manager.dart';
+import '../../utils/odoo_html_utils.dart';
 
 class CustomerDetailsScreen extends StatefulWidget {
   final Customer? customer;
@@ -99,6 +101,9 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
   Map<String, dynamic>? _customerStats;
   bool _isLoadingStats = false;
 
+  /// Odoo 19 removed `res.partner.mobile`; only ask for one where it exists.
+  bool get _supportsMobile => OdooSessionManager.serverMajorVersion < 19;
+
   @override
   void initState() {
     super.initState();
@@ -136,8 +141,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         _loadCustomerStats(),
         _refreshCustomerData(),
       ]);
-    } catch (e) {
-    } finally {
+    } catch (_) {} finally {
       if (mounted) {
         setState(() {
           _isLoadingData = false;
@@ -161,7 +165,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
           _populateForm();
         });
       }
-    } catch (e) {}
+    } catch (_) {}
   }
 
   Future<void> _refreshData() async {
@@ -196,7 +200,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
               if (langRecord.isNotEmpty) {
                 _selectedLanguageId = langRecord['id'] as int?;
               }
-            } catch (e) {}
+            } catch (_) {}
           }
 
           _isLoadingDropdowns = false;
@@ -228,7 +232,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
           _isLoadingStates = false;
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _isLoadingStates = false;
@@ -261,7 +265,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
           _isLoadingStats = false;
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _isLoadingStats = false;
@@ -365,7 +369,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                 FullImageScreen(imageBytes: bytes, title: _getName()),
           ),
         );
-      } catch (e) {}
+      } catch (_) {}
     }
   }
 
@@ -389,6 +393,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             ? Colors.grey[900]
             : const Color(0xFFF5F7FA),
         appBar: AppBar(
+          forceMaterialTransparency: true,
           backgroundColor: theme.brightness == Brightness.dark
               ? Colors.grey[900]
               : Colors.transparent,
@@ -714,16 +719,18 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                                   icon: Icons.phone_outlined,
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildFormField(
-                                  label: 'Mobile',
-                                  value: _mobileController.text,
-                                  controller: _mobileController,
-                                  keyboardType: TextInputType.phone,
-                                  icon: Icons.smartphone_outlined,
+                              if (_supportsMobile) ...[
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildFormField(
+                                    label: 'Mobile',
+                                    value: _mobileController.text,
+                                    controller: _mobileController,
+                                    keyboardType: TextInputType.phone,
+                                    icon: Icons.smartphone_outlined,
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
 
@@ -939,9 +946,10 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         'name': _nameController.text,
         'email': _emailController.text.isEmpty ? false : _emailController.text,
         'phone': _phoneController.text.isEmpty ? false : _phoneController.text,
-        'mobile': _mobileController.text.isEmpty
-            ? false
-            : _mobileController.text,
+        if (_supportsMobile)
+          'mobile': _mobileController.text.isEmpty
+              ? false
+              : _mobileController.text,
         'vat': _vatController.text.isEmpty ? false : _vatController.text,
         'street': _streetController.text.isEmpty
             ? false
@@ -952,7 +960,9 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         'city': _cityController.text.isEmpty ? false : _cityController.text,
         'zip': _zipController.text.trim(),
         'website': _websiteController.text.trim(),
-        'comment': _commentController.text.trim(),
+        'comment': _commentController.text.trim().isEmpty
+            ? false
+            : textToOdooHtml(_commentController.text),
         'function': _jobPositionController.text.trim(),
         'is_company': _isCompany,
         'customer_rank': _isCustomer ? 1 : 0,
@@ -1277,9 +1287,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                     ),
                     padding: const EdgeInsets.all(16),
                     child: LoadingAnimationWidget.fourRotatingDots(
-                      color: isDark
-                          ? Colors.white
-                          : Theme.of(context).primaryColor,
+                      color: Theme.of(context).primaryColor,
                       size: 50,
                     ),
                   ),
@@ -1478,7 +1486,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                         _isCompany ? 'Company' : 'Customer',
                         style: TextStyle(
                           fontSize: 15,
-                          color: isDark ? Colors.white60 : theme.primaryColor,
+                          color: theme.primaryColor,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -1789,7 +1797,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             }
           }
         }
-      } catch (e) {
+      } catch (_) {
         if (mounted) {
           CustomSnackbar.showInfo(context, 'Please call $phoneNumber manually');
         }
@@ -1811,92 +1819,101 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: isDark ? Colors.grey[900] : Colors.white,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
+      builder: (context) => SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark ? Colors.grey[900] : Colors.white,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
           ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[700] : Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Send Message',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white : const Color(0xFF1A1A1A),
-              ),
-            ),
-            const SizedBox(height: 20),
-            ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2563EB).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const HugeIcon(
-                  icon: HugeIcons.strokeRoundedMessage01,
-                  color: Color(0xFF2563EB),
+                  color: isDark ? Colors.grey[700] : Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              title: Text(
-                'System Messenger',
-                style: TextStyle(color: isDark ? Colors.white : Colors.black87),
-              ),
-              subtitle: Text(
-                'Send SMS to $phoneNumber',
+              const SizedBox(height: 20),
+              Text(
+                'Send Message',
                 style: TextStyle(
-                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white : const Color(0xFF1A1A1A),
                 ),
               ),
-              onTap: () {
-                Navigator.pop(context);
-                _sendSMS();
-              },
-            ),
-            ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF25D366).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const HugeIcon(
+                    icon: HugeIcons.strokeRoundedMessage01,
+                    color: Color(0xFF2563EB),
+                  ),
                 ),
-                child: const HugeIcon(
-                  icon: HugeIcons.strokeRoundedWhatsapp,
-                  color: Color(0xFF25D366),
+                title: Text(
+                  'System Messenger',
+                  style: TextStyle(
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
                 ),
-              ),
-              title: Text(
-                'WhatsApp',
-                style: TextStyle(color: isDark ? Colors.white : Colors.black87),
-              ),
-              subtitle: Text(
-                'Send WhatsApp message to $phoneNumber',
-                style: TextStyle(
-                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+                subtitle: Text(
+                  'Send SMS to $phoneNumber',
+                  style: TextStyle(
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  ),
                 ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _sendSMS();
+                },
               ),
-              onTap: () {
-                Navigator.pop(context);
-                _sendWhatsAppMessage();
-              },
-            ),
-            const SizedBox(height: 20),
-          ],
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF25D366).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const HugeIcon(
+                    icon: HugeIcons.strokeRoundedWhatsapp,
+                    color: Color(0xFF25D366),
+                  ),
+                ),
+                title: Text(
+                  'WhatsApp',
+                  style: TextStyle(
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+                subtitle: Text(
+                  'Send WhatsApp message to $phoneNumber',
+                  style: TextStyle(
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _sendWhatsAppMessage();
+                },
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
         ),
       ),
     );
@@ -2002,7 +2019,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             }
           }
         }
-      } catch (e) {
+      } catch (_) {
         if (mounted) {
           CustomSnackbar.showInfo(
             context,
@@ -2025,14 +2042,14 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
           await launchUrl(geoUri, mode: LaunchMode.externalApplication);
           return;
         }
-      } catch (e) {}
+      } catch (_) {}
 
       try {
         if (await canLaunchUrl(webUri)) {
           await launchUrl(webUri, mode: LaunchMode.externalApplication);
           return;
         }
-      } catch (e) {}
+      } catch (_) {}
     }
 
     String address = '';
@@ -3052,7 +3069,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     try {
       final date = DateTime.parse(dateStr);
       return '${date.day}/${date.month}/${date.year}';
-    } catch (e) {
+    } catch (_) {
       return dateStr;
     }
   }
@@ -3704,7 +3721,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             ListTile(
               leading: HugeIcon(
                 icon: HugeIcons.strokeRoundedCoordinate01,
-                color: isDark ? Colors.white : primaryColor,
+                color: primaryColor,
               ),
               title: Text(
                 'Geolocalize with Odoo',
@@ -3724,7 +3741,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             ListTile(
               leading: HugeIcon(
                 icon: HugeIcons.strokeRoundedMaping,
-                color: isDark ? Colors.white : primaryColor,
+                color: primaryColor,
               ),
               title: Text(
                 'Select location on map',
@@ -3750,7 +3767,6 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
 
   Future<void> _handleLocationAction() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryColor = Theme.of(context).primaryColor;
 
     bool hasAddress =
         _streetController.text.isNotEmpty ||
@@ -3768,9 +3784,11 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     final shouldGeo = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        elevation: isDark ? 0 : 8,
-        backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+        ),
+        elevation: 0,
+        backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
         title: Text(
           'Geolocalize Customer',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -3833,45 +3851,59 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
           Row(
             children: [
               Expanded(
-                child: TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  style: TextButton.styleFrom(
-                    foregroundColor: isDark
-                        ? Colors.grey[400]
-                        : Colors.grey[700],
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primaryColor,
+                      side: const BorderSide(
+                        color: AppTheme.primaryColor,
+                        width: 1.5,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    child: const Text(
+                      'Cancel',
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(fontWeight: FontWeight.w500),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Expanded(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      elevation: 0,
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    // Scale down rather than wrap mid-word on narrow screens.
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'Geolocalize',
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                    elevation: isDark ? 0 : 3,
-                  ),
-                  child: const Text(
-                    'Geolocalize',
-                    style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ),
@@ -3971,7 +4003,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                     'partner_longitude': location.longitude,
                   });
               return success;
-            } catch (e) {
+            } catch (_) {
               return false;
             }
           },

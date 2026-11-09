@@ -44,7 +44,7 @@ class CompanyProvider extends ChangeNotifier {
     if (_selectedCompanyId == null) return null;
     try {
       return _companies.firstWhere((c) => c['id'] == _selectedCompanyId);
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
@@ -103,7 +103,25 @@ class CompanyProvider extends ChangeNotifier {
           return;
         }
 
-        final uid = session.userId!;
+        int uid = session.userId ?? 0;
+        if (uid == 0) {
+          try {
+            final info = await OdooSessionManager.getSessionInfo(
+              session.serverUrl,
+              session.sessionId,
+            );
+            final rawUid = info['uid'];
+            final recoveredId = rawUid is int
+                ? rawUid
+                : int.tryParse(rawUid?.toString() ?? '') ?? 0;
+            if (recoveredId > 0) {
+              uid = recoveredId;
+              await OdooSessionManager.updateSession(
+                session.copyWith(userId: uid),
+              );
+            }
+          } catch (_) {}
+        }
         final db = session.database;
 
         final userRes = await _apiService.callKwWithoutCompany({
@@ -206,7 +224,7 @@ class CompanyProvider extends ChangeNotifier {
           );
         },
       );
-    } on TimeoutException catch (e) {
+    } on TimeoutException {
       try {
         final session = _sessionService.currentSession;
         _companies = await _localDataSource.getAllCompanies(
@@ -276,7 +294,11 @@ class CompanyProvider extends ChangeNotifier {
 
     _selectedCompanyId = desiredId;
 
-    List<int> defaultAllowed = companyIds;
+    // Default to just the active company (matching what's "turned on" for
+    // this user on the Odoo server / what its own web session shows by
+    // default), not every company the user happens to be a member of. The
+    // in-app company selector still lets the user opt into more companies.
+    List<int> defaultAllowed = desiredId != null ? [desiredId] : companyIds;
     final restoredValid = restoredAllowed
         .where((id) => companyIds.contains(id))
         .toList();

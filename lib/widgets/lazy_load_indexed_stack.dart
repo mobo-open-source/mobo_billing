@@ -38,10 +38,12 @@ class _LazyLoadIndexedStackState extends State<LazyLoadIndexedStack> {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.index != widget.index) {
-      if (!_activatedFlags[widget.index]) {
-        setState(() {
-          _activatedFlags[widget.index] = true;
-        });
+      if (widget.index >= 0 && widget.index < _activatedFlags.length) {
+        if (!_activatedFlags[widget.index]) {
+          setState(() {
+            _activatedFlags[widget.index] = true;
+          });
+        }
       }
     }
   }
